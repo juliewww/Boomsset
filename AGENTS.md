@@ -81,11 +81,17 @@ iOS 跑模拟器需要 Xcode，用 `iosApp/` 里的 Xcode 工程或 IDE run conf
 7. **iOS 的 `Info.plist` 必须有 `NSFaceIDUsageDescription`**，否则首次调用 Face ID 时
    **直接崩溃**（Touch ID 不需要，Face ID 需要）。
 
-## 领域模型（提案，尚未定稿）
+## 领域模型
 
-核心概念在 **[docs/domain.md](docs/domain.md)**。一句话版：
-`Asset`（一项资产/负债）+ `Snapshot`（某时刻的估值）→ 聚合出 `NetWorth` 时间序列。
-快照是不可变追加的，改历史要新增记录而不是原地改。
+完整定义在 **[docs/domain.md](docs/domain.md)**（产品决策已定，表结构可照此实现）。要点：
+
+- `Asset` + `Snapshot` + `Quote` + `FxRate` → 聚合出 `NetWorth` 时间序列（派生，不是表）
+- **`Quote`（市场行情）和 `Snapshot`（用户持仓）必须分开。** 行情刷新只写 Quote。
+  混在一起会导致快照表爆炸，且加仓会篡改历史净值 —— 原因见 domain.md
+- 资产分 `QUOTED`（市值只读，= 份额 × 单价，可改份额）和 `MANUAL`（市值可改，不刷新）
+- 快照**不可变、只追加**，改历史要新增记录而不是原地改
+- 基准币种默认 CNY、可切换，作为查询参数传入，**不落到 Asset/Snapshot 上**
+- 折算历史净值用**当时的汇率**，不是今天的
 
 ## 边界
 
