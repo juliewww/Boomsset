@@ -20,10 +20,10 @@ koin = "4.2.2"
 sqldelight = "2.3.2"
 datastore = "1.2.1"
 ktor = "3.5.1"
-vico = "2.5.2"
+vico = "3.2.3"
 
 turbine = "1.2.1"
-mokkery = "3.4.2"
+kotest = "6.2.3"
 
 androidMinSdk = "26"
 androidTargetSdk = "36"
@@ -68,12 +68,17 @@ ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "kto
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 
 # --- 图表 ---
-vico-multiplatform = { module = "com.patrykandpatrick.vico:multiplatform", version.ref = "vico" }
-vico-multiplatform-m3 = { module = "com.patrykandpatrick.vico:multiplatform-m3", version.ref = "vico" }
+# ⚠️ Vico 3.0.0 把 `multiplatform` 模块改名成了 `compose`，并删掉了原来 Android-only 的
+# `compose` 模块。所以现在 `:compose` 才是跨平台的那个，`:multiplatform` 是 2.x 遗留线。
+vico-compose = { module = "com.patrykandpatrick.vico:compose", version.ref = "vico" }
+vico-compose-m3 = { module = "com.patrykandpatrick.vico:compose-m3", version.ref = "vico" }
 
 # --- 测试 ---
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+# 只用断言，不用 Kotest 的 framework/plugin/KSP —— runner 仍是 kotlin-test
+kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }
+compose-ui-test = { module = "org.jetbrains.compose.ui:ui-test", version.ref = "compose" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
@@ -84,4 +89,5 @@ androidApplication = { id = "com.android.application", version.ref = "agp" }
 # ⚠️ 不是 com.android.library —— AGP 9 起 KMP 模块必须用这个新插件
 androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
-mokkery = { id = "dev.mokkery", version.ref = "mokkery" }
+# 故意不引 Mokkery：它是编译器插件，兼容表只列到 Kotlin 2.4.0 而我们在 2.4.10。
+# 默认手写 fake；真需要 mock 再考虑 Mockative（KSP 式，不锁 Kotlin 版本）。
