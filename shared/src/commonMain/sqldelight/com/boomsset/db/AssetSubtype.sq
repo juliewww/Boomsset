@@ -1,0 +1,43 @@
+import com.boomsset.domain.AssetClass;
+import com.boomsset.domain.ValuationMode;
+import kotlin.Boolean;
+
+-- 品种（第二层分类）。内置的不允许删除，只能 hidden —— 否则历史资产会指向空品种。
+CREATE TABLE asset_subtype (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                  TEXT NOT NULL,
+    asset_class           TEXT AS AssetClass NOT NULL,
+    default_valuation_mode TEXT AS ValuationMode NOT NULL,
+    is_built_in           INTEGER AS Boolean NOT NULL DEFAULT 0,
+    hidden                INTEGER AS Boolean NOT NULL DEFAULT 0
+);
+
+CREATE INDEX asset_subtype_class ON asset_subtype(asset_class);
+
+-- 内置品种按 name 唯一，保证重复 seed 是幂等的
+CREATE UNIQUE INDEX asset_subtype_builtin_name ON asset_subtype(name) WHERE is_built_in = 1;
+
+selectAll:
+SELECT * FROM asset_subtype WHERE hidden = 0 ORDER BY asset_class, name;
+
+selectById:
+SELECT * FROM asset_subtype WHERE id = ?;
+
+-- seed 用：已存在就忽略，可反复调用
+insertBuiltIn:
+INSERT OR IGNORE INTO asset_subtype(name, asset_class, default_valuation_mode, is_built_in)
+VALUES (?, ?, ?, 1);
+
+insertCustom:
+INSERT INTO asset_subtype(name, asset_class, default_valuation_mode, is_built_in)
+VALUES (?, ?, ?, 0);
+
+lastInsertedId:
+SELECT last_insert_rowid();
+
+hide:
+UPDATE asset_subtype SET hidden = 1 WHERE id = ?;
+
+-- 只允许删自定义的。内置的删不掉是有意为之。
+deleteCustom:
+DELETE FROM asset_subtype WHERE id = ? AND is_built_in = 0;

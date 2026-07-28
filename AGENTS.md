@@ -2,16 +2,26 @@
 
 ## 项目状态
 
-**脚手架尚未生成。** 目前仓库只有 README、.gitignore、本文件、`docs/` 和 `gradle/libs.versions.toml`。
-下一步是按下面的结构初始化 Gradle 工程。在那之前，本文里的构建命令都还跑不通。
+**脚手架 + 领域模型 + SQLDelight schema 已就绪。** 已验证：Android 出 APK、
+iOS klib 编译、**35 个单元测试全绿**（含在真实 SQLite 上验证 schema 约束）。
+
+**还没做的：** 仓储层（Repository）、ViewModel、导航、真实页面、行情/汇率的 Ktor 接入、
+Vico 图表。当前 UI 只是个验证构建链路的占位屏。
+`iosApp/` 缺 .xcodeproj，见 iosApp/README.md。
+
+**领域计算的规则都在 [PortfolioCalculator](shared/src/commonMain/kotlin/com/boomsset/domain/PortfolioCalculator.kt)**，
+纯函数无 IO，改之前先读 docs/domain.md。
 
 ## 这是什么
 
-旺资是一款**多类资产净值追踪**应用，Android + iOS 双端。
+旺资是一款**多类资产净值追踪 + 资产配置监控**应用，Android + iOS 双端。
 
-和传统记账 App 的根本区别：**不记流水，记快照。** 用户不逐笔录入收支，而是定期更新每类资产的当前市值，
-App 负责算总净值、折算币种、画趋势曲线。核心问题是"我现在身价多少、比上季度涨了还是跌了"，
-不是"这个月餐饮花了多少"。
+和传统记账 App 的根本区别：**不记流水，记快照。** 用户不逐笔录入收支，而是定期更新每类资产的当前市值。
+
+两个核心视图：
+
+1. **净值趋势** —— "我现在身价多少、比上季度涨了还是跌了"（可按月/季/年）
+2. **资产配置** —— "我的配置和预期目标差多少"（五大类占比 vs 目标配置，看偏离）
 
 做任何功能决策时用这条判断：**它服务于「资产整体视图」还是「流水明细」？** 后者不做。
 
@@ -54,15 +64,30 @@ docs/            详细文档，按需查阅
 ## 构建与验证
 
 ```bash
-./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译（最容易崩的一环，改完先跑这个）
-./gradlew :shared:allTests                          # 全平台测试
-./gradlew :androidApp:assembleDebug                 # Android 构建
+./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上）
+./gradlew :androidApp:assembleDebug                # Android 构建
 ```
 
 改了共享代码后，**至少要过 `compileKotlinIosSimulatorArm64`**。只跑 Android 构建会漏掉
-Kotlin/Native 特有的失败（反射、线程、依赖缺 iOS variant）。
+Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
-iOS 跑模拟器需要 Xcode，用 `iosApp/` 里的 Xcode 工程或 IDE run configuration。
+**哪些命令需要完整 Xcode，实测结论：**
+
+| 命令 | 需要 Xcode？ | 能抓到什么 |
+|---|---|---|
+| `compileKotlinIosSimulatorArm64` | **不需要** | Kotlin/Native 编译错误。Kotlin/Native 自带 platform 库，编到 klib 不碰 iOS SDK |
+| `linkDebugFrameworkIosSimulatorArm64` | **需要** | 链接期错误。缺 Xcode 会失败在 `xcrun xcodebuild -version` |
+| 跑模拟器 | **需要** | 运行时问题 |
+
+所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
+
+`:shared:allTests` 会带上 iOS 测试，在没有 Xcode 的机器上跑不过，日常用
+`testAndroidHostTest`。注意 `androidHostTest` 这个 target 是在 `shared/build.gradle.kts` 里
+用 `withHostTestBuilder {}` **显式开启**的 —— 新的 KMP Android 插件默认不建测试 target，
+不开的话 commonTest 无处运行且没有任何提示。
+
+iOS 工程状态见 **[iosApp/README.md](iosApp/README.md)**（.xcodeproj 尚未生成，那里写了怎么补）。
 
 ## 硬约束（踩了会浪费很多时间）
 
@@ -88,12 +113,18 @@ iOS 跑模拟器需要 Xcode，用 `iosApp/` 里的 Xcode 工程或 IDE run conf
 - `Asset` + `Snapshot` + `Quote` + `FxRate` → 聚合出 `NetWorth` 时间序列（派生，不是表）
 - **`Quote`（市场行情）和 `Snapshot`（用户持仓）必须分开。** 行情刷新只写 Quote。
   混在一起会导致快照表爆炸，且加仓会篡改历史净值 —— 原因见 domain.md
-- 估值分 `QUOTED`（市值只读，= 份额 × 单价，可改份额）和 `MANUAL`（市值可改，不刷新）。
+- 估值分 `QUOTED`（市值只读，= 份额 × 单价，可改**份额和成本**）和 `MANUAL`（市值和成本都可改，不刷新）。
+  **成本是独立字段、与模式无关，两种模式都能填、都显示收益率** —— 别把"市值只读"误推成"成本只读"。
+  存的是**总成本**，均价是派生显示值（存均价会在加仓时静默算错，见 domain.md）。
   **模式记在 `Snapshot` 上，估值一律看 `Snapshot.mode`，不看 `Asset`** ——
   `Asset` 上那个只是新快照的默认值。写反了要等到有资产退市转换后才炸，且是静默算错
 - 快照**不可变、只追加**，改历史要新增记录而不是原地改；**每条是完整状态而非增量**
 - 基准币种默认 CNY、可切换，作为查询参数传入，**不落到 Asset/Snapshot 上**
 - 折算历史净值用**当时的汇率**，不是今天的
+- 分类是**两层**：五大类（SAA 四大类 + 保障，服务配置比例）+ 品种（可自定义，服务记账）
+- 配置比例的分子是**净敞口**（该类资产 − 归属到该类的负债），分母是全部净资产。
+  **每条负债都必须有 `assetClass`**，漏了比例就不闭合，而且不报错、只是数字悄悄不对
+- **净值增长率 ≠ 投资收益率**，前者含新增投入。两个都要显示且标签写清区别
 
 ## 边界
 

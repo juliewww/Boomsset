@@ -6,18 +6,42 @@
 > 顺带一提：`search.maven.org` 的索引当时严重滞后（把 CMP 报成 1.8.2、Ktor 报成 3.2.0）。
 > 核版本请直接读 maven-metadata.xml。
 
-## 版本兼容性：几个故意不取最新的地方
+## 版本兼容性
 
 | 组件 | 我们锁定 | 当时最新 | 为什么 |
 |---|---|---|---|
-| AGP | 9.1.0 | 9.3.1 | Kotlin 2.4.x 官方测试上限是 AGP 9.1.0 |
-| Gradle | 9.5.0 | 9.6.1 | 同上，Kotlin 2.4.x 测试上限 9.5.0 |
+| AGP | 9.3.1 | 9.3.1 | 见下面「被迫升 AGP」 |
+| Gradle | 9.5.0 | 9.6.1 | Kotlin 2.4.x 测试上限；同时满足 AGP 9.3 要求的 ≥9.5.0 |
+| compileSdk | 37 | — | androidx 生态的硬下限，见下 |
 | DataStore | 1.2.1 | 1.3.0-alpha09 | 1.3.0 连续九个 alpha 没进 beta |
 
-"未测试"不等于"坏掉"，但新项目没必要去当那个第一个踩坑的人。
+### 被迫升 AGP：一个原计划没走通的地方
 
-CMP 1.11.1 自带的 lifecycle 是 **2.11.0-beta01**；stable 2.11.0 只接到了 1.12.0-beta 线上。
-我们在 catalog 里手动顶到 stable 2.11.0。
+**原计划**是锁 AGP 9.1.0，留在 Kotlin 2.4.x 官方测试范围（AGP ≤9.1.0 + Gradle ≤9.5.0）内。
+**实测走不通**，构建报错逼出来的：
+
+1. `androidx.lifecycle 2.11.0` 要求 compileSdk ≥ 37
+2. 降到 lifecycle 2.10.0 后，`androidx.core 1.19.0` 同样要求 compileSdk ≥ 37
+3. 而 AGP 9.1.0 的 compileSdk 上限是 36
+
+也就是说 androidx 生态的下限已经整体移到 37 了。继续锁 36 意味着要把一堆 androidx 库
+逐个往回降版本，而且新增依赖时会不断复发。
+
+**结论：升到 AGP 9.3.1 + compileSdk 37**，代价是超出 Kotlin 官方测试的 AGP 上限。
+Gradle 保持 9.5.0（同时满足 Kotlin 测试上限和 AGP 9.3 的最低要求）。
+`targetSdk` 保持 36 —— compileSdk 用最新、targetSdk 用测过的，这是常规做法。
+
+本地需要 `platforms;android-37.0`（已装）。
+
+### CMP 的 material3 走独立版本线
+
+`org.jetbrains.compose.material3:material3` 的版本**和 compose 插件版本不一致** ——
+插件 1.11.1 时它是 **1.9.0**。用 1.11.1 去引会报 `Could not find ...material3:1.11.1`。
+（原来那套 `compose.material3` 简写能自动对齐版本，但 CMP 1.11 起简写已废弃，
+改用显式坐标后就得自己管这个版本。已实测 material3 1.9.0 + CMP 1.11.1 在两端都能解析和编译。）
+
+lifecycle 方面：CMP 1.11.1 自带的是 **2.11.0-beta01**，stable 2.11.0 只接到 1.12.0-beta 线上。
+我们手动顶到 stable 2.11.0（这也是上面 compileSdk 37 的来源之一）。
 
 ## AGP 9 的模块结构要求（硬性）
 
@@ -34,6 +58,19 @@ AGP 9 起：
   没有 view binding、没有 NDK。Java 编译、host test、device test、Android 资源都要显式 opt-in
   （`withJava()`、`withHostTestBuilder {}`、`withDeviceTestBuilder {}`、`androidResources { enable = true }`）
 - 逃生舱 `android.enableLegacyVariantApi=true` 在 AGP 10 会失效，别依赖它
+
+### 搭脚手架时实际撞到的四个（调研没覆盖到的）
+
+1. **`org.jetbrains.kotlin.android` 插件不能加。** AGP 9.0 起内置 Kotlin 支持，
+   在 androidApp 里应用它会**直接构建失败**：
+   `The 'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support since AGP 9.0`。
+   androidApp 只需要 `com.android.application` + `org.jetbrains.kotlin.plugin.compose`。
+2. **`androidLibrary {}` 已废弃，用 `kotlin { android {} }`。** 前者仍能工作但报 deprecation。
+   注意这个 `android {}` 在 `kotlin {}` **里面**，和顶层那个（对 KMP 模块已不存在）不是一回事。
+3. **测试 target 要显式开。** `withHostTestBuilder {}` 不写，`commonTest` 里的测试
+   **在 JVM 上无处运行，且没有任何报错提示** —— 会以为"测试通过了"，其实一个都没跑。
+   跑的任务名是 `testAndroidHostTest`（不是 `androidHostTest`）。
+4. **`compose.runtime` 那套简写已废弃**，改显式坐标后要自己处理 material3 的独立版本线（见上）。
 
 JetBrains 的 wizard（kmp.jetbrains.com）2026 年 5 月起已经输出新结构，需要
 IntelliJ 2026.1.2+ / Android Studio Otter 3 Feature Drop+。
@@ -213,7 +250,38 @@ kotlinx-datetime 本身还是 0.x 且自称 experimental，这是已知风险。
 ## 环境要求
 
 - **Apple Silicon Mac**（iosX64 已移除，Intel 机器跑不了 iOS 模拟器）
-- **Xcode**（Kotlin 2.4 面向 Xcode 26.4；目前本机只有 Command Line Tools，需安装完整 Xcode）
-- JDK 17+（本机 21，可用）
-- Android Studio + KMP 插件（本机 Android Studio 已装，**KMP 插件未装**）
-- CocoaPods 可选但推荐；若装，`~/.zprofile` 需要 `export LANG=en_US.UTF-8` 和 `export LC_ALL=en_US.UTF-8`
+- JDK 17+ —— 本机 21，已验证可用
+- Android SDK `platforms;android-37.0` —— 已装
+- **完整 Xcode** —— **本机目前只有 Command Line Tools，尚未安装。**
+  影响范围（实测）：`linkDebugFrameworkIosSimulatorArm64` 和跑模拟器不可用；
+  `compileKotlinIosSimulatorArm64` **不受影响，能正常跑**。
+- Android Studio + KMP 插件（用于 IDE 内的 run configuration；命令行构建不需要）
+
+## 尚未验证的部分
+
+诚实记录一下哪些是"已实测"、哪些还只是"文档上应该没问题"：
+
+**已实测通过**：
+- Android 构建出 APK；iOS klib 编译（含 SQLDelight native driver）
+- 35 个单元测试全绿（领域计算 + 真实 SQLite 上的 schema/约束验证）
+- **SQLDelight 全链路**：代码生成、枚举 adapter 双向、CHECK 约束真的拦得住、
+  seed 幂等、结转查询、按天 upsert —— 都在真实 SQLite（JDBC driver）上跑过
+- Compose / lifecycle / navigation / Koin / coroutines / serialization / datetime / SQLDelight
+  在 `iosSimulatorArm64` 上的依赖解析
+
+**还没验证**：
+- **Ktor、Vico、DataStore** —— catalog 里已锁版本，但**还没实际引入编译过**。
+  引入时按「新加依赖前先查 iOS variant」的规矩逐个验。
+- **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
+  它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。
+- **SQLDelight 在真实 iOS 上的运行**（NativeSqliteDriver）—— 只验证了能编译，没跑过。
+  测试用的是 JVM 的 JDBC driver；SQL 和约束是同一套，但 driver 不是。
+- Compose UI 测试（`runComposeUiTest` v2 API）完全没碰。
+- iOS 链接和真机/模拟器运行 —— 缺 Xcode。
+
+### 一处刻意的偏离：不用 `expect class`
+
+`DatabaseDriverFactory` 用的是**接口 + 各平台实现类**，不是 `expect class`。
+两个原因：`expect class` 在 Kotlin 2.4 仍是 Beta（KT-61573，会报 warning）；
+而且 Android 实现需要 `Context`、iOS 不需要，构造参数不同的场景用接口更自然。
+后续加平台实现（Keychain/Keystore、生物识别）建议沿用这个模式。
