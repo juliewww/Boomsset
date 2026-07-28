@@ -89,16 +89,34 @@ Nav3 在 CMP 上**是可用的**，但有个坑：Google 的 `navigation3-runtim
 
 Google 和 JetBrains **都没有**官方的 KMP DI 推荐，这块是社区自选。
 
-### 图表：Vico multiplatform 2.5.2
+### 图表：Vico 3.2.3，坐标是 `:compose-m3`
 
-调研里最意外的一条：Vico 现在有真正的 CMP artifact，发布了 `iosarm64` /
-`iossimulatorarm64` variant，稳定在 2.5.x。**注意用 `:multiplatform` 而不是 `:compose`** ——
-后者线上是 `3.3.0-next.1` 预发布版。
+**这里的模块命名极易搞错，务必看清。** Vico 3.0.0（2026-02）做了一次重组：
+把原来 Android-only 的 `compose` 模块**删掉**，然后把跨平台的 `multiplatform` 模块**改名为
+`compose`**。所以现在：
 
-KoalaPlot 0.12.0 也支持 iOS 但还是 pre-1.0，做内部工具行，做产品依赖偏险。
+- ✅ `com.patrykandpatrick.vico:compose-m3:3.2.3` —— 跨平台，Material 3，当前 stable
+- ⚠️ `com.patrykandpatrick.vico:multiplatform:2.5.2` —— 2.x 遗留线，仍在打补丁但不要用于新项目
 
-如果最后只画一两条简单趋势线，直接用 `Canvas` / `drawPath` 也完全合理，样式完全可控，
-代价是轴、手势、tooltip 都得自己写。
+Vico 官方发布说明的原话是 Compose Multiplatform 模块"is now stable"。已确认 3.2.3
+发布了 `compose-iosarm64` / `compose-iossimulatorarm64` 的 klib，对着 CMP 1.11.1 + Kotlin 2.4.10 构建，
+仓库每周有更新，Software Mansion 赞助。折线/趋势图正是它的主场（`LineCartesianLayer`）。
+
+注意：`compose-iosx64` 停在 3.1.0，3.2.0 起砍了 Intel 模拟器 —— 对我们无影响（本来就只 arm64）。
+另一个代价：3.x 每个 minor 都有 deprecation 或小破坏性改动，升级要读 release notes。
+
+**其他选项的实测结论**（别信 README，这些是查了实际发布的 artifact 的）：
+- KoalaPlot 0.12.0 支持 iOS 但 pre-1.0，且 0.12.0 真的删了一批 API。做产品依赖偏险。
+- ComposeCharts 1.0.0（2026-07）、HDCharts 2.3.0 都可用且活跃，但没有 Vico 的里程数。
+- **aay-chart 不能用于 iOS** —— README 声称支持，但实际 artifact 只有 android/desktop/js/wasm，
+  iOS variant 停在 2023 年。
+- **Kandy（JetBrains 自家）是 JVM-only**，发的是普通 jar，没有 klib。不是 CMP 方案。
+- Charty 停滞：最新发布literally 打的是 `-test` tag，仓库 2025-12 之后没动过。
+
+如果最后只在列表行里画迷你 sparkline，直接用 `Canvas` / `drawPath` 也完全合理 ——
+CMP 在 iOS 上走 Skia，`DrawScope`/`Path`/`TextMeasurer` 都是共享代码，行为一致。
+真正费事的是轴刻度取整、标签避让、日期轴格式化、缩放惯性、hit-testing 这些，
+这才是图表库赚钱的地方。**混合用法值得考虑：正经图表用 Vico，列表行里的小 sparkline 手写 Canvas。**
 
 ### 时间：用标准库的 `kotlin.time`，不用 kotlinx-datetime 的
 
@@ -121,24 +139,66 @@ kotlinx-datetime 本身还是 0.x 且自称 experimental，这是已知风险。
   （Keystore 可靠性和性能问题）。新项目别用。
 - Google 的替代品 `androidx.datastore:datastore-tink` **只发 `-android` 和 `-jvm`，不是 multiplatform**，
   没法作为共享层方案。
-- **可行做法**：`multiplatform-settings 1.3.0` 的 `KeychainSettings`（iOS）+ 自己写一层
-  expect/actual 包 Android Keystore。接受两端底层原语不同、只统一接口。
-  （注意 multiplatform-settings 最后发布是 2024-11，已停滞近 20 个月，但它接口很薄，风险可控。）
-- **生物识别：没有成熟的 KMP 库。** `androidx.biometric` 最新 stable 是 2021 年的 1.1.0，
-  `biometric-compose` 只有 1.4.0-alpha07。自己写 expect/actual 包 Android 的 `BiometricPrompt`
-  和 iOS 的 `LAContext`，大约一百行，比引入小众依赖靠谱。
-- **数据库加密**：SQLCipher 在 iOS 侧没有干净的 KMP 对应物。iOS 上依赖系统的
-  Data Protection（文件级）而不是指望共享的 SQLCipher 方案。
+- **multiplatform-settings 不能用来存密钥。** 两个常见误解，都已实测证伪：
+  `multiplatform-settings-keychain` 这个 artifact **不存在**（`KeychainSettings` 在核心
+  artifact 的 `appleMain` 里，且标注 experimental）；而且整个库**没有任何加密的 Android 后端** ——
+  Android 侧只有明文 `SharedPreferencesSettings` / `DataStoreSettings`。
+  存非敏感偏好可以，存钱相关的东西不行。
+- **DataStore 是跨平台的，但它只给你文件容器，不给加密。** iOS 上要自己写 `Serializer`，
+  密钥放 Keychain。
+
+**结论：存储和应用锁都自己写 expect/actual。** 两个平台加起来存储约 300 行、认证约 120 行，
+不值得把一个 9 star 或者仓库只有 14 个月的项目当成安全边界。
+
+- **`androidMain` 存储**：256-bit DEK 用 AndroidKeyStore 的 AES/GCM key 包起来，
+  包好的 DEK + 密文塞进 DataStore Preferences。**不要用 EncryptedSharedPreferences。**
+  另外记得**把这个安全存储排除出 Android Auto Backup** —— 恢复到新设备上的密文解不开。
+- **`iosMain` 存储**：`platform.Security.SecItemAdd` + `kSecClassGenericPassword` +
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`。可以考虑
+  `SecAccessControlCreateWithFlags(..., kSecAccessControlBiometryCurrentSet)`，
+  让录入的生物特征变更时条目自动失效 —— 对财务类 App 挺有价值。
+- **生物识别没有成熟 KMP 库**，但好消息是 **iOS 侧不需要 cinterop**：`LocalAuthentication`
+  是 Kotlin/Native 的一等 platform library，`iosMain` 里直接
+  `import platform.LocalAuthentication.LAContext` 就行，零 Gradle 配置、零 `.def`、零 Obj-C shim。
+  Android 侧用 stable 的 `androidx.biometric:1.1.0` + `BiometricPrompt`；
+  **不要**为了 Compose 原生 API 就在财务 App 的认证路径上用 1.4.0-alpha。
+  （顺带：KMPAuth 是 OAuth/社交登录，不是生物识别，别搞混；moko-biometry 已三年未维护。）
+- **数据库加密：默认不做整库加密**，除非合规要求。iOS Data Protection 和 Android FBE
+  已经在系统层加密了 App 私有存储。只把真正的密钥（token、应用锁 PIN 哈希）放 Keychain/Keystore。
+  真要在 iOS 上跑 SQLCipher，**有个会静默失败的坑**：任何传递依赖链接了系统 `-lsqlite3`
+  的库（Firebase iOS SDK 就是）会赢得符号解析，你的数据库**变成明文且不报错**，
+  调整链接顺序也修不好。若非做不可，运行时务必断言 `PRAGMA cipher_version` 并检查文件头。
 
 ## 测试
 
-`kotlin-test` + Turbine 1.2.1 + Compose `ui-test` 1.11.1 都能在 `iosSimulatorArm64Test` 上跑。
+组合：`kotlin-test`（runner + 基础断言）+ Kotest **assertions only** + Turbine + Compose `ui-test`，
+都能在 `iosSimulatorArm64Test` 上跑。跑法：`./gradlew :shared:iosSimulatorArm64Test`
+（需要 macOS + Xcode）。Kotlin/Native 上**不经过 JUnit**，是编译出测试二进制丢进模拟器跑。
 
-- Compose UI 测试在 iOS 上可用但仍是 `@ExperimentalTestApi`，且 JUnit `TestRule` API 是
-  desktop 限定 —— 用 `runComposeUiTest`。
-- **MockK 是 JVM-only**，跨平台用 Mokkery 3.4.2，或者干脆手写 fake。
-- Kotest 6.2.3 确实发了 iOS klib（和它"JVM-only"的旧印象相反），但我们暂时不引入，
-  kotlin-test 够用。
+按"最可能坑到你"排序：
+
+1. **`runComposeUiTest` 已废弃。** CMP 1.11.0 起废弃了 `runComposeUiTest` /
+   `runSkikoComposeUiTest` / `runDesktopComposeUiTest`，改用
+   **`androidx.compose.ui.test.v2.runComposeUiTest`**（仍是 `@ExperimentalTestApi`）。
+   行为有变：v2 在非 Android 平台默认 `StandardTestDispatcher` 而不是 `UnconfinedTestDispatcher`，
+   照着 v1 写的测试会挂。
+2. **`ui-test-junit4` 没有 iOS variant**（只有 `-android` 和 `-desktop`）。在 `commonTest` 里用 `ui-test`。
+3. **不要引 Mokkery。** 它是编译器插件，兼容表只列到 Kotlin **2.4.0**，我们在 2.4.10。
+   MockK 是 JVM-only。**默认手写 fake** —— 这个 App 的领域层就是几个窄接口的 repository，
+   手写 fake 配 `MutableStateFlow` + Turbine 很自然，且零编译器插件/KSP/Kotlin 版本耦合。
+   真要 mock 验证再上 **Mockative 3.3.2**（KSP 式，不锁死 Kotlin 版本）。
+4. **`IdlingResource` 在 iOS 上不可用**（已移出 commonMain），用 `waitUntil {}`。
+5. **Kotest 只用断言，不用它的 framework。** `kotest-assertions-core` 有 iOS klib，
+   可以在 `commonTest` 里直接 `shouldBe`，**不需要 `io.kotest` Gradle 插件、不需要 KSP**。
+   它的 framework engine 虽然确实支持 native，但注解式配置（`@EnabledIf`、`@Tags`）
+   在非 JVM 平台**静默失效** —— 因为 Kotlin 不在运行时暴露注解。踩上去很难查。
+
+⚠️ **Turbine 1.2.1 的 iOS klib 是对着 Kotlin stdlib 2.1.21 / coroutines 1.10.2 编的**，
+和我们的 2.4.10 差三个 minor。2.x 内 klib 兼容一般没问题，但**早点写个冒烟测试验证**，
+别等到项目中期才发现。（Turbine 本身没死，只是 2025-06 之后只有依赖升级，无功能更新。）
+
+**assertk 不要用**：还停在 0.28.1（2024-04），iOS klib 声明的是 stdlib 1.9.21，
+1.9→2.4 的 native klib 跨度会以晦涩报错的形式炸出来。
 
 ## 已知未解风险
 

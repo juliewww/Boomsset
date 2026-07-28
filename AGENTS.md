@@ -29,8 +29,8 @@ App 负责算总净值、折算币种、画趋势曲线。核心问题是"我现
 | 本地库 | SQLDelight（本地优先，无后端、无账号） |
 | 偏好 | DataStore Preferences |
 | 网络 | Ktor（只用于拉汇率/行情，不同步用户数据） |
-| 图表 | Vico multiplatform |
-| 测试 | kotlin-test + Turbine + Mokkery + Compose ui-test |
+| 图表 | Vico（坐标是 `:compose-m3`，**不是** `:multiplatform` —— 见 stack.md，这里极易搞错） |
+| 测试 | kotlin-test + Kotest 断言 + Turbine + Compose ui-test；mock 默认手写 fake |
 
 ## 项目结构
 
@@ -71,8 +71,15 @@ iOS 跑模拟器需要 Xcode，用 `iosApp/` 里的 Xcode 工程或 IDE run conf
    同理，导航路由的序列化在 iOS 上要手写 `SerializersModule`，不能靠反射。
 3. **iOS 没有内置 `ViewModelStoreOwner`。** 生命周期得手动绑到 SwiftUI。
 4. **金额绝不用 `Double`。** 用 `Long` 存最小单位（分）或定点小数。浮点误差在净值累加上会被放大。
-5. **新加依赖前先确认它有 iOS artifact。** 很多流行的 Android 库没有。查 maven-metadata.xml，
-   看有没有 `-iosarm64` variant，别信 README 里写的"supports KMP"。
+5. **新加依赖前先确认它有 iOS artifact。** 很多流行的 Android 库没有，**包括一些 README 明确
+   声称支持 KMP 的**（实测有库的 iOS variant 三年前就停发了，README 还写着支持）。
+   查 maven-metadata.xml 看有没有 `-iosarm64`，别信 README。
+6. **`MainActivity` 必须继承 `FragmentActivity`，不是 `ComponentActivity`。**
+   CMP 模板默认给的是 `ComponentActivity`，但 `BiometricPrompt` 的构造函数硬性要求
+   `FragmentActivity`。`FragmentActivity` 本身继承自 `ComponentActivity`，`setContent {}`
+   照常工作 —— 改一行的事，但等做应用锁时才发现就要返工。
+7. **iOS 的 `Info.plist` 必须有 `NSFaceIDUsageDescription`**，否则首次调用 Face ID 时
+   **直接崩溃**（Touch ID 不需要，Face ID 需要）。
 
 ## 领域模型（提案，尚未定稿）
 
