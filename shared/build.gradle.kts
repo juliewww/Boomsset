@@ -52,7 +52,9 @@ kotlin {
             implementation(libs.lifecycle.runtime.compose)
             implementation(libs.navigation.compose)
 
-            implementation(libs.koin.core)
+            // api 而不是 implementation：Koin 的 Module / KoinApplication 出现在
+            // di/Modules.kt 里 initKoin() 的公开签名上，androidApp 调它时需要能看到这些类型。
+            api(libs.koin.core)
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
 
@@ -62,6 +64,8 @@ kotlin {
 
             implementation(libs.sqldelight.runtime)
             implementation(libs.sqldelight.coroutines)
+
+            implementation(libs.vico.compose.m3)
         }
 
         androidMain.dependencies {

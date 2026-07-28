@@ -269,8 +269,16 @@ kotlinx-datetime 本身还是 0.x 且自称 experimental，这是已知风险。
 - Compose / lifecycle / navigation / Koin / coroutines / serialization / datetime / SQLDelight
   在 `iosSimulatorArm64` 上的依赖解析
 
+**Vico / Koin / navigation-compose 已实跑验证**（Android 模拟器）：图表带轴渲染正常、
+Koin 装配成功、底部导航切换正常、SQLDelight 写入到 UI 刷新的链路通。
+
+Vico 3.x 的两个实测细节：
+- 坐标确认为 `com.patrykandpatrick.vico:compose-m3:3.2.3`，iOS klib 存在（已解析验证）
+- **`lineSeries` 已废弃，用 `lineModel`**。API 是从 sources jar 里查的 ——
+  这个库的坐标和 API 都改过，不要凭印象写
+
 **还没验证**：
-- **Ktor、Vico、DataStore** —— catalog 里已锁版本，但**还没实际引入编译过**。
+- **Ktor、DataStore** —— catalog 里已锁版本，但**还没实际引入编译过**。
   引入时按「新加依赖前先查 iOS variant」的规矩逐个验。
 - **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
   它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。

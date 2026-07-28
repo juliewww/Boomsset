@@ -27,3 +27,6 @@ WHERE f.as_of_day <= :day
 upsert:
 INSERT OR REPLACE INTO fx_rate(base, quote, as_of_day, rate_scaled, fetched_at)
 VALUES (?, ?, ?, ?, ?);
+
+selectAllRates:
+SELECT * FROM fx_rate ORDER BY base, quote, as_of_day;

@@ -1,8 +1,12 @@
 package com.boomsset
 
 import android.app.Application
+import com.boomsset.di.androidModule
+import com.boomsset.di.initKoin
 
-/**
- * Koin 的 startKoin 之后放这里。现在先占位，保证 manifest 里的 android:name 有对应类。
- */
-class BoomssetApplication : Application()
+class BoomssetApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        initKoin(androidModule(this))
+    }
+}
