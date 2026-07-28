@@ -4,3 +4,12 @@
 local.properties
 .gradle/
 build/
+captures/
+.kotlin/
+
+# iOS / Xcode
+xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+.xcode.env.local
+Pods/

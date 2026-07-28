@@ -2,8 +2,13 @@
 
 ## 项目状态
 
-**脚手架尚未生成。** 目前仓库只有 README、.gitignore、本文件、`docs/` 和 `gradle/libs.versions.toml`。
-下一步是按下面的结构初始化 Gradle 工程。在那之前，本文里的构建命令都还跑不通。
+**脚手架已就绪，能构建。** 已验证：`:androidApp:assembleDebug` 出 APK、
+`:shared:compileKotlinIosSimulatorArm64` 产出 klib、`:shared:testAndroidHostTest` 3 个测试通过、
+iOS 依赖全部解析成功。
+
+**还没做的：** 领域模型（domain.md 已定稿但未落成代码和 SQLDelight schema）、
+数据层、导航、真实页面。当前 UI 只是个验证构建链路的占位屏。
+`iosApp/` 缺 .xcodeproj，见 iosApp/README.md。
 
 ## 这是什么
 
@@ -54,15 +59,30 @@ docs/            详细文档，按需查阅
 ## 构建与验证
 
 ```bash
-./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译（最容易崩的一环，改完先跑这个）
-./gradlew :shared:allTests                          # 全平台测试
-./gradlew :androidApp:assembleDebug                 # Android 构建
+./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上）
+./gradlew :androidApp:assembleDebug                # Android 构建
 ```
 
 改了共享代码后，**至少要过 `compileKotlinIosSimulatorArm64`**。只跑 Android 构建会漏掉
-Kotlin/Native 特有的失败（反射、线程、依赖缺 iOS variant）。
+Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
-iOS 跑模拟器需要 Xcode，用 `iosApp/` 里的 Xcode 工程或 IDE run configuration。
+**哪些命令需要完整 Xcode，实测结论：**
+
+| 命令 | 需要 Xcode？ | 能抓到什么 |
+|---|---|---|
+| `compileKotlinIosSimulatorArm64` | **不需要** | Kotlin/Native 编译错误。Kotlin/Native 自带 platform 库，编到 klib 不碰 iOS SDK |
+| `linkDebugFrameworkIosSimulatorArm64` | **需要** | 链接期错误。缺 Xcode 会失败在 `xcrun xcodebuild -version` |
+| 跑模拟器 | **需要** | 运行时问题 |
+
+所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
+
+`:shared:allTests` 会带上 iOS 测试，在没有 Xcode 的机器上跑不过，日常用
+`testAndroidHostTest`。注意 `androidHostTest` 这个 target 是在 `shared/build.gradle.kts` 里
+用 `withHostTestBuilder {}` **显式开启**的 —— 新的 KMP Android 插件默认不建测试 target，
+不开的话 commonTest 无处运行且没有任何提示。
+
+iOS 工程状态见 **[iosApp/README.md](iosApp/README.md)**（.xcodeproj 尚未生成，那里写了怎么补）。
 
 ## 硬约束（踩了会浪费很多时间）
 
