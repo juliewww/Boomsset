@@ -2,13 +2,15 @@
 
 ## 项目状态
 
-**脚手架已就绪，能构建。** 已验证：`:androidApp:assembleDebug` 出 APK、
-`:shared:compileKotlinIosSimulatorArm64` 产出 klib、`:shared:testAndroidHostTest` 3 个测试通过、
-iOS 依赖全部解析成功。
+**脚手架 + 领域模型 + SQLDelight schema 已就绪。** 已验证：Android 出 APK、
+iOS klib 编译、**35 个单元测试全绿**（含在真实 SQLite 上验证 schema 约束）。
 
-**还没做的：** 领域模型（domain.md 已定稿但未落成代码和 SQLDelight schema）、
-数据层、导航、真实页面。当前 UI 只是个验证构建链路的占位屏。
+**还没做的：** 仓储层（Repository）、ViewModel、导航、真实页面、行情/汇率的 Ktor 接入、
+Vico 图表。当前 UI 只是个验证构建链路的占位屏。
 `iosApp/` 缺 .xcodeproj，见 iosApp/README.md。
+
+**领域计算的规则都在 [PortfolioCalculator](shared/src/commonMain/kotlin/com/boomsset/domain/PortfolioCalculator.kt)**，
+纯函数无 IO，改之前先读 docs/domain.md。
 
 ## 这是什么
 

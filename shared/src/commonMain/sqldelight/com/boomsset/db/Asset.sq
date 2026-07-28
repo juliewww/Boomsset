@@ -1,0 +1,56 @@
+import com.boomsset.domain.AssetClass;
+import com.boomsset.domain.ValuationMode;
+import kotlin.Boolean;
+
+-- 一项资产或负债。
+--
+-- default_valuation_mode / default_quote_symbol 只是**新快照的默认值**，
+-- 估值一律看 snapshot.mode —— 见 docs/domain.md「为什么 mode 在快照上」。
+CREATE TABLE asset (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                   TEXT NOT NULL,
+    asset_class            TEXT AS AssetClass NOT NULL,
+    subtype_id             INTEGER NOT NULL REFERENCES asset_subtype(id),
+    currency               TEXT NOT NULL,
+    is_liability           INTEGER AS Boolean NOT NULL DEFAULT 0,
+    -- 是否计入资产配置比例。默认计入；关掉它是排除自住房的低成本手段。
+    include_in_allocation  INTEGER AS Boolean NOT NULL DEFAULT 1,
+    default_valuation_mode TEXT AS ValuationMode NOT NULL,
+    default_quote_symbol   TEXT,
+    archived_at            INTEGER,
+    created_at             INTEGER NOT NULL
+);
+
+CREATE INDEX asset_class_idx ON asset(asset_class);
+CREATE INDEX asset_archived ON asset(archived_at);
+
+selectAll:
+SELECT * FROM asset ORDER BY asset_class, name;
+
+selectActive:
+SELECT * FROM asset WHERE archived_at IS NULL ORDER BY asset_class, name;
+
+selectById:
+SELECT * FROM asset WHERE id = ?;
+
+insert:
+INSERT INTO asset(
+    name, asset_class, subtype_id, currency, is_liability,
+    include_in_allocation, default_valuation_mode, default_quote_symbol, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+lastInsertedId:
+SELECT last_insert_rowid();
+
+updateMeta:
+UPDATE asset SET
+    name = ?, asset_class = ?, subtype_id = ?, currency = ?,
+    include_in_allocation = ?, default_valuation_mode = ?, default_quote_symbol = ?
+WHERE id = ?;
+
+-- 归档而非删除：历史快照必须留着，否则过去的净值曲线会凭空变化。
+archive:
+UPDATE asset SET archived_at = ? WHERE id = ?;
+
+unarchive:
+UPDATE asset SET archived_at = NULL WHERE id = ?;

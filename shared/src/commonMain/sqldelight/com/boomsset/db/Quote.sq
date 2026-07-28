@@ -1,0 +1,38 @@
+-- 市场行情。**公开数据，与用户无关。**
+--
+-- 打开 App 刷新只写这里，不写 snapshot —— 否则一天开十次 App 就给每个资产写十条
+-- 持仓记录，快照表会爆。见 docs/domain.md「行情 ≠ 快照」。
+--
+-- 主键是 (symbol, as_of_day)，所以「同一 symbol 同一天只留一条」由数据库保证，
+-- 按天 upsert 用 INSERT OR REPLACE 就够，不需要应用层去查重。
+CREATE TABLE quote (
+    symbol      TEXT NOT NULL,
+    -- ISO 'YYYY-MM-DD'（用户本地时区的日期）。用文本是为了可读且字典序即时间序。
+    as_of_day   TEXT NOT NULL,
+    price_minor INTEGER NOT NULL,
+    currency    TEXT NOT NULL,
+    fetched_at  INTEGER NOT NULL,
+    PRIMARY KEY (symbol, as_of_day)
+);
+
+-- 结转：取某 symbol 在某日之前最近的一条行情。
+-- 取价失败时靠它拿到 stale 价格，而不是把资产当成 0。
+selectLatestOnOrBefore:
+SELECT * FROM quote
+WHERE symbol = :symbol AND as_of_day <= :day
+ORDER BY as_of_day DESC LIMIT 1;
+
+selectLatestForSymbols:
+SELECT q.* FROM quote q
+WHERE q.as_of_day <= :day
+  AND q.as_of_day = (
+      SELECT MAX(q2.as_of_day) FROM quote q2
+      WHERE q2.symbol = q.symbol AND q2.as_of_day <= :day
+  );
+
+upsert:
+INSERT OR REPLACE INTO quote(symbol, as_of_day, price_minor, currency, fetched_at)
+VALUES (?, ?, ?, ?, ?);
+
+selectAllSymbols:
+SELECT DISTINCT symbol FROM quote;

@@ -4,6 +4,18 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.sqldelight)
+}
+
+sqldelight {
+    databases {
+        create("BoomssetDatabase") {
+            packageName.set("com.boomsset.db")
+            // schema 变更后要生成 migration，先把 verifyMigrations 开着，
+            // 免得改了表结构却忘了写 .sqm
+            verifyMigrations.set(true)
+        }
+    }
 }
 
 kotlin {
@@ -47,6 +59,17 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)
+
+            implementation(libs.sqldelight.runtime)
+            implementation(libs.sqldelight.coroutines)
+        }
+
+        androidMain.dependencies {
+            implementation(libs.sqldelight.driver.android)
+        }
+
+        iosMain.dependencies {
+            implementation(libs.sqldelight.driver.native)
         }
 
         commonTest.dependencies {
@@ -54,6 +77,14 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
             implementation(libs.kotest.assertions.core)
+        }
+
+        // 任务名是 testAndroidHostTest。这个 source set 只在
+        // android { withHostTestBuilder {} } 开启后才存在。
+        getByName("androidHostTest").dependencies {
+            // JDBC driver 让 schema、CHECK 约束、seed 幂等性能在真实 SQLite 上验证，
+            // 而不是只验证"能编译"
+            implementation(libs.sqldelight.driver.jvm)
         }
     }
 }

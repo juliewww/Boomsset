@@ -261,14 +261,27 @@ kotlinx-datetime 本身还是 0.x 且自称 experimental，这是已知风险。
 
 诚实记录一下哪些是"已实测"、哪些还只是"文档上应该没问题"：
 
-**已实测通过**：Android 构建出 APK、iOS klib 编译、JVM 单元测试（含 Kotest 断言）、
-以及 Compose / lifecycle / navigation / Koin / coroutines / serialization / datetime
-在 `iosSimulatorArm64` 上的依赖解析。
+**已实测通过**：
+- Android 构建出 APK；iOS klib 编译（含 SQLDelight native driver）
+- 35 个单元测试全绿（领域计算 + 真实 SQLite 上的 schema/约束验证）
+- **SQLDelight 全链路**：代码生成、枚举 adapter 双向、CHECK 约束真的拦得住、
+  seed 幂等、结转查询、按天 upsert —— 都在真实 SQLite（JDBC driver）上跑过
+- Compose / lifecycle / navigation / Koin / coroutines / serialization / datetime / SQLDelight
+  在 `iosSimulatorArm64` 上的依赖解析
 
 **还没验证**：
-- SQLDelight、Ktor、Vico、DataStore —— catalog 里已锁版本，但**还没实际引入编译过**。
+- **Ktor、Vico、DataStore** —— catalog 里已锁版本，但**还没实际引入编译过**。
   引入时按「新加依赖前先查 iOS variant」的规矩逐个验。
 - **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
-  JVM 上已跑通，但 **iOS 测试还没跑过**，这个风险仍然悬着。需要 Xcode 才能验。
+  它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。
+- **SQLDelight 在真实 iOS 上的运行**（NativeSqliteDriver）—— 只验证了能编译，没跑过。
+  测试用的是 JVM 的 JDBC driver；SQL 和约束是同一套，但 driver 不是。
 - Compose UI 测试（`runComposeUiTest` v2 API）完全没碰。
 - iOS 链接和真机/模拟器运行 —— 缺 Xcode。
+
+### 一处刻意的偏离：不用 `expect class`
+
+`DatabaseDriverFactory` 用的是**接口 + 各平台实现类**，不是 `expect class`。
+两个原因：`expect class` 在 Kotlin 2.4 仍是 Beta（KT-61573，会报 warning）；
+而且 Android 实现需要 `Context`、iOS 不需要，构造参数不同的场景用接口更自然。
+后续加平台实现（Keychain/Keystore、生物识别）建议沿用这个模式。

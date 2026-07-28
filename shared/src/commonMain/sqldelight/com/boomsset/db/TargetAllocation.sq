@@ -1,0 +1,55 @@
+import com.boomsset.domain.AssetClass;
+import kotlin.Boolean;
+
+-- 目标配置。**允许多套并存**（"我现在 vs 稳健 vs 激进"），其中一套 is_active。
+CREATE TABLE target_allocation (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    is_built_in  INTEGER AS Boolean NOT NULL DEFAULT 0,
+    is_active    INTEGER AS Boolean NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX target_allocation_builtin_name ON target_allocation(name) WHERE is_built_in = 1;
+
+-- 目标比例用**基点**（basis point）存：100% = 10000，30% = 3000。
+-- 用整数避免小数百分比的精度问题，校验就是「一套之和 = 10000」。
+CREATE TABLE target_allocation_item (
+    allocation_id      INTEGER NOT NULL REFERENCES target_allocation(id) ON DELETE CASCADE,
+    asset_class        TEXT AS AssetClass NOT NULL,
+    target_percent_bp  INTEGER NOT NULL,
+    PRIMARY KEY (allocation_id, asset_class),
+    CHECK (target_percent_bp >= 0 AND target_percent_bp <= 10000)
+);
+
+selectAll:
+SELECT * FROM target_allocation ORDER BY is_built_in DESC, name;
+
+selectActive:
+SELECT * FROM target_allocation WHERE is_active = 1 LIMIT 1;
+
+selectItems:
+SELECT * FROM target_allocation_item WHERE allocation_id = ?;
+
+-- 校验用：一套配置的比例之和，应当等于 10000
+sumOfItems:
+SELECT COALESCE(SUM(target_percent_bp), 0) FROM target_allocation_item WHERE allocation_id = ?;
+
+insertAllocation:
+INSERT INTO target_allocation(name, is_built_in, is_active, created_at) VALUES (?, ?, ?, ?);
+
+lastInsertedId:
+SELECT last_insert_rowid();
+
+upsertItem:
+INSERT OR REPLACE INTO target_allocation_item(allocation_id, asset_class, target_percent_bp)
+VALUES (?, ?, ?);
+
+clearActive:
+UPDATE target_allocation SET is_active = 0;
+
+setActive:
+UPDATE target_allocation SET is_active = 1 WHERE id = ?;
+
+deleteAllocation:
+DELETE FROM target_allocation WHERE id = ? AND is_built_in = 0;

@@ -1,0 +1,29 @@
+-- 汇率。折算历史净值必须用**当时的汇率**，不是今天的 ——
+-- 否则汇率波动会污染历史曲线，让用户看到自己从没经历过的涨跌。
+--
+-- rate 用定点整数 scale=8，不用 REAL。理由和金额一样：这个数会参与净值累加。
+CREATE TABLE fx_rate (
+    base        TEXT NOT NULL,
+    quote       TEXT NOT NULL,
+    as_of_day   TEXT NOT NULL,
+    rate_scaled INTEGER NOT NULL,
+    fetched_at  INTEGER NOT NULL,
+    PRIMARY KEY (base, quote, as_of_day)
+);
+
+selectLatestOnOrBefore:
+SELECT * FROM fx_rate
+WHERE base = :base AND quote = :quote AND as_of_day <= :day
+ORDER BY as_of_day DESC LIMIT 1;
+
+selectAllOnOrBefore:
+SELECT f.* FROM fx_rate f
+WHERE f.as_of_day <= :day
+  AND f.as_of_day = (
+      SELECT MAX(f2.as_of_day) FROM fx_rate f2
+      WHERE f2.base = f.base AND f2.quote = f.quote AND f2.as_of_day <= :day
+  );
+
+upsert:
+INSERT OR REPLACE INTO fx_rate(base, quote, as_of_day, rate_scaled, fetched_at)
+VALUES (?, ?, ?, ?, ?);
