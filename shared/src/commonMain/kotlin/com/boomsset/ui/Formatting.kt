@@ -3,6 +3,7 @@ package com.boomsset.ui
 import com.boomsset.domain.Money
 import com.boomsset.domain.Quantity
 import com.boomsset.domain.TargetAllocation
+import com.boomsset.domain.parseMoneyMinor
 import kotlin.math.abs
 
 /**
@@ -129,6 +130,29 @@ fun Int.bpToPercent(decimals: Int = 2, withSign: Boolean = false): String {
     }
     return "$sign$body%"
 }
+
+/**
+ * 基点预填到百分比输入框用的格式：**不带 % 号、不带多余的 0**。
+ * 3000 → "30"，1250 → "12.5"
+ *
+ * 不变量：本函数的输出必须能被 [parsePercentToBp] 解析回原值。有测试锁着 ——
+ * 这是从「预填带千分位导致保存永久禁用」那个 bug 学到的教训。
+ */
+fun Int.bpToInputPercent(): String {
+    val whole = this / 100
+    val frac = this % 100
+    if (frac == 0) return whole.toString()
+    return "$whole.${frac.toString().padStart(2, '0').trimEnd('0')}"
+}
+
+/**
+ * 百分比字符串 → 基点。`"30"` → 3000，`"12.5"` → 1250。
+ *
+ * 复用统一的定点解析器：百分比保留两位小数正好等于基点（1% = 100bp），
+ * 所以 scale 就是 2 —— 和金额用同一条代码路径，不走 Double。
+ */
+fun parsePercentToBp(text: String): Int? =
+    parseMoneyMinor(text)?.takeIf { it in 0..TargetAllocation.TOTAL_BP }?.toInt()
 
 /** 目标配置比例之和的可读描述，用于校验提示。 */
 fun TargetAllocation.sumDescription(): String =

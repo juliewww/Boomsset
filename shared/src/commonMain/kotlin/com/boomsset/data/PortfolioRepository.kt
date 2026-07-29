@@ -24,6 +24,9 @@ interface PortfolioRepository {
     /** 生效中的目标配置。没有则发射 null。 */
     fun observeActiveTarget(): Flow<TargetAllocation?>
 
+    /** 全部目标配置（内置 + 自定义）。允许多套并存对比。 */
+    fun observeAllocations(): Flow<List<TargetAllocation>>
+
     fun observeSubtypes(): Flow<List<AssetSubtype>>
 
     /** 新建资产，同时写入第一条快照。返回资产 id。 */
@@ -63,6 +66,25 @@ interface PortfolioRepository {
 
     /** 按天 upsert 行情。同上。 */
     suspend fun upsertQuote(quote: com.boomsset.domain.Quote)
+
+    /** 切换生效的目标配置。同时只有一套生效。 */
+    suspend fun setActiveAllocation(id: Long)
+
+    /**
+     * 保存某套配置的目标比例。
+     *
+     * 调用方必须先校验之和为 [TargetAllocation.TOTAL_BP] —— 不闭合的配置存进去
+     * 会让偏离度全错，而且不报错。这里也再挡一道。
+     */
+    suspend fun saveAllocationTargets(id: Long, targetsBp: Map<AssetClass, Int>)
+
+    /** 新建自定义配置，返回 id。 */
+    suspend fun createAllocation(name: String, targetsBp: Map<AssetClass, Int>): Long
+
+    suspend fun renameAllocation(id: Long, name: String)
+
+    /** 只能删自定义的。内置的删不掉是有意为之。 */
+    suspend fun deleteAllocation(id: Long)
 }
 
 class SqlDelightPortfolioRepository(
@@ -91,12 +113,23 @@ class SqlDelightPortfolioRepository(
         )
     }
 
+    /**
+     * ⚠️ 必须 combine **两个**流。
+     *
+     * 原来只监听 allocation 表、在 map 里同步查 items —— 那样编辑目标比例（写 items 表）
+     * 不会让这个流重新发射，配置页看不到改动。改成两个流 combine 之后，
+     * 改名和改比例都会触发刷新。
+     */
     override fun observeActiveTarget(): Flow<TargetAllocation?> =
-        db.targetAllocationQueries.selectAll().asFlow().mapToList(dispatcher).map { rows ->
-            val active = rows.firstOrNull { it.is_active } ?: return@map null
-            val items = db.targetAllocationQueries.selectItems(active.id).executeAsList()
-            active.toDomain(items)
-        }
+        observeAllocations().map { list -> list.firstOrNull { it.isActive } }
+
+    override fun observeAllocations(): Flow<List<TargetAllocation>> = combine(
+        db.targetAllocationQueries.selectAll().asFlow().mapToList(dispatcher),
+        db.targetAllocationQueries.selectAllItems().asFlow().mapToList(dispatcher),
+    ) { allocations, items ->
+        val byAllocation = items.groupBy { it.allocation_id }
+        allocations.map { row -> row.toDomain(byAllocation[row.id].orEmpty()) }
+    }
 
     override fun observeSubtypes(): Flow<List<AssetSubtype>> =
         db.assetSubtypeQueries.selectAll().asFlow().mapToList(dispatcher)
@@ -234,6 +267,66 @@ class SqlDelightPortfolioRepository(
                 fetched_at = clock.now().toEpochMilliseconds(),
             )
         }
+
+    override suspend fun setActiveAllocation(id: Long): Unit = withContext(dispatcher) {
+        db.transaction {
+            db.targetAllocationQueries.clearActive()
+            db.targetAllocationQueries.setActive(id)
+        }
+    }
+
+    override suspend fun saveAllocationTargets(
+        id: Long,
+        targetsBp: Map<AssetClass, Int>,
+    ): Unit = withContext(dispatcher) {
+        requireClosed(targetsBp)
+        db.transaction {
+            // 先清再写：否则删掉某个大类的条目会残留旧值
+            db.targetAllocationQueries.deleteItems(id)
+            targetsBp.forEach { (assetClass, bp) ->
+                db.targetAllocationQueries.upsertItem(id, assetClass, bp.toLong())
+            }
+        }
+    }
+
+    override suspend fun createAllocation(
+        name: String,
+        targetsBp: Map<AssetClass, Int>,
+    ): Long = withContext(dispatcher) {
+        requireClosed(targetsBp)
+        var newId = -1L
+        db.transaction {
+            db.targetAllocationQueries.insertAllocation(
+                name = name,
+                is_built_in = false,
+                is_active = false,
+                created_at = clock.now().toEpochMilliseconds(),
+            )
+            newId = db.targetAllocationQueries.lastInsertedId().executeAsOne()
+            targetsBp.forEach { (assetClass, bp) ->
+                db.targetAllocationQueries.upsertItem(newId, assetClass, bp.toLong())
+            }
+        }
+        newId
+    }
+
+    override suspend fun renameAllocation(id: Long, name: String): Unit =
+        withContext(dispatcher) {
+            db.targetAllocationQueries.updateName(name, id)
+        }
+
+    override suspend fun deleteAllocation(id: Long): Unit = withContext(dispatcher) {
+        // SQL 里带了 is_built_in = 0 的条件，内置的删不掉
+        db.targetAllocationQueries.deleteAllocation(id)
+    }
+
+    private fun requireClosed(targetsBp: Map<AssetClass, Int>) {
+        val sum = targetsBp.values.sum()
+        require(sum == TargetAllocation.TOTAL_BP) {
+            "目标比例之和是 $sum 基点，必须是 ${TargetAllocation.TOTAL_BP}（100%）。" +
+                "不闭合的配置会让偏离度全错，而且不会报错。"
+        }
+    }
 
     override suspend fun upsertQuote(quote: com.boomsset.domain.Quote): Unit =
         withContext(dispatcher) {

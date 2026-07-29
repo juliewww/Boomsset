@@ -2,6 +2,7 @@ package com.boomsset.ui.allocation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,10 +11,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -27,8 +34,16 @@ import com.boomsset.ui.formatWithCurrency
 @Composable
 fun AllocationScreen(
     state: AllocationUiState,
+    onSelectAllocation: (Long) -> Unit,
+    onSaveTargets: (id: Long, targetsBp: Map<AssetClass, Int>) -> Unit,
+    onCreateAllocation: (name: String, targetsBp: Map<AssetClass, Int>) -> Unit,
+    onRestoreBuiltIn: (TargetAllocation) -> Unit,
+    onDeleteAllocation: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var editing by remember { mutableStateOf<TargetAllocation?>(null) }
+    var creating by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -47,6 +62,15 @@ fun AllocationScreen(
             else -> {
                 Header(view)
 
+                AllocationPicker(
+                    allocations = state.allocations,
+                    onSelect = onSelectAllocation,
+                    onEdit = { editing = it },
+                    onCreate = { creating = true },
+                    onRestore = onRestoreBuiltIn,
+                    onDelete = onDeleteAllocation,
+                )
+
                 // 净资产 ≤ 0 时比例在数学上无意义，直说而不是显示乱数
                 if (view.netWorth.minorUnits <= 0L) {
                     NegativeNetWorthNotice()
@@ -58,6 +82,77 @@ fun AllocationScreen(
                 }
 
                 DenominatorNote()
+            }
+        }
+    }
+
+    editing?.let { allocation ->
+        TargetEditorDialog(
+            allocation = allocation,
+            onDismiss = { editing = null },
+            onSave = { _, targets ->
+                onSaveTargets(allocation.id, targets)
+                editing = null
+            },
+        )
+    }
+
+    if (creating) {
+        TargetEditorDialog(
+            allocation = null,
+            onDismiss = { creating = false },
+            onSave = { name, targets ->
+                onCreateAllocation(name, targets)
+                creating = false
+            },
+        )
+    }
+}
+
+/**
+ * 目标配置的切换与管理。
+ *
+ * 多套并存可对比是 domain.md 定的产品决策 —— 这里让它真正可用。
+ */
+@Composable
+private fun AllocationPicker(
+    allocations: List<TargetAllocation>,
+    onSelect: (Long) -> Unit,
+    onEdit: (TargetAllocation) -> Unit,
+    onCreate: () -> Unit,
+    onRestore: (TargetAllocation) -> Unit,
+    onDelete: (Long) -> Unit,
+) {
+    val active = allocations.firstOrNull { it.isActive }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("对比哪套目标", style = MaterialTheme.typography.labelMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            allocations.forEach { allocation ->
+                FilterChip(
+                    selected = allocation.isActive,
+                    onClick = { onSelect(allocation.id) },
+                    label = { Text(allocation.name) },
+                )
+            }
+            FilterChip(selected = false, onClick = onCreate, label = { Text("＋ 新建") })
+        }
+
+        active?.let { allocation ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { onEdit(allocation) }) { Text("编辑比例") }
+                if (allocation.isBuiltIn) {
+                    TextButton(onClick = { onRestore(allocation) }) { Text("恢复默认") }
+                } else {
+                    TextButton(onClick = { onDelete(allocation.id) }) { Text("删除") }
+                }
+            }
+            // 内置预设不是权威处方 —— domain.md 要求 UI 不能呈现为针对用户的推荐
+            if (allocation.isBuiltIn) {
+                Text(
+                    "内置预设是行业常见的起点，不是针对你情况的建议。按自己的目标改。",
+                    style = MaterialTheme.typography.labelSmall,
+                )
             }
         }
     }
