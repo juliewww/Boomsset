@@ -8,6 +8,8 @@ import com.boomsset.data.SqlDelightPortfolioRepository
 import com.boomsset.data.SqlDelightSettingsRepository
 import com.boomsset.network.FrankfurterFxRateSource
 import com.boomsset.network.FxRateSource
+import com.boomsset.network.QuoteSource
+import com.boomsset.network.TencentQuoteSource
 import com.boomsset.network.createHttpClient
 import com.boomsset.data.createDatabase
 import com.boomsset.ui.allocation.AllocationViewModel
@@ -43,10 +45,12 @@ val sharedModule: Module = module {
 
     single { createHttpClient() }
     single<FxRateSource> { FrankfurterFxRateSource(client = get()) }
+    single<QuoteSource> { TencentQuoteSource(client = get()) }
     single {
         RateRefresher(
             repository = get(),
             fxSource = get(),
+            quoteSource = get(),
             dispatcher = Dispatchers.Default,
         )
     }

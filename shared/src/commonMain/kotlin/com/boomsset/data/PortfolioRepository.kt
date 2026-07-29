@@ -240,7 +240,7 @@ class SqlDelightPortfolioRepository(
             db.quoteQueries.upsert(
                 symbol = quote.symbol,
                 as_of_day = quote.asOfDay,
-                price_minor = quote.price.minorUnits,
+                price_scaled = quote.price.scaled,
                 currency = quote.currency,
                 fetched_at = clock.now().toEpochMilliseconds(),
             )

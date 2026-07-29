@@ -9,7 +9,8 @@ CREATE TABLE quote (
     symbol      TEXT NOT NULL,
     -- ISO 'YYYY-MM-DD'（用户本地时区的日期）。用文本是为了可读且字典序即时间序。
     as_of_day   TEXT NOT NULL,
-    price_minor INTEGER NOT NULL,
+    -- scale-8 定点单价。不是分！低价股和代币需要 2 位小数以上的精度。
+    price_scaled INTEGER NOT NULL,
     currency    TEXT NOT NULL,
     fetched_at  INTEGER NOT NULL,
     PRIMARY KEY (symbol, as_of_day)
@@ -31,7 +32,7 @@ WHERE q.as_of_day <= :day
   );
 
 upsert:
-INSERT OR REPLACE INTO quote(symbol, as_of_day, price_minor, currency, fetched_at)
+INSERT OR REPLACE INTO quote(symbol, as_of_day, price_scaled, currency, fetched_at)
 VALUES (?, ?, ?, ?, ?);
 
 selectAllSymbols:

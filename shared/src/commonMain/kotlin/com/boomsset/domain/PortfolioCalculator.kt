@@ -24,9 +24,21 @@ object PortfolioCalculator {
             is Snapshot.Manual -> snapshot.value
             is Snapshot.Quoted -> {
                 val quote = quotes[snapshot.quoteSymbol]
-                quote?.let { snapshot.quantity.valueAt(it.price) }
+                // 份额 × 单价 在极端数值下会溢出 Long，[FixedPoint] 选择抛异常而不是回绕。
+                // 那个选择是对的（不能静默算错），但异常绝不能逃到 UI —— 实跑时一次手误
+                // 输入（1 亿股茅台）就让整个 App 崩了。这里降级成"无法估值"：
+                // 既没有算错，也没有崩。
+                quote?.let {
+                    runCatching { snapshot.quantity.valueAt(it.price) }.getOrNull()
+                }
             }
         }
+
+    /**
+     * 折算到基准币种。同样吞掉溢出 —— 汇率乘法也可能溢出，理由同 [localValue]。
+     */
+    private fun convertSafely(rate: ExchangeRate, amount: Money): Money? =
+        runCatching { rate.convert(amount) }.getOrNull()
 
     /**
      * 某时点的净值。
@@ -49,12 +61,12 @@ object PortfolioCalculator {
             val local = localValue(snapshot, context.quotes)
             val rate = context.rateTo(asset.currency)
 
-            if (local == null || rate == null) {
+            val converted = if (local != null && rate != null) convertSafely(rate, local) else null
+            if (converted == null) {
                 unpriced += asset.id
                 continue
             }
 
-            val converted = rate.convert(local)
             if (asset.isLiability) liabilityTotal += converted else assetTotal += converted
         }
 
@@ -91,7 +103,7 @@ object PortfolioCalculator {
             val snapshot = snapshots[asset.id] ?: continue
             val local = localValue(snapshot, context.quotes) ?: continue
             val rate = context.rateTo(asset.currency) ?: continue
-            val converted = rate.convert(local)
+            val converted = convertSafely(rate, local) ?: continue
 
             val bucket = if (asset.isLiability) liabilitiesByClass else assetsByClass
             bucket[asset.assetClass] = (bucket[asset.assetClass] ?: Money.ZERO) + converted
@@ -153,8 +165,10 @@ object PortfolioCalculator {
             val pnl = profitAndLoss(snapshot, context.quotes) ?: continue
             val rate = context.rateTo(asset.currency) ?: continue
 
-            cost += rate.convert(pnl.cost)
-            value += rate.convert(pnl.value)
+            val convertedCost = convertSafely(rate, pnl.cost) ?: continue
+            val convertedValue = convertSafely(rate, pnl.value) ?: continue
+            cost += convertedCost
+            value += convertedValue
             covered += asset.id
         }
 

@@ -2,6 +2,7 @@ package com.boomsset.data
 
 import com.boomsset.domain.PortfolioData
 import com.boomsset.network.FxRateSource
+import com.boomsset.network.QuoteSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -23,6 +24,7 @@ import kotlin.time.Clock
 class RateRefresher(
     private val repository: PortfolioRepository,
     private val fxSource: FxRateSource,
+    private val quoteSource: QuoteSource,
     private val dispatcher: CoroutineDispatcher,
     private val clock: Clock = Clock.System,
     private val zone: TimeZone = TimeZone.currentSystemDefault(),
@@ -78,6 +80,38 @@ class RateRefresher(
         }
 
     private fun attemptKey(from: String, to: String, day: String) = "$from>$to@$day"
+
+    /**
+     * 刷新持仓里 QUOTED 快照用到的行情代码。
+     *
+     * 和汇率同样的收敛策略：每个 (代码, 日期) 只试一次，防止「写 quote → 数据流重发 →
+     * 再刷新」在失败时变成无限循环。
+     *
+     * 代码取自**快照上的 quoteSymbol**，不是资产上的默认值 —— 退市转 MANUAL 的资产
+     * 其历史快照仍需要行情，而资产上的 symbol 已经被清掉了。
+     */
+    suspend fun refreshQuotes(): RefreshResult = withContext(dispatcher) {
+        val data = runCatching { repository.observePortfolio().first() }
+            .getOrNull() ?: return@withContext RefreshResult(0, 0)
+
+        val today = clock.now().toLocalDateTime(zone).date
+        val activeIds = data.assets.filter { !it.isArchived }.map { it.id }.toSet()
+        val symbols = data.snapshots
+            .filterIsInstance<com.boomsset.domain.Snapshot.Quoted>()
+            .filter { it.assetId in activeIds }
+            .map { it.quoteSymbol }
+            .toSet()
+
+        val toFetch = mutex.withLock {
+            symbols.filter { attempted.add("quote:$it@$today") }
+        }.toSet()
+        if (toFetch.isEmpty()) return@withContext RefreshResult(0, 0)
+
+        val quotes = quoteSource.fetch(toFetch, today)
+        quotes.forEach { repository.upsertQuote(it) }
+        // 取不到的代码不会出现在返回值里，差额就是失败数
+        RefreshResult(written = quotes.size, failed = toFetch.size - quotes.size)
+    }
 
     /**
      * 需要哪些币种对。排除基准币种自身（1:1，不需要查），也排除已归档资产。

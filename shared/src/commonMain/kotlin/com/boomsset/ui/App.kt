@@ -122,17 +122,8 @@ fun App() {
                 subtypes = netWorthState.subtypes,
                 defaultCurrency = netWorthState.baseCurrency,
                 onDismiss = { showAddDialog = false },
-                onConfirm = { name, assetClass, subtypeId, currency, value, cost, isLiability, include ->
-                    netWorthViewModel.addManualAsset(
-                        name = name,
-                        assetClass = assetClass,
-                        subtypeId = subtypeId,
-                        currency = currency,
-                        isLiability = isLiability,
-                        includeInAllocation = include,
-                        value = value,
-                        costBasis = cost,
-                    )
+                onConfirm = { newAsset ->
+                    netWorthViewModel.addAsset(newAsset)
                     showAddDialog = false
                 },
             )

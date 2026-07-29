@@ -124,7 +124,11 @@ object PortfolioSeriesCalculator {
                     asset = asset,
                     snapshot = snapshot,
                     localValue = local,
-                    baseValue = if (local != null && rate != null) rate.convert(local) else null,
+                    baseValue = if (local != null && rate != null) {
+                        runCatching { rate.convert(local) }.getOrNull()
+                    } else {
+                        null
+                    },
                     pnl = snapshot?.let {
                         PortfolioCalculator.profitAndLoss(it, context.quotes)
                     },

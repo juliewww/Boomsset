@@ -147,8 +147,8 @@ class PortfolioSeriesCalculatorTest {
                 ),
             ),
             quotes = listOf(
-                Quote("X", "2026-06-01", Money(100_00), cny, Instant.fromEpochMilliseconds(0)),
-                Quote("X", "2026-07-01", Money(200_00), cny, Instant.fromEpochMilliseconds(0)),
+                Quote("X", "2026-06-01", UnitPrice.ofMajorUnits(100), cny, Instant.fromEpochMilliseconds(0)),
+                Quote("X", "2026-07-01", UnitPrice.ofMajorUnits(200), cny, Instant.fromEpochMilliseconds(0)),
             ),
             fxRates = emptyList(),
         )

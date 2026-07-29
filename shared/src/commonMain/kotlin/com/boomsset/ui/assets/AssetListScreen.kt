@@ -172,7 +172,7 @@ private fun AssetRow(
             // 无法估值时明确说原因，不显示成 0 —— 显示 0 会让用户以为资产没了
             if (valuation.isUnpriced) {
                 Text(
-                    "缺行情或汇率，这项没有计入净值",
+                    "无法估值（缺行情/汇率，或数量级超出可计算范围），这项没有计入净值",
                     style = MaterialTheme.typography.labelSmall,
                 )
             }

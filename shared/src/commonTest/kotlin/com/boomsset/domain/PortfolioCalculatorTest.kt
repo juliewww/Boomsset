@@ -21,8 +21,9 @@ class PortfolioCalculatorTest {
         base: String = cny,
     ) = ValuationContext(base, quotes, rates)
 
+    /** priceMinor 沿用「分」为单位，内部换算成 scale-8 的 UnitPrice，保持既有期望值不变。 */
     private fun quote(symbol: String, priceMinor: Long) =
-        Quote(symbol, "2026-07-28", Money(priceMinor), cny, t)
+        Quote(symbol, "2026-07-28", UnitPrice(priceMinor * 1_000_000L), cny, t)
 
     private fun asset(
         id: Long,

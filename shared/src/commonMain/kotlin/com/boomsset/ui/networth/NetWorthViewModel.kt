@@ -73,9 +73,15 @@ class NetWorthViewModel(
                 repository.observePortfolio(),
                 settings.observeBaseCurrency(),
             ) { data, currency ->
-                data.assets.filter { !it.isArchived }.map { it.currency }.toSet() to currency
+                // 币种集合或行情代码集合任一变化都要重新刷新
+                val currencies = data.assets.filter { !it.isArchived }.map { it.currency }.toSet()
+                val symbols = data.snapshots
+                    .filterIsInstance<com.boomsset.domain.Snapshot.Quoted>()
+                    .map { it.quoteSymbol }.toSet()
+                (currencies + symbols) to currency
             }.distinctUntilChanged().collect { (_, currency) ->
                 rateRefresher.refreshForHoldings(currency)
+                rateRefresher.refreshQuotes()
             }
         }
     }
@@ -122,55 +128,24 @@ class NetWorthViewModel(
         }
     }
 
-    fun addManualAsset(
-        name: String,
-        assetClass: AssetClass,
-        subtypeId: Long,
-        currency: String,
-        isLiability: Boolean,
-        includeInAllocation: Boolean,
-        value: Money,
-        costBasis: Money?,
-    ) {
+    /**
+     * 新建资产。两种估值模式走同一个入口 —— 参数校验在 [com.boomsset.ui.NewAsset]
+     * 的构造处（对话框）完成，这里只负责落库。
+     */
+    fun addAsset(newAsset: com.boomsset.ui.NewAsset) {
         viewModelScope.launch {
             repository.createAsset(
-                name = name,
-                assetClass = assetClass,
-                subtypeId = subtypeId,
-                currency = currency,
-                isLiability = isLiability,
-                includeInAllocation = includeInAllocation,
-                mode = ValuationMode.MANUAL,
-                quoteSymbol = null,
-                initialValue = value,
-                initialQuantity = null,
-                costBasis = costBasis,
-            )
-        }
-    }
-
-    fun addQuotedAsset(
-        name: String,
-        assetClass: AssetClass,
-        subtypeId: Long,
-        currency: String,
-        quoteSymbol: String,
-        quantity: Quantity,
-        costBasis: Money?,
-    ) {
-        viewModelScope.launch {
-            repository.createAsset(
-                name = name,
-                assetClass = assetClass,
-                subtypeId = subtypeId,
-                currency = currency,
-                isLiability = false,
-                includeInAllocation = true,
-                mode = ValuationMode.QUOTED,
-                quoteSymbol = quoteSymbol,
-                initialValue = null,
-                initialQuantity = quantity,
-                costBasis = costBasis,
+                name = newAsset.name,
+                assetClass = newAsset.assetClass,
+                subtypeId = newAsset.subtypeId,
+                currency = newAsset.currency,
+                isLiability = newAsset.isLiability,
+                includeInAllocation = newAsset.includeInAllocation,
+                mode = newAsset.mode,
+                quoteSymbol = newAsset.quoteSymbol,
+                initialValue = newAsset.value,
+                initialQuantity = newAsset.quantity,
+                costBasis = newAsset.costBasis,
             )
         }
     }
