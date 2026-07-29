@@ -58,6 +58,12 @@ class RateRefresherTest {
         override suspend fun archiveAsset(assetId: Long) {}
         override suspend fun upsertFxRate(rate: FxRate) { writtenRates += rate }
         override suspend fun upsertQuote(quote: Quote) {}
+        override fun observeAllocations(): Flow<List<TargetAllocation>> = flowOf(emptyList())
+        override suspend fun setActiveAllocation(id: Long) {}
+        override suspend fun saveAllocationTargets(id: Long, targetsBp: Map<AssetClass, Int>) {}
+        override suspend fun createAllocation(name: String, targetsBp: Map<AssetClass, Int>): Long = 0
+        override suspend fun renameAllocation(id: Long, name: String) {}
+        override suspend fun deleteAllocation(id: Long) {}
     }
 
     private class FakeFxSource(

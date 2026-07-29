@@ -53,3 +53,14 @@ UPDATE target_allocation SET is_active = 1 WHERE id = ?;
 
 deleteAllocation:
 DELETE FROM target_allocation WHERE id = ? AND is_built_in = 0;
+
+-- 一次拿全部 item，避免按 allocation 逐条查（N+1），
+-- 也让「items 变化」能进入数据流触发 UI 刷新。
+selectAllItems:
+SELECT * FROM target_allocation_item;
+
+updateName:
+UPDATE target_allocation SET name = ? WHERE id = ?;
+
+deleteItems:
+DELETE FROM target_allocation_item WHERE allocation_id = ?;

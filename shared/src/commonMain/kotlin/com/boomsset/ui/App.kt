@@ -102,7 +102,14 @@ fun App() {
                 composable(ROUTE_ALLOCATION) {
                     val allocationViewModel: AllocationViewModel = koinViewModel()
                     val allocationState by allocationViewModel.state.collectAsStateWithLifecycle()
-                    AllocationScreen(state = allocationState)
+                    AllocationScreen(
+                        state = allocationState,
+                        onSelectAllocation = allocationViewModel::selectAllocation,
+                        onSaveTargets = allocationViewModel::saveTargets,
+                        onCreateAllocation = allocationViewModel::createAllocation,
+                        onRestoreBuiltIn = allocationViewModel::restoreBuiltIn,
+                        onDeleteAllocation = allocationViewModel::deleteAllocation,
+                    )
                 }
                 composable(ROUTE_ASSETS) {
                     val assetsViewModel: AssetListViewModel = koinViewModel()
