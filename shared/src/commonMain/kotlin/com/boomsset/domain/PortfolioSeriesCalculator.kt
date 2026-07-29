@@ -113,6 +113,7 @@ object PortfolioSeriesCalculator {
         val at = today.endOfDayIn(zone)
         val snapshots = data.latestSnapshotsAt(at)
         val context = data.valuationContextAt(today, baseCurrency)
+        val counts = data.snapshots.groupingBy { it.assetId }.eachCount()
 
         return data.assets
             .filter { includeArchived || !it.isArchived }
@@ -132,6 +133,7 @@ object PortfolioSeriesCalculator {
                     pnl = snapshot?.let {
                         PortfolioCalculator.profitAndLoss(it, context.quotes)
                     },
+                    snapshotCount = counts[asset.id] ?: 0,
                 )
             }
     }

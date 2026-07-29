@@ -17,6 +17,8 @@ data class AssetValuation(
     val baseValue: Money?,
     /** 自身币种下的浮动盈亏。没填成本或无法估值时为 null。 */
     val pnl: ProfitAndLoss?,
+    /** 该资产现有的快照条数。用于 [AssetEditPolicy] 判断币种/负债标记能否改。 */
+    val snapshotCount: Int = 0,
 ) {
     /** 无法估值 —— UI 要显式提示，不能显示成 0。 */
     val isUnpriced: Boolean get() = snapshot != null && baseValue == null

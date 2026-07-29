@@ -7,6 +7,7 @@ import com.boomsset.domain.TargetAllocation
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -18,6 +19,7 @@ import kotlin.time.Instant
  * 目标配置的编辑走真实 SQLite 验证 —— 光单测证明不了事务、唯一索引和
  * 「只能删自定义」这类约束真的生效。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class AllocationEditingTest {
 
     private fun repo(): Pair<BoomssetDatabase, SqlDelightPortfolioRepository> {

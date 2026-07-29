@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.boomsset.data.PortfolioRepository
 import com.boomsset.data.SettingsRepository
 import com.boomsset.domain.AssetClass
+import com.boomsset.domain.AssetSubtype
 import com.boomsset.domain.AssetValuation
 import com.boomsset.domain.Money
 import com.boomsset.domain.PortfolioSeriesCalculator
@@ -25,6 +26,9 @@ data class AssetListUiState(
     /** 按大类分组，组内按名字。已归档的不在这里。 */
     val grouped: Map<AssetClass, List<AssetValuation>> = emptyMap(),
     val archivedCount: Int = 0,
+    /** 已归档的资产，供「取消归档」用。 */
+    val archived: List<AssetValuation> = emptyList(),
+    val subtypes: List<AssetSubtype> = emptyList(),
 ) {
     val isEmpty: Boolean get() = !loading && grouped.values.all { it.isEmpty() }
     val unpricedCount: Int get() = grouped.values.sumOf { list -> list.count { it.isUnpriced } }
@@ -41,9 +45,17 @@ class AssetListViewModel(
 
     val state: StateFlow<AssetListUiState> = combine(
         repository.observePortfolio(),
+        repository.observeSubtypes(),
         baseCurrency,
-    ) { data, currency ->
+    ) { data, subtypes, currency ->
         val today = clock.now().toLocalDateTime(zone).date
+        val withArchived = PortfolioSeriesCalculator.currentAssetValuations(
+            data = data,
+            baseCurrency = currency,
+            today = today,
+            zone = zone,
+            includeArchived = true,
+        )
         val valuations = PortfolioSeriesCalculator.currentAssetValuations(
             data = data,
             baseCurrency = currency,
@@ -59,6 +71,8 @@ class AssetListViewModel(
                     .sortedBy { it.asset.name }
             },
             archivedCount = data.assets.count { it.isArchived },
+            archived = withArchived.filter { it.asset.isArchived }.sortedBy { it.asset.name },
+            subtypes = subtypes,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -97,5 +111,39 @@ class AssetListViewModel(
     /** 归档。会追加一条归零快照，历史曲线不受影响。 */
     fun archive(assetId: Long) {
         viewModelScope.launch { repository.archiveAsset(assetId) }
+    }
+
+    /**
+     * 取消归档。只清 archivedAt，那条归零快照留着 ——
+     * 所以资产会以 0 出现，用户需要自己再更新一次估值。
+     */
+    fun unarchive(assetId: Long) {
+        viewModelScope.launch { repository.unarchiveAsset(assetId) }
+    }
+
+    fun editMeta(valuation: AssetValuation, edit: com.boomsset.ui.assets.AssetMetaEdit) {
+        viewModelScope.launch {
+            repository.updateAssetMeta(
+                assetId = valuation.asset.id,
+                name = edit.name,
+                assetClass = edit.assetClass,
+                subtypeId = edit.subtypeId,
+                currency = edit.currency,
+                includeInAllocation = edit.includeInAllocation,
+                // 估值模式不在这里改 —— 转换要走「追加一条新模式快照」的流程
+                defaultValuationMode = valuation.asset.defaultValuationMode,
+                defaultQuoteSymbol = valuation.asset.defaultQuoteSymbol,
+            )
+        }
+    }
+
+    fun addSubtype(name: String, assetClass: AssetClass) {
+        viewModelScope.launch {
+            repository.createSubtype(
+                name = name,
+                assetClass = assetClass,
+                defaultValuationMode = com.boomsset.domain.ValuationMode.MANUAL,
+            )
+        }
     }
 }
