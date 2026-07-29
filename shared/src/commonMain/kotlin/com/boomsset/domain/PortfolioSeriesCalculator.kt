@@ -98,6 +98,40 @@ object PortfolioSeriesCalculator {
         )
     }
 
+    /**
+     * 当前时点每项资产的估值，用于资产列表。
+     *
+     * 默认排除已归档的 —— 它们的历史仍在净值曲线里，但不该出现在"我现在持有什么"的列表里。
+     */
+    fun currentAssetValuations(
+        data: PortfolioData,
+        baseCurrency: String,
+        today: LocalDate,
+        zone: TimeZone,
+        includeArchived: Boolean = false,
+    ): List<AssetValuation> {
+        val at = today.endOfDayIn(zone)
+        val snapshots = data.latestSnapshotsAt(at)
+        val context = data.valuationContextAt(today, baseCurrency)
+
+        return data.assets
+            .filter { includeArchived || !it.isArchived }
+            .map { asset ->
+                val snapshot = snapshots[asset.id]
+                val local = snapshot?.let { PortfolioCalculator.localValue(it, context.quotes) }
+                val rate = context.rateTo(asset.currency)
+                AssetValuation(
+                    asset = asset,
+                    snapshot = snapshot,
+                    localValue = local,
+                    baseValue = if (local != null && rate != null) rate.convert(local) else null,
+                    pnl = snapshot?.let {
+                        PortfolioCalculator.profitAndLoss(it, context.quotes)
+                    },
+                )
+            }
+    }
+
     /** 当前时点的组合浮动盈亏。 */
     fun currentProfitAndLoss(
         data: PortfolioData,

@@ -1,6 +1,7 @@
 package com.boomsset.ui
 
 import com.boomsset.domain.Money
+import com.boomsset.domain.Quantity
 import com.boomsset.domain.TargetAllocation
 import kotlin.math.abs
 
@@ -20,21 +21,44 @@ private val currencySymbols = mapOf(
 
 fun currencySymbol(code: String): String = currencySymbols[code] ?: "$code "
 
-/** 例：Money(123456) → "1,234.56" */
-fun Money.formatAmount(showDecimals: Boolean = true): String {
+/**
+ * 例：Money(123456) → "1,234.56"
+ *
+ * @param grouped 是否加千分位。**预填到输入框时必须传 false** ——
+ *   见 [formatForInput]。
+ */
+fun Money.formatAmount(showDecimals: Boolean = true, grouped: Boolean = true): String {
     val negative = minorUnits < 0
     val magnitude = abs(minorUnits)
     val yuan = magnitude / 100
     val cents = magnitude % 100
 
-    val grouped = yuan.toString().reversed().chunked(3).joinToString(",").reversed()
-    val body = if (showDecimals) {
-        "$grouped.${cents.toString().padStart(2, '0')}"
+    val yuanText = if (grouped) {
+        yuan.toString().reversed().chunked(3).joinToString(",").reversed()
     } else {
-        grouped
+        yuan.toString()
+    }
+    val body = if (showDecimals) {
+        "$yuanText.${cents.toString().padStart(2, '0')}"
+    } else {
+        yuanText
     }
     return if (negative) "-$body" else body
 }
+
+/**
+ * 预填到可编辑输入框用的格式：**不带千分位**。
+ *
+ * 存在的理由是一个实跑时才发现的 bug：预填用了带逗号的 [formatAmount]，
+ * 而 [toMinorUnitsOrNull] 明确拒绝逗号，于是任何 ≥1000 的资产打开更新弹窗后
+ * 「保存」永久禁用 —— 核心循环对真实金额直接是坏的。
+ *
+ * 不选择"让解析器容忍逗号"是有意的：那样 `"1,23"` 会被当成 123，
+ * 而用户很可能想输 1.23 —— 100 倍的静默错误比一个禁用的按钮糟糕得多。
+ *
+ * 不变量：**本函数的输出必须能被 [toMinorUnitsOrNull] 解析回原值。** 有测试锁着。
+ */
+fun Money.formatForInput(): String = formatAmount(showDecimals = true, grouped = false)
 
 /** 例：Money(123456) + "CNY" → "¥1,234.56" */
 fun Money.formatWithCurrency(currency: String, showDecimals: Boolean = true): String =
@@ -64,6 +88,23 @@ private fun Long.toDecimalString(scale: Int): String {
     val frac = abs(this % divisor)
     return if (frac == 0L) whole.toString()
     else "$whole.${frac.toString().padStart(scale, '0').trimEnd('0').ifEmpty { "0" }}"
+}
+
+/**
+ * 份额预填到输入框用的格式。
+ *
+ * **不能用 `toDisplayDouble().toString()`** —— 那对小份额会产出科学计数法
+ * （`Quantity(1)` → `"1.0E-8"`），而 `toQuantityOrNull` 解析不了，
+ * 于是「保存」被禁用。和金额那个 bug 是同一类。
+ *
+ * 不变量：本函数的输出必须能被 [com.boomsset.ui.assets.toQuantityOrNull] 解析回原值。
+ */
+fun Quantity.formatForInput(): String {
+    val whole = scaled / Quantity.ONE
+    val frac = scaled % Quantity.ONE
+    if (frac == 0L) return whole.toString()
+    val fracText = frac.toString().padStart(Quantity.SCALE, '0').trimEnd('0')
+    return "$whole.$fracText"
 }
 
 /**
