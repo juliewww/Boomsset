@@ -2,6 +2,7 @@ package com.boomsset.ui.networth
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.boomsset.data.SUPPORTED_CURRENCIES
 import com.boomsset.domain.Money
 import com.boomsset.domain.Period
 import com.boomsset.ui.bpToPercent
@@ -27,6 +29,7 @@ import com.boomsset.ui.formatWithCurrency
 fun NetWorthScreen(
     state: NetWorthUiState,
     onSelectPeriod: (Period) -> Unit,
+    onSelectBaseCurrency: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -43,6 +46,7 @@ fun NetWorthScreen(
 
             else -> {
                 SummaryCard(state)
+                BaseCurrencySelector(state.baseCurrency, onSelectBaseCurrency)
                 PeriodSelector(state.period, onSelectPeriod)
                 state.series?.let { NetWorthChart(it) }
                 if (state.unpricedCount > 0) UnpricedWarning(state.unpricedCount)
@@ -89,6 +93,26 @@ private fun SummaryCard(state: NetWorthUiState) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("以哪种币种查看", style = MaterialTheme.typography.labelMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SUPPORTED_CURRENCIES.forEach { code ->
+                FilterChip(
+                    selected = code == selected,
+                    onClick = { onSelect(code) },
+                    label = { Text(code) },
+                )
+            }
+        }
+        Text(
+            "只改变展示口径。已记录的金额和币种一个都不会被改写。",
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 

@@ -3,6 +3,8 @@ package com.boomsset.ui.networth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.boomsset.data.PortfolioRepository
+import com.boomsset.data.RateRefresher
+import com.boomsset.data.SettingsRepository
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.AssetSubtype
 import com.boomsset.domain.Money
@@ -16,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
@@ -45,6 +48,8 @@ data class NetWorthUiState(
 
 class NetWorthViewModel(
     private val repository: PortfolioRepository,
+    private val settings: SettingsRepository,
+    private val rateRefresher: RateRefresher,
     private val clock: Clock = Clock.System,
     private val zone: TimeZone = TimeZone.currentSystemDefault(),
 ) : ViewModel() {
@@ -52,7 +57,28 @@ class NetWorthViewModel(
     private val period = MutableStateFlow(Period.MONTH)
 
     // 基准币种默认 CNY、可切换。作为查询参数传入，不落到 Asset/Snapshot 上。
-    private val baseCurrency = MutableStateFlow("CNY")
+    private val baseCurrency = settings.observeBaseCurrency()
+
+    init {
+        // 刷新汇率。只写 fx_rate，不写 snapshot —— 见 RateRefresher。
+        //
+        // ⚠️ 必须随「需要的币种集合」变化重新触发，不能只在 init 跑一次：
+        // 首次启动时还没有任何资产，需要的币种是空集；之后新增一个 USD 资产就永远
+        // 拉不到它的汇率了。这是实跑时发现的 bug。
+        //
+        // RateRefresher 内部记录已尝试的 (币种, 日期)，所以写入 fx_rate 引起的
+        // 重新发射不会造成无限循环。
+        viewModelScope.launch {
+            combine(
+                repository.observePortfolio(),
+                settings.observeBaseCurrency(),
+            ) { data, currency ->
+                data.assets.filter { !it.isArchived }.map { it.currency }.toSet() to currency
+            }.distinctUntilChanged().collect { (_, currency) ->
+                rateRefresher.refreshForHoldings(currency)
+            }
+        }
+    }
 
     val state: StateFlow<NetWorthUiState> = combine(
         repository.observePortfolio(),
@@ -89,7 +115,11 @@ class NetWorthViewModel(
     }
 
     fun selectBaseCurrency(code: String) {
-        baseCurrency.value = code
+        viewModelScope.launch {
+            settings.setBaseCurrency(code)
+            // 换了基准币种就要有对应的汇率，否则外币资产会变成"无法估值"
+            rateRefresher.refreshForHoldings(code)
+        }
     }
 
     fun addManualAsset(

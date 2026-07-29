@@ -277,15 +277,38 @@ Vico 3.x 的两个实测细节：
 - **`lineSeries` 已废弃，用 `lineModel`**。API 是从 sources jar 里查的 ——
   这个库的坐标和 API 都改过，不要凭印象写
 
+**Ktor 已实跑验证**（Android 真实网络请求）：3.5.1 + OkHttp（Android）/ Darwin（iOS）引擎，
+两端编译通过，Android 上实际拉到了汇率。测试用 `ktor-client-mock` 的 MockEngine，
+**不打真网络**。
+
+**汇率数据源：Frankfurter（api.frankfurter.dev）**，ECB 官方数据、无需 API key、
+**支持历史日期** —— 最后这点是决定性的，因为领域模型要求"折算历史净值用当时的汇率"。
+实测确认两件事：
+- **周末/节假日返回实际营业日**：请求 2026-07-26（周日）时响应里是 `"date":"2026-07-24"`。
+  所以**必须存响应里的 date，不能存请求的日期**，否则汇率被归到 ECB 从未发布的那天。
+- **只有 30 种币种，TWD 不在其中。** 不支持的币种会显示"无法估值"，
+  **不会静默按 1:1 折算**（有测试锁着）。
+
+**DataStore 没有引入** —— 见下方「刻意的偏离」。
+
 **还没验证**：
-- **Ktor、DataStore** —— catalog 里已锁版本，但**还没实际引入编译过**。
-  引入时按「新加依赖前先查 iOS variant」的规矩逐个验。
+- **股票/基金行情源**：没有可靠的免费无 key 方案。`QuoteSource` 的接口位置已经预留
+  （`quote` 表 + `upsertQuote`），但没有实现，所以 `QUOTED` 资产还不能在 UI 创建。
 - **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
   它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。
 - **SQLDelight 在真实 iOS 上的运行**（NativeSqliteDriver）—— 只验证了能编译，没跑过。
   测试用的是 JVM 的 JDBC driver；SQL 和约束是同一套，但 driver 不是。
 - Compose UI 测试（`runComposeUiTest` v2 API）完全没碰。
 - iOS 链接和真机/模拟器运行 —— 缺 Xcode。
+
+### 刻意的偏离之二：偏好存 SQLDelight，不用 DataStore
+
+基准币种存在 `settings` 表（SQLDelight）而不是 DataStore。理由：目前只需要存一个字符串，
+而 DataStore 要引入新依赖 + okio Path + 两个平台的路径实现，且它的**非 Android 目标
+至今是 Google 官方标注 experimental**。为一个字符串付这个代价不值得，也多担一份 iOS 风险。
+
+等真有批量偏好（主题、提醒、应用锁配置）再上 DataStore，届时 `settings` 表可以迁过去。
+catalog 里的 datastore 版本先留着。
 
 ### 一处刻意的偏离：不用 `expect class`
 

@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AssetValuation
 import com.boomsset.domain.Money
 import com.boomsset.domain.Quantity
+import com.boomsset.domain.parseQuantity
 import com.boomsset.domain.Snapshot
 import com.boomsset.ui.formatForInput
 import com.boomsset.ui.toMinorUnitsOrNull
@@ -143,28 +144,6 @@ fun UpdateValueDialog(
 }
 
 /**
- * 份额字符串 → 定点整数（scale = 8）。
- *
- * 和金额一样手工解析，不走 Double —— 份额要参与「份额 × 单价」算市值。
- * 超过 8 位小数判为非法，不静默截断。
+ * 份额字符串 → 定点整数（scale = 8）。委托给 [com.boomsset.domain.parseQuantity]。
  */
-internal fun String.toQuantityOrNull(): Quantity? {
-    val text = trim()
-    if (text.isEmpty()) return null
-    if (text.startsWith('-')) return null  // 份额不能为负
-
-    val parts = text.removePrefix("+").split('.')
-    if (parts.size > 2) return null
-
-    val wholePart = parts[0].ifEmpty { "0" }
-    if (!wholePart.all { it.isDigit() }) return null
-
-    val fracPart = parts.getOrNull(1) ?: ""
-    if (!fracPart.all { it.isDigit() } || fracPart.length > Quantity.SCALE) return null
-
-    val whole = wholePart.toLongOrNull() ?: return null
-    val frac = fracPart.padEnd(Quantity.SCALE, '0').toLongOrNull() ?: return null
-
-    if (whole > (Long.MAX_VALUE - frac) / Quantity.ONE) return null
-    return Quantity(whole * Quantity.ONE + frac)
-}
+internal fun String.toQuantityOrNull(): Quantity? = parseQuantity(this)
