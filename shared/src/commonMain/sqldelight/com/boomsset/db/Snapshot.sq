@@ -61,3 +61,7 @@ INSERT INTO snapshot(asset_id, as_of, mode, quantity_scaled, quote_symbol, cost_
 VALUES (?, ?, 'QUOTED', ?, ?, ?, ?);
 
 -- 快照不可变，没有 update。修正历史 = 追加一条新的。
+
+-- 全量。仓储层一次性加载后在内存里算派生值 —— 见 PortfolioData 的设计取舍说明。
+selectAllSnapshots:
+SELECT * FROM snapshot ORDER BY asset_id, as_of, id;

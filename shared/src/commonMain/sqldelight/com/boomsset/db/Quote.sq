@@ -36,3 +36,6 @@ VALUES (?, ?, ?, ?, ?);
 
 selectAllSymbols:
 SELECT DISTINCT symbol FROM quote;
+
+selectAllQuotes:
+SELECT * FROM quote ORDER BY symbol, as_of_day;

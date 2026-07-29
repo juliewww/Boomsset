@@ -1,41 +1,125 @@
 package com.boomsset.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import com.boomsset.domain.Money
-import com.boomsset.platformName
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.boomsset.ui.allocation.AllocationScreen
+import com.boomsset.ui.allocation.AllocationViewModel
+import com.boomsset.ui.networth.NetWorthScreen
+import com.boomsset.ui.networth.NetWorthViewModel
+import org.koin.compose.viewmodel.koinViewModel
+
+private const val ROUTE_NET_WORTH = "net_worth"
+private const val ROUTE_ALLOCATION = "allocation"
+
+private data class Tab(val route: String, val label: String)
+
+private val tabs = listOf(
+    Tab(ROUTE_NET_WORTH, "净值"),
+    Tab(ROUTE_ALLOCATION, "配置"),
+)
 
 /**
- * 共享 UI 入口。两端（androidApp 的 MainActivity、iosApp 的 ComposeUIViewController）
- * 都调这个。
+ * 共享 UI 入口，两端都调这个。
  *
- * 当前只是个骨架占位，用来验证构建链路。真正的导航和页面在领域层落地后再接。
+ * 导航用**字符串路由**而不是类型安全路由：后者依赖 `@Serializable` 的反射式解析，
+ * 在 Kotlin/Native 上要手写 `SerializersModule`（见 AGENTS.md 约束 2）。
+ * 字符串路由完全绕开这个问题。等路由参数变复杂时再考虑上类型安全那套。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App() {
     MaterialTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-                horizontalAlignment = Alignment.CenterHorizontally,
+        val navController = rememberNavController()
+        var currentRoute by remember { mutableStateOf(ROUTE_NET_WORTH) }
+        var showAddDialog by remember { mutableStateOf(false) }
+
+        // ViewModel 在这一层取，好让加号按钮能触达 NetWorthViewModel。
+        // 注意 koinViewModel 依赖 di/Modules.kt 里的显式 factory —— Native 没有反射。
+        val netWorthViewModel: NetWorthViewModel = koinViewModel()
+        val netWorthState by netWorthViewModel.state.collectAsStateWithLifecycle()
+
+        Scaffold(
+            topBar = { TopAppBar(title = { Text("旺资") }) },
+            bottomBar = {
+                NavigationBar {
+                    tabs.forEach { tab ->
+                        NavigationBarItem(
+                            selected = currentRoute == tab.route,
+                            onClick = {
+                                if (currentRoute != tab.route) {
+                                    currentRoute = tab.route
+                                    navController.navigate(tab.route) {
+                                        popUpTo(ROUTE_NET_WORTH) { inclusive = false }
+                                        launchSingleTop = true
+                                    }
+                                }
+                            },
+                            icon = {},
+                            label = { Text(tab.label) },
+                        )
+                    }
+                }
+            },
+            floatingActionButton = {
+                if (currentRoute == ROUTE_NET_WORTH) {
+                    FloatingActionButton(onClick = { showAddDialog = true }) { Text("＋") }
+                }
+            },
+        ) { innerPadding ->
+            NavHost(
+                navController = navController,
+                startDestination = ROUTE_NET_WORTH,
+                modifier = Modifier.padding(innerPadding),
             ) {
-                Text("旺资 Boomsset", style = MaterialTheme.typography.headlineMedium)
-                Text("脚手架就绪 · $platformName", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    "净值 ${Money(123456).minorUnits} 分",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                composable(ROUTE_NET_WORTH) {
+                    NetWorthScreen(
+                        state = netWorthState,
+                        onSelectPeriod = netWorthViewModel::selectPeriod,
+                    )
+                }
+                composable(ROUTE_ALLOCATION) {
+                    val allocationViewModel: AllocationViewModel = koinViewModel()
+                    val allocationState by allocationViewModel.state.collectAsStateWithLifecycle()
+                    AllocationScreen(state = allocationState)
+                }
             }
+        }
+
+        if (showAddDialog) {
+            AddAssetDialog(
+                subtypes = netWorthState.subtypes,
+                onDismiss = { showAddDialog = false },
+                onConfirm = { name, assetClass, subtypeId, value, cost, isLiability, include ->
+                    netWorthViewModel.addManualAsset(
+                        name = name,
+                        assetClass = assetClass,
+                        subtypeId = subtypeId,
+                        currency = netWorthState.baseCurrency,
+                        isLiability = isLiability,
+                        includeInAllocation = include,
+                        value = value,
+                        costBasis = cost,
+                    )
+                    showAddDialog = false
+                },
+            )
         }
     }
 }

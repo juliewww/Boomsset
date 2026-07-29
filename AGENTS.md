@@ -2,12 +2,14 @@
 
 ## 项目状态
 
-**脚手架 + 领域模型 + SQLDelight schema 已就绪。** 已验证：Android 出 APK、
-iOS klib 编译、**35 个单元测试全绿**（含在真实 SQLite 上验证 schema 约束）。
+**两个核心页面已可用（Android 实机验证过）。** 净值曲线 + 资产配置，含添加资产、
+Vico 折线图、Koin 装配、SQLDelight 读写。**57 个单元测试全绿。**
 
-**还没做的：** 仓储层（Repository）、ViewModel、导航、真实页面、行情/汇率的 Ktor 接入、
-Vico 图表。当前 UI 只是个验证构建链路的占位屏。
-`iosApp/` 缺 .xcodeproj，见 iosApp/README.md。
+已在模拟器上实跑验证：空状态 → 添加资产 → 净值/盈亏/收益率正确 → 配置比例加总 100%。
+
+**还没做的：** 行情/汇率的 Ktor 接入（所以 `QUOTED` 资产暂时没法在 UI 里创建）、
+资产列表与编辑页、更新快照的入口、目标配置编辑、应用锁。
+`iosApp/` 缺 .xcodeproj（iOS 从未运行过），见 iosApp/README.md。
 
 **领域计算的规则都在 [PortfolioCalculator](shared/src/commonMain/kotlin/com/boomsset/domain/PortfolioCalculator.kt)**，
 纯函数无 IO，改之前先读 docs/domain.md。
