@@ -21,18 +21,22 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.boomsset.ui.allocation.AllocationScreen
 import com.boomsset.ui.allocation.AllocationViewModel
+import com.boomsset.ui.assets.AssetListScreen
+import com.boomsset.ui.assets.AssetListViewModel
 import com.boomsset.ui.networth.NetWorthScreen
 import com.boomsset.ui.networth.NetWorthViewModel
 import org.koin.compose.viewmodel.koinViewModel
 
 private const val ROUTE_NET_WORTH = "net_worth"
 private const val ROUTE_ALLOCATION = "allocation"
+private const val ROUTE_ASSETS = "assets"
 
 private data class Tab(val route: String, val label: String)
 
 private val tabs = listOf(
     Tab(ROUTE_NET_WORTH, "净值"),
     Tab(ROUTE_ALLOCATION, "配置"),
+    Tab(ROUTE_ASSETS, "资产"),
 )
 
 /**
@@ -98,6 +102,16 @@ fun App() {
                     val allocationViewModel: AllocationViewModel = koinViewModel()
                     val allocationState by allocationViewModel.state.collectAsStateWithLifecycle()
                     AllocationScreen(state = allocationState)
+                }
+                composable(ROUTE_ASSETS) {
+                    val assetsViewModel: AssetListViewModel = koinViewModel()
+                    val assetsState by assetsViewModel.state.collectAsStateWithLifecycle()
+                    AssetListScreen(
+                        state = assetsState,
+                        onUpdateManual = assetsViewModel::updateManualValue,
+                        onUpdateQuoted = assetsViewModel::updateQuotedHolding,
+                        onArchive = assetsViewModel::archive,
+                    )
                 }
             }
         }

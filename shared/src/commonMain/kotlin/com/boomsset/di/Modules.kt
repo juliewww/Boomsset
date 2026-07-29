@@ -5,6 +5,7 @@ import com.boomsset.data.PortfolioRepository
 import com.boomsset.data.SqlDelightPortfolioRepository
 import com.boomsset.data.createDatabase
 import com.boomsset.ui.allocation.AllocationViewModel
+import com.boomsset.ui.assets.AssetListViewModel
 import com.boomsset.ui.networth.NetWorthViewModel
 import kotlinx.coroutines.Dispatchers
 import org.koin.core.context.startKoin
@@ -32,6 +33,7 @@ val sharedModule: Module = module {
 
     factory { NetWorthViewModel(repository = get()) }
     factory { AllocationViewModel(repository = get()) }
+    factory { AssetListViewModel(repository = get()) }
 }
 
 /**
