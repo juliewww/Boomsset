@@ -114,7 +114,7 @@ class AssetValuationTest {
                     recordedAt = epoch,
                 ),
             ),
-            quotes = listOf(Quote("X", "2026-07-01", Money(1500), cny, epoch)),
+            quotes = listOf(Quote("X", "2026-07-01", UnitPrice.ofMajorUnits(15), cny, epoch)),
             fxRates = emptyList(),
         )
 

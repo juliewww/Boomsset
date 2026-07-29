@@ -86,7 +86,8 @@ sealed interface Snapshot {
 data class Quote(
     val symbol: String,
     val asOfDay: String,
-    val price: Money,
+    /** 单价用 scale-8 定点，不用 Money —— 见 [UnitPrice] 里关于低价股和代币的说明。 */
+    val price: UnitPrice,
     val currency: String,
     val fetchedAt: Instant,
 )

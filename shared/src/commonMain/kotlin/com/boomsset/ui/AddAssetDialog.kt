@@ -24,6 +24,10 @@ import com.boomsset.domain.AssetClass
 import com.boomsset.data.SUPPORTED_CURRENCIES
 import com.boomsset.domain.AssetSubtype
 import com.boomsset.domain.Money
+import com.boomsset.domain.Quantity
+import com.boomsset.domain.ValuationMode
+import com.boomsset.domain.parseQuantity
+import com.boomsset.network.TencentQuoteSource
 import com.boomsset.domain.parseMoneyMinor
 
 /**
@@ -33,23 +37,14 @@ import com.boomsset.domain.parseMoneyMinor
  * 品种主要服务记账归类，不影响净值和配置算法，所以这个简化不会算错数 ——
  * 完整的品种选择器留到资产管理页做。
  *
- * 只支持 MANUAL 模式。QUOTED 需要行情代码和取价链路，等 Ktor 接入后再开。
+ * 两种估值模式都支持。选 QUOTED 时**币种由代码前缀强制决定**（见下方说明）。
  */
 @Composable
 fun AddAssetDialog(
     subtypes: List<AssetSubtype>,
     defaultCurrency: String,
     onDismiss: () -> Unit,
-    onConfirm: (
-        name: String,
-        assetClass: AssetClass,
-        subtypeId: Long,
-        currency: String,
-        value: Money,
-        costBasis: Money?,
-        isLiability: Boolean,
-        includeInAllocation: Boolean,
-    ) -> Unit,
+    onConfirm: (NewAsset) -> Unit,
 ) {
     var name by remember { mutableStateOf("") }
     var assetClass by remember { mutableStateOf(AssetClass.LIQUID) }
@@ -58,11 +53,31 @@ fun AddAssetDialog(
     var costText by remember { mutableStateOf("") }
     var isLiability by remember { mutableStateOf(false) }
     var includeInAllocation by remember { mutableStateOf(true) }
+    var mode by remember { mutableStateOf(ValuationMode.MANUAL) }
+    var symbolText by remember { mutableStateOf("") }
+    var quantityText by remember { mutableStateOf("") }
 
     val amount = amountText.toMinorUnitsOrNull()
     val cost = costText.takeIf { it.isNotBlank() }?.toMinorUnitsOrNull()
     val subtypeId = subtypes.firstOrNull { it.assetClass == assetClass }?.id
-    val canConfirm = name.isNotBlank() && amount != null && subtypeId != null
+    val quantity = parseQuantity(quantityText)
+    val symbol = symbolText.trim()
+    val symbolOk = TencentQuoteSource.isRecognized(symbol)
+    val isQuoted = mode == ValuationMode.QUOTED
+
+    // ⚠️ QUOTED 的币种由代码前缀决定，不让用户选。
+    // 行情价是以该市场的币种计价的，而估值时按 asset.currency 折算 ——
+    // 两者不一致会静默算错（比如港股价按人民币折算）。强制对齐避免这个 bug。
+    val effectiveCurrency = if (isQuoted && symbolOk) {
+        TencentQuoteSource.currencyOf(symbol)
+    } else {
+        currency
+    }
+
+    val canConfirm = name.isNotBlank() && subtypeId != null && when {
+        isQuoted -> symbolOk && quantity != null
+        else -> amount != null
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -88,32 +103,76 @@ fun AddAssetDialog(
                     }
                 }
 
-                Text("币种", style = MaterialTheme.typography.labelMedium)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SUPPORTED_CURRENCIES.forEach { code ->
+                if (!isLiability) {
+                    Text("怎么估值", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
-                            selected = code == currency,
-                            onClick = { currency = code },
-                            label = { Text(code) },
+                            selected = mode == ValuationMode.MANUAL,
+                            onClick = { mode = ValuationMode.MANUAL },
+                            label = { Text("手动填市值") },
+                        )
+                        FilterChip(
+                            selected = mode == ValuationMode.QUOTED,
+                            onClick = { mode = ValuationMode.QUOTED },
+                            label = { Text("按份额取行情") },
                         )
                     }
                 }
-                if (currency != defaultCurrency) {
+
+                if (isQuoted) {
+                    OutlinedTextField(
+                        value = symbolText,
+                        onValueChange = { symbolText = it },
+                        label = { Text("行情代码，如 sh600519") },
+                        singleLine = true,
+                        isError = symbolText.isNotBlank() && !symbolOk,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Text(
-                        "非基准币种。净值会按当时汇率折算成 $defaultCurrency —— " +
-                            "取不到汇率时这项会显示「无法估值」，不会按 1:1 算。",
+                        "沪市 sh600519 / 深市 sz000858 / 港股 hk00700 / 美股 usAAPL。" +
+                            if (symbolOk) "币种自动设为 $effectiveCurrency。" else "",
                         style = MaterialTheme.typography.labelSmall,
                     )
-                }
+                    OutlinedTextField(
+                        value = quantityText,
+                        onValueChange = { quantityText = it },
+                        label = { Text("持有份额") },
+                        singleLine = true,
+                        isError = quantityText.isNotBlank() && quantity == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "市值 = 份额 × 行情单价，取不到行情时显示「无法估值」，不会按 0 算。",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                } else {
+                    Text("币种", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SUPPORTED_CURRENCIES.forEach { code ->
+                            FilterChip(
+                                selected = code == currency,
+                                onClick = { currency = code },
+                                label = { Text(code) },
+                            )
+                        }
+                    }
+                    if (currency != defaultCurrency) {
+                        Text(
+                            "非基准币种。净值会按当时汇率折算成 $defaultCurrency —— " +
+                                "取不到汇率时这项会显示「无法估值」，不会按 1:1 算。",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
 
-                OutlinedTextField(
-                    value = amountText,
-                    onValueChange = { amountText = it },
-                    label = { Text(if (isLiability) "欠款金额" else "当前市值") },
-                    singleLine = true,
-                    isError = amountText.isNotBlank() && amount == null,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    OutlinedTextField(
+                        value = amountText,
+                        onValueChange = { amountText = it },
+                        label = { Text(if (isLiability) "欠款金额" else "当前市值") },
+                        singleLine = true,
+                        isError = amountText.isNotBlank() && amount == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 if (!isLiability) {
                     OutlinedTextField(
@@ -161,14 +220,19 @@ fun AddAssetDialog(
                 enabled = canConfirm,
                 onClick = {
                     onConfirm(
-                        name.trim(),
-                        assetClass,
-                        subtypeId!!,
-                        currency,
-                        Money(amount!!),
-                        cost?.let { Money(it) },
-                        isLiability,
-                        includeInAllocation,
+                        NewAsset(
+                            name = name.trim(),
+                            assetClass = assetClass,
+                            subtypeId = subtypeId!!,
+                            currency = effectiveCurrency,
+                            mode = mode,
+                            quoteSymbol = if (isQuoted) symbol else null,
+                            value = if (isQuoted) null else Money(amount!!),
+                            quantity = if (isQuoted) quantity else null,
+                            costBasis = cost?.let { Money(it) },
+                            isLiability = isLiability,
+                            includeInAllocation = includeInAllocation,
+                        ),
                     )
                 },
             ) { Text("添加") }
@@ -176,6 +240,21 @@ fun AddAssetDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+/** 新建资产的入参。字段多了之后用 data class 比八个位置参数安全。 */
+data class NewAsset(
+    val name: String,
+    val assetClass: AssetClass,
+    val subtypeId: Long,
+    val currency: String,
+    val mode: ValuationMode,
+    val quoteSymbol: String?,
+    val value: Money?,
+    val quantity: Quantity?,
+    val costBasis: Money?,
+    val isLiability: Boolean,
+    val includeInAllocation: Boolean,
+)
 
 private fun AssetClass.shortLabel(): String = when (this) {
     AssetClass.LIQUID -> "流动资金"

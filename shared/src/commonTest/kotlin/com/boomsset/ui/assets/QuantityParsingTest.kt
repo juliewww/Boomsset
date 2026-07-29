@@ -2,6 +2,7 @@ package com.boomsset.ui.assets
 
 import com.boomsset.domain.Money
 import com.boomsset.domain.Quantity
+import com.boomsset.domain.UnitPrice
 import com.boomsset.domain.valueAt
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
@@ -56,6 +57,6 @@ class QuantityParsingTest {
     fun `解析出的份额能直接参与市值计算`() {
         // 端到端：输入 "10.5" 份，单价 20 元 → 210 元
         val q = "10.5".toQuantityOrNull()!!
-        q.valueAt(Money(20_00)) shouldBe Money(210_00)
+        q.valueAt(UnitPrice.ofMajorUnits(20)) shouldBe Money(210_00)
     }
 }

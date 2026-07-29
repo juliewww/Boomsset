@@ -149,8 +149,8 @@ private fun UnpricedWarning(count: Int) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("$count 项资产无法估值", style = MaterialTheme.typography.titleSmall)
             Text(
-                "缺少行情或汇率数据。这些资产**没有**计入上面的净值 —— " +
-                    "不按 0 计算，是为了避免静默低估。",
+                "可能是缺行情/汇率，也可能是份额或价格的数量级超出了可计算范围。" +
+                    "这些资产**没有**计入上面的净值 —— 不按 0 计算，是为了避免静默低估。",
                 style = MaterialTheme.typography.bodySmall,
             )
         }

@@ -34,15 +34,6 @@ value class Quantity(val scaled: Long) : Comparable<Quantity> {
 }
 
 /**
- * 市值 = 份额 × 单价。
- *
- * 单价是 [Money]（该资产币种下的最小单位），结果也是同币种的 [Money]。
- * 溢出会抛 [ArithmeticException] 而不是静默回绕 —— 见 [FixedPoint]。
- */
-fun Quantity.valueAt(unitPrice: Money): Money =
-    Money(FixedPoint.multiply(unitPrice.minorUnits, scaled, Quantity.ONE))
-
-/**
  * 成本均价 = 总成本 / 份额。**这是派生显示值，不存库。**
  *
  * 存总成本而不是存均价，是因为存均价会在加仓时静默算错：用户把份额从 100 改成 200

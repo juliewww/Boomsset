@@ -9,9 +9,11 @@ import com.boomsset.domain.Money
 import com.boomsset.domain.PortfolioData
 import com.boomsset.domain.Quantity
 import com.boomsset.domain.Quote
+import com.boomsset.domain.UnitPrice
 import com.boomsset.domain.TargetAllocation
 import com.boomsset.domain.ValuationMode
 import com.boomsset.network.FxRateSource
+import com.boomsset.network.QuoteSource
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.Flow
@@ -69,9 +71,25 @@ class RateRefresherTest {
         }
     }
 
-    private fun refresher(repo: PortfolioRepository, fx: FxRateSource) = RateRefresher(
+    /** 行情源的 fake。默认按代码返回固定价，可指定哪些代码取不到。 */
+    private class FakeQuoteSource(private val missing: Set<String> = emptySet()) : QuoteSource {
+        val requested = mutableListOf<String>()
+        override suspend fun fetch(symbols: Set<String>, on: LocalDate): List<Quote> {
+            requested += symbols
+            return symbols.filterNot { it in missing }.map {
+                Quote(it, on.toString(), UnitPrice.ofMajorUnits(100), "CNY", Instant.fromEpochMilliseconds(0))
+            }
+        }
+    }
+
+    private fun refresher(
+        repo: PortfolioRepository,
+        fx: FxRateSource,
+        quotes: QuoteSource = FakeQuoteSource(),
+    ) = RateRefresher(
         repository = repo,
         fxSource = fx,
+        quoteSource = quotes,
         dispatcher = UnconfinedTestDispatcher(),
         clock = object : kotlin.time.Clock {
             override fun now() = epoch
@@ -202,6 +220,75 @@ class RateRefresherTest {
         r.refreshForHoldings("HKD")   // USD→HKD 是没试过的组合
 
         fx.requested shouldContainExactly listOf("USD", "USD")
+    }
+
+    // ---------- 行情刷新 ----------
+
+    @Test
+    fun `行情代码取自快照而不是资产默认值`() = runTest {
+        // 退市转 MANUAL 的资产，其历史 QUOTED 快照仍需要行情，
+        // 而资产上的 defaultQuoteSymbol 已被清掉
+        val a = asset(1, "CNY").copy(defaultQuoteSymbol = null)
+        val data = PortfolioData(
+            assets = listOf(a),
+            snapshots = listOf(
+                com.boomsset.domain.Snapshot.Quoted(
+                    id = 1, assetId = 1, asOf = epoch,
+                    quantity = Quantity.ofUnits(100), quoteSymbol = "sh600519",
+                    recordedAt = epoch,
+                ),
+            ),
+            quotes = emptyList(), fxRates = emptyList(),
+        )
+        val q = FakeQuoteSource()
+        val repo = FakeRepository(data)
+
+        refresher(repo, FakeFxSource(), q).refreshQuotes()
+
+        q.requested shouldContainExactly listOf("sh600519")
+    }
+
+    @Test
+    fun `同一代码同一天只请求一次`() = runTest {
+        val data = PortfolioData(
+            assets = listOf(asset(1, "CNY")),
+            snapshots = listOf(
+                com.boomsset.domain.Snapshot.Quoted(
+                    id = 1, assetId = 1, asOf = epoch,
+                    quantity = Quantity.ofUnits(1), quoteSymbol = "sh600519",
+                    recordedAt = epoch,
+                ),
+            ),
+            quotes = emptyList(), fxRates = emptyList(),
+        )
+        val q = FakeQuoteSource()
+        val r = refresher(FakeRepository(data), FakeFxSource(), q)
+
+        r.refreshQuotes()
+        r.refreshQuotes()
+
+        q.requested shouldContainExactly listOf("sh600519")
+    }
+
+    @Test
+    fun `取不到的代码计入失败数而不是写零价`() = runTest {
+        val data = PortfolioData(
+            assets = listOf(asset(1, "CNY")),
+            snapshots = listOf(
+                com.boomsset.domain.Snapshot.Quoted(
+                    id = 1, assetId = 1, asOf = epoch,
+                    quantity = Quantity.ofUnits(1), quoteSymbol = "shbad",
+                    recordedAt = epoch,
+                ),
+            ),
+            quotes = emptyList(), fxRates = emptyList(),
+        )
+        val result = refresher(
+            FakeRepository(data), FakeFxSource(), FakeQuoteSource(missing = setOf("shbad")),
+        ).refreshQuotes()
+
+        result.written shouldBe 0
+        result.failed shouldBe 1
     }
 
     @Test

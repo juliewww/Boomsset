@@ -291,15 +291,47 @@ Vico 3.x 的两个实测细节：
 
 **DataStore 没有引入** —— 见下方「刻意的偏离」。
 
+**行情源：腾讯财经 `qt.gtimg.cn`（非官方）**
+
+实测对比（2026-07-29）后选的，其余三个都不可用：
+
+| 源 | 无需 key | 实测结果 |
+|---|---|---|
+| **腾讯 `qt.gtimg.cn`** | ✅ | **200，可用**，A股/港股/美股都有，支持批量 |
+| 新浪 `hq.sinajs.cn` | ✅ | 403（带 Referer 仍拒） |
+| 天天基金 | ✅ | 返回 HTML 而非数据 |
+| Yahoo 非官方 | ✅ | 429 限流 |
+| Alpha Vantage / Twelve Data / Finnhub | ❌ | 需注册；免费档主要覆盖美股 |
+
+⚠️ **非官方接口，风险明确接受**（产品定位自用/小范围）：无文档、无 ToS 保障、
+可能随时变更。失效时资产显示「无法估值」，不会静默算错 —— 由 `QuoteSource` 的契约保证。
+
+两个实现细节：
+- **报文是 GBK。** Kotlin/Native 没有内置 GBK 解码器。做法是按 **Latin-1 逐字节读入**，
+  ASCII 的价格/代码字段完全无损，只有中文名称乱码（而我们不用那个字段）。
+  **不要改成 UTF-8 解码** —— GBK 字节不是合法 UTF-8，替换字符可能吃掉相邻的 `~`
+  分隔符导致字段错位。有一条用真实 GBK 字节的测试锁着。
+- **币种由代码前缀决定**（`hk`→HKD、`us`→USD、其余→CNY），创建 QUOTED 资产时
+  **强制对齐资产币种**。不对齐会静默算错：行情价按市场币种计价，而估值按
+  `asset.currency` 折算。
+
 **还没验证**：
-- **股票/基金行情源**：没有可靠的免费无 key 方案。`QuoteSource` 的接口位置已经预留
-  （`quote` 表 + `upsertQuote`），但没有实现，所以 `QUOTED` 资产还不能在 UI 创建。
+- 港股/美股的端到端（只验了 A 股 sh600519；解析和币种映射有单测覆盖）
 - **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
   它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。
 - **SQLDelight 在真实 iOS 上的运行**（NativeSqliteDriver）—— 只验证了能编译，没跑过。
   测试用的是 JVM 的 JDBC driver；SQL 和约束是同一套，但 driver 不是。
 - Compose UI 测试（`runComposeUiTest` v2 API）完全没碰。
 - iOS 链接和真机/模拟器运行 —— 缺 Xcode。
+
+### 单价为什么不用 Money
+
+`quote.price` 是 `UnitPrice`（scale 8），不是 `Money`（scale 2）。单价的精度需求比金额高：
+港股低价股报到 3 位小数（腾讯返回 `462.400`），加密货币代币可能是 `0.00001234`。
+用 scale 2 存的话后者会变成 `0.00`，整项资产静默归零。
+
+代价是 `份额(8) × 单价(8) → 金额(2)` 要分两步算，朴素写法必定溢出 Long（1e14 × 1e11 = 1e25）。
+见 `UnitPrice.valueAt`。
 
 ### 刻意的偏离之二：偏好存 SQLDelight，不用 DataStore
 

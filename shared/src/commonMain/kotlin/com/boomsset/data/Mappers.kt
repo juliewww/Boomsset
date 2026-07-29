@@ -7,6 +7,7 @@ import com.boomsset.domain.FxRate
 import com.boomsset.domain.Money
 import com.boomsset.domain.Quantity
 import com.boomsset.domain.Quote
+import com.boomsset.domain.UnitPrice
 import com.boomsset.domain.Snapshot
 import com.boomsset.domain.TargetAllocation
 import com.boomsset.domain.ValuationMode
@@ -84,7 +85,7 @@ internal fun SnapshotRow.toDomain(): Snapshot = when (mode) {
 internal fun QuoteRow.toDomain(): Quote = Quote(
     symbol = symbol,
     asOfDay = as_of_day,
-    price = Money(price_minor),
+    price = UnitPrice(price_scaled),
     currency = currency,
     fetchedAt = Instant.fromEpochMilliseconds(fetched_at),
 )

@@ -190,9 +190,9 @@ class DatabaseSchemaTest {
 
         // 打开 App 刷新十次也只有一条当天记录
         db.quoteQueries.selectLatestOnOrBefore("600519", "2026-07-28")
-            .executeAsOne().price_minor shouldBe 151_00
+            .executeAsOne().price_scaled shouldBe 151_00
         db.quoteQueries.selectLatestOnOrBefore("600519", "2026-07-30")
-            .executeAsOne().price_minor shouldBe 152_00
+            .executeAsOne().price_scaled shouldBe 152_00
     }
 
     private fun insertAsset(db: BoomssetDatabase): Long {
