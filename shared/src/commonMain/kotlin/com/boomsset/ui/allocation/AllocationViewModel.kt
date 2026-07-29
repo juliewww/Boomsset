@@ -3,6 +3,7 @@ package com.boomsset.ui.allocation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.boomsset.data.PortfolioRepository
+import com.boomsset.data.SettingsRepository
 import com.boomsset.domain.AllocationView
 import com.boomsset.domain.PortfolioSeriesCalculator
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,11 +24,12 @@ data class AllocationUiState(
 
 class AllocationViewModel(
     private val repository: PortfolioRepository,
+    private val settings: SettingsRepository,
     private val clock: Clock = Clock.System,
     private val zone: TimeZone = TimeZone.currentSystemDefault(),
 ) : ViewModel() {
 
-    private val baseCurrency = MutableStateFlow("CNY")
+    private val baseCurrency = settings.observeBaseCurrency()
 
     val state: StateFlow<AllocationUiState> = combine(
         repository.observePortfolio(),

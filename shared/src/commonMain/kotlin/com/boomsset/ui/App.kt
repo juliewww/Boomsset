@@ -96,6 +96,7 @@ fun App() {
                     NetWorthScreen(
                         state = netWorthState,
                         onSelectPeriod = netWorthViewModel::selectPeriod,
+                        onSelectBaseCurrency = netWorthViewModel::selectBaseCurrency,
                     )
                 }
                 composable(ROUTE_ALLOCATION) {
@@ -119,13 +120,14 @@ fun App() {
         if (showAddDialog) {
             AddAssetDialog(
                 subtypes = netWorthState.subtypes,
+                defaultCurrency = netWorthState.baseCurrency,
                 onDismiss = { showAddDialog = false },
-                onConfirm = { name, assetClass, subtypeId, value, cost, isLiability, include ->
+                onConfirm = { name, assetClass, subtypeId, currency, value, cost, isLiability, include ->
                     netWorthViewModel.addManualAsset(
                         name = name,
                         assetClass = assetClass,
                         subtypeId = subtypeId,
-                        currency = netWorthState.baseCurrency,
+                        currency = currency,
                         isLiability = isLiability,
                         includeInAllocation = include,
                         value = value,

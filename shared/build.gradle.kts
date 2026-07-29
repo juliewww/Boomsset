@@ -66,14 +66,22 @@ kotlin {
             implementation(libs.sqldelight.coroutines)
 
             implementation(libs.vico.compose.m3)
+
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.json)
+            implementation(libs.datastore.preferences.core)
         }
 
         androidMain.dependencies {
             implementation(libs.sqldelight.driver.android)
+            implementation(libs.ktor.client.okhttp)
         }
 
         iosMain.dependencies {
             implementation(libs.sqldelight.driver.native)
+            // Darwin 引擎（走 NSURLSession）。不要用已废弃的 DarwinLegacy。
+            implementation(libs.ktor.client.darwin)
         }
 
         commonTest.dependencies {
@@ -81,6 +89,8 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
             implementation(libs.kotest.assertions.core)
+            // MockEngine：测试里绝不打真网络
+            implementation(libs.ktor.client.mock)
         }
 
         // 任务名是 testAndroidHostTest。这个 source set 只在

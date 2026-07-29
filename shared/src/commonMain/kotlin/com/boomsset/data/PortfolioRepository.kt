@@ -57,6 +57,12 @@ interface PortfolioRepository {
     )
 
     suspend fun archiveAsset(assetId: Long)
+
+    /** 按天 upsert 汇率。同一币种对同一天只留一条 —— 主键保证，不需要应用层查重。 */
+    suspend fun upsertFxRate(rate: com.boomsset.domain.FxRate)
+
+    /** 按天 upsert 行情。同上。 */
+    suspend fun upsertQuote(quote: com.boomsset.domain.Quote)
 }
 
 class SqlDelightPortfolioRepository(
@@ -217,4 +223,26 @@ class SqlDelightPortfolioRepository(
             db.assetQueries.archive(archived_at = now, id = assetId)
         }
     }
+
+    override suspend fun upsertFxRate(rate: com.boomsset.domain.FxRate): Unit =
+        withContext(dispatcher) {
+            db.fxRateQueries.upsert(
+                base = rate.base,
+                quote = rate.quote,
+                as_of_day = rate.asOfDay,
+                rate_scaled = rate.rate.scaled,
+                fetched_at = clock.now().toEpochMilliseconds(),
+            )
+        }
+
+    override suspend fun upsertQuote(quote: com.boomsset.domain.Quote): Unit =
+        withContext(dispatcher) {
+            db.quoteQueries.upsert(
+                symbol = quote.symbol,
+                as_of_day = quote.asOfDay,
+                price_minor = quote.price.minorUnits,
+                currency = quote.currency,
+                fetched_at = clock.now().toEpochMilliseconds(),
+            )
+        }
 }

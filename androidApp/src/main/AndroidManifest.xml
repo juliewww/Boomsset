@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 只用于拉公开汇率/行情。按 AGENTS.md 的边界，网络层不发送任何用户持仓数据。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".BoomssetApplication"
         android:allowBackup="false"

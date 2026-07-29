@@ -1,0 +1,20 @@
+-- 简单键值设置表。
+--
+-- **偏离 docs/stack.md 的一处：这里没用 DataStore。**
+-- 理由：目前只需要存一个基准币种字符串，而 DataStore 要引入新依赖 +
+-- okio Path + 两个平台的路径实现，而且它的非 Android 目标至今是 Google 官方标注的
+-- experimental。为一个字符串付这个代价不值得，也多担一份 iOS 上的风险。
+-- 等真有批量偏好（主题、提醒、应用锁配置）再上 DataStore，届时这张表可以迁过去。
+CREATE TABLE settings (
+    key   TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+);
+
+selectByKey:
+SELECT value FROM settings WHERE key = ?;
+
+selectAll:
+SELECT * FROM settings;
+
+upsert:
+INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?);

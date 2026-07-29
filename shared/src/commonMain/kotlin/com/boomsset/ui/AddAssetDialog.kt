@@ -21,8 +21,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AssetClass
+import com.boomsset.data.SUPPORTED_CURRENCIES
 import com.boomsset.domain.AssetSubtype
 import com.boomsset.domain.Money
+import com.boomsset.domain.parseMoneyMinor
 
 /**
  * 添加资产。
@@ -36,11 +38,13 @@ import com.boomsset.domain.Money
 @Composable
 fun AddAssetDialog(
     subtypes: List<AssetSubtype>,
+    defaultCurrency: String,
     onDismiss: () -> Unit,
     onConfirm: (
         name: String,
         assetClass: AssetClass,
         subtypeId: Long,
+        currency: String,
         value: Money,
         costBasis: Money?,
         isLiability: Boolean,
@@ -49,6 +53,7 @@ fun AddAssetDialog(
 ) {
     var name by remember { mutableStateOf("") }
     var assetClass by remember { mutableStateOf(AssetClass.LIQUID) }
+    var currency by remember { mutableStateOf(defaultCurrency) }
     var amountText by remember { mutableStateOf("") }
     var costText by remember { mutableStateOf("") }
     var isLiability by remember { mutableStateOf(false) }
@@ -83,10 +88,28 @@ fun AddAssetDialog(
                     }
                 }
 
+                Text("币种", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SUPPORTED_CURRENCIES.forEach { code ->
+                        FilterChip(
+                            selected = code == currency,
+                            onClick = { currency = code },
+                            label = { Text(code) },
+                        )
+                    }
+                }
+                if (currency != defaultCurrency) {
+                    Text(
+                        "非基准币种。净值会按当时汇率折算成 $defaultCurrency —— " +
+                            "取不到汇率时这项会显示「无法估值」，不会按 1:1 算。",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },
-                    label = { Text(if (isLiability) "欠款金额（元）" else "当前市值（元）") },
+                    label = { Text(if (isLiability) "欠款金额" else "当前市值") },
                     singleLine = true,
                     isError = amountText.isNotBlank() && amount == null,
                     modifier = Modifier.fillMaxWidth(),
@@ -96,7 +119,7 @@ fun AddAssetDialog(
                     OutlinedTextField(
                         value = costText,
                         onValueChange = { costText = it },
-                        label = { Text("总投入成本（元，可留空）") },
+                        label = { Text("总投入成本（可留空）") },
                         singleLine = true,
                         isError = costText.isNotBlank() && cost == null,
                         modifier = Modifier.fillMaxWidth(),
@@ -141,6 +164,7 @@ fun AddAssetDialog(
                         name.trim(),
                         assetClass,
                         subtypeId!!,
+                        currency,
                         Money(amount!!),
                         cost?.let { Money(it) },
                         isLiability,
@@ -162,35 +186,6 @@ private fun AssetClass.shortLabel(): String = when (this) {
 }
 
 /**
- * 「元」字符串 → 分。
- *
- * 手工解析而不是 `toDouble() * 100` —— 后者会引入浮点误差，
- * 而这个 App 的整个金额链路都在避免它（见 AGENTS.md 约束 4）。
- * 超过两位小数直接判为非法输入，不静默截断。
+ * 「元」字符串 → 分。委托给 [com.boomsset.domain.parseMoneyMinor]。
  */
-internal fun String.toMinorUnitsOrNull(): Long? {
-    val text = trim()
-    if (text.isEmpty()) return null
-
-    val negative = text.startsWith('-')
-    val body = text.removePrefix("-").removePrefix("+")
-    if (body.isEmpty()) return null
-
-    val parts = body.split('.')
-    if (parts.size > 2) return null
-
-    val yuanPart = parts[0].ifEmpty { "0" }
-    if (!yuanPart.all { it.isDigit() }) return null
-
-    val centPart = parts.getOrNull(1) ?: ""
-    if (!centPart.all { it.isDigit() } || centPart.length > 2) return null
-
-    val yuan = yuanPart.toLongOrNull() ?: return null
-    val cents = centPart.padEnd(2, '0').toLongOrNull() ?: return null
-
-    // 溢出保护：金额乘 100 可能超出 Long
-    if (yuan > (Long.MAX_VALUE - cents) / 100) return null
-
-    val minor = yuan * 100 + cents
-    return if (negative) -minor else minor
-}
+internal fun String.toMinorUnitsOrNull(): Long? = parseMoneyMinor(this)

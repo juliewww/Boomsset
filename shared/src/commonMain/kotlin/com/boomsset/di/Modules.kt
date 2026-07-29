@@ -2,7 +2,13 @@ package com.boomsset.di
 
 import com.boomsset.data.DatabaseDriverFactory
 import com.boomsset.data.PortfolioRepository
+import com.boomsset.data.RateRefresher
+import com.boomsset.data.SettingsRepository
 import com.boomsset.data.SqlDelightPortfolioRepository
+import com.boomsset.data.SqlDelightSettingsRepository
+import com.boomsset.network.FrankfurterFxRateSource
+import com.boomsset.network.FxRateSource
+import com.boomsset.network.createHttpClient
 import com.boomsset.data.createDatabase
 import com.boomsset.ui.allocation.AllocationViewModel
 import com.boomsset.ui.assets.AssetListViewModel
@@ -31,9 +37,25 @@ val sharedModule: Module = module {
         )
     }
 
-    factory { NetWorthViewModel(repository = get()) }
-    factory { AllocationViewModel(repository = get()) }
-    factory { AssetListViewModel(repository = get()) }
+    single<SettingsRepository> {
+        SqlDelightSettingsRepository(db = get(), dispatcher = Dispatchers.Default)
+    }
+
+    single { createHttpClient() }
+    single<FxRateSource> { FrankfurterFxRateSource(client = get()) }
+    single {
+        RateRefresher(
+            repository = get(),
+            fxSource = get(),
+            dispatcher = Dispatchers.Default,
+        )
+    }
+
+    factory {
+        NetWorthViewModel(repository = get(), settings = get(), rateRefresher = get())
+    }
+    factory { AllocationViewModel(repository = get(), settings = get()) }
+    factory { AssetListViewModel(repository = get(), settings = get()) }
 }
 
 /**

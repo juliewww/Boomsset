@@ -3,6 +3,7 @@ package com.boomsset.ui.assets
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.boomsset.data.PortfolioRepository
+import com.boomsset.data.SettingsRepository
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.AssetValuation
 import com.boomsset.domain.Money
@@ -31,11 +32,12 @@ data class AssetListUiState(
 
 class AssetListViewModel(
     private val repository: PortfolioRepository,
+    private val settings: SettingsRepository,
     private val clock: Clock = Clock.System,
     private val zone: TimeZone = TimeZone.currentSystemDefault(),
 ) : ViewModel() {
 
-    private val baseCurrency = MutableStateFlow("CNY")
+    private val baseCurrency = settings.observeBaseCurrency()
 
     val state: StateFlow<AssetListUiState> = combine(
         repository.observePortfolio(),
