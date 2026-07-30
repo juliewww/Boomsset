@@ -25,8 +25,14 @@
 **币种和负债标记只在资产仅有一条快照时可改** —— 它们会追溯性地重新解释全部历史快照
 （金额数字不变但含义变了），判据在 `AssetEditPolicy`。品种可自定义添加，归档可取消。
 
-**还没做的：** 应用锁、行情的手动覆盖、iOS 从未运行过。
-`iosApp/` 缺 .xcodeproj（iOS 从未运行过），见 iosApp/README.md。
+**iOS 已验证（Xcode 26.6 + iOS Simulator 26.5 SDK）：** framework 链接通过、
+**126 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
+（schema 创建、枚举 adapter、CHECK 约束、事务、按天 upsert）和用到 Turbine 的
+`PortfolioFlowTest`。
+
+**还没做的：** 应用锁、行情的手动覆盖。
+`iosApp/` 仍缺 .xcodeproj（**iOS App 本身还没在模拟器里跑过**，只验证了共享层），
+见 iosApp/README.md。
 
 **教训（五次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
@@ -108,8 +114,11 @@ docs/            详细文档，按需查阅
 
 ```bash
 ./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
-./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，146 个）
+./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（126 个，需要 Xcode）
+./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS 链接（需要 Xcode）
 ./gradlew :androidApp:assembleDebug                # Android 构建
+./gradlew :shared:allTests                         # 两端一起
 ```
 
 改了共享代码后，**至少要过 `compileKotlinIosSimulatorArm64`**。只跑 Android 构建会漏掉
@@ -125,10 +134,20 @@ Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
 所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
 
-`:shared:allTests` 会带上 iOS 测试，在没有 Xcode 的机器上跑不过，日常用
-`testAndroidHostTest`。注意 `androidHostTest` 这个 target 是在 `shared/build.gradle.kts` 里
-用 `withHostTestBuilder {}` **显式开启**的 —— 新的 KMP Android 插件默认不建测试 target，
+**JVM 和 iOS 的测试数不一样（146 vs 126），这是对的**：
+- 数据库测试（`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`）在
+  `androidHostTest`，用 JVM 的 JDBC driver
+- `iosTest/NativeDatabaseTest` 单独验 iOS 的 `NativeSqliteDriver`（**不同的 SQLite 构建**，
+  CHECK 约束能否拦住是运行时行为）
+
+注意 `androidHostTest` 这个 target 是在 `shared/build.gradle.kts` 里用
+`withHostTestBuilder {}` **显式开启**的 —— 新的 KMP Android 插件默认不建测试 target，
 不开的话 commonTest 无处运行且没有任何提示。
+
+**加了跨平台的库之后，别只看 `compileKotlinIosSimulatorArm64` 通过就算完。**
+链接器会丢掉没被引用的符号，所以一个「声明了但没有任何测试导入」的依赖，
+连编译都证明不了它在 iOS 上能用。Turbine 就当了很久这样的依赖 ——
+现在 `PortfolioFlowTest` 真正用到它了。
 
 iOS 工程状态见 **[iosApp/README.md](iosApp/README.md)**（.xcodeproj 尚未生成，那里写了怎么补）。
 
