@@ -184,6 +184,26 @@ kotlinx-datetime 本身还是 0.x 且自称 experimental，这是已知风险。
 - **DataStore 是跨平台的，但它只给你文件容器，不给加密。** iOS 上要自己写 `Serializer`，
   密钥放 Keychain。
 
+### 应用锁（已实现，Android 实机验证）
+
+按上面的结论自己写了两端，没引第三方 KMP 生物识别库。加起来约 200 行。
+
+- **Android**：stable 的 `androidx.biometric:1.1.0` + `BiometricPrompt`，
+  允许 `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`（没指纹的用户能用锁屏密码）。
+  ⚠️ **实跑发现的坑**：`canAuthenticate(组合值)` 在没录生物识别时返回 `NONE_ENROLLED`，
+  即使锁屏密码可用。必须**分别查两种能力**再取「任一可用」，否则设了 PIN 的设备
+  会被误判成不能用应用锁。
+- **iOS**：`LAContext` + `LAPolicyDeviceOwnerAuthentication`（**不是**
+  `...WithBiometrics`，前者才会自动回落到设备密码）。**不需要 cinterop**。
+  `canEvaluatePolicy` 的 NSError 出参要用 `memScoped { alloc<ObjCObjectVar<NSError?>>() }`。
+- **Activity 桥接**：`BiometricPrompt` 硬性要求 `FragmentActivity` 而共享层不能持有它，
+  所以用 `CurrentActivityHolder`（**弱引用**，强引用会泄漏整个 Activity 和 View 树），
+  由 `MainActivity` 在 onCreate/onDestroy 注册注销。
+
+两条产品决策：**开启前必须先认证成功**（否则拿到手机的人能把主人锁在外面，
+或者用户在认证不了的设备上开了锁自己进不来）；**解锁状态不落库**（回后台或重启都要重验，
+这是应用锁的意义所在）。
+
 **结论：存储和应用锁都自己写 expect/actual。** 两个平台加起来存储约 300 行、认证约 120 行，
 不值得把一个 9 star 或者仓库只有 14 个月的项目当成安全边界。
 

@@ -17,6 +17,10 @@ import kotlinx.coroutines.withContext
 interface SettingsRepository {
     fun observeBaseCurrency(): Flow<String>
     suspend fun setBaseCurrency(code: String)
+
+    /** 应用锁是否开启。默认关闭 —— 不替用户做安全决策。 */
+    fun observeAppLockEnabled(): Flow<Boolean>
+    suspend fun setAppLockEnabled(enabled: Boolean)
 }
 
 class SqlDelightSettingsRepository(
@@ -33,8 +37,18 @@ class SqlDelightSettingsRepository(
         db.settingsQueries.upsert(KEY_BASE_CURRENCY, code)
     }
 
+    override fun observeAppLockEnabled(): Flow<Boolean> =
+        db.settingsQueries.selectAll().asFlow().mapToList(dispatcher).map { rows ->
+            rows.firstOrNull { it.key == KEY_APP_LOCK }?.value_ == "true"
+        }
+
+    override suspend fun setAppLockEnabled(enabled: Boolean): Unit = withContext(dispatcher) {
+        db.settingsQueries.upsert(KEY_APP_LOCK, enabled.toString())
+    }
+
     companion object {
         const val KEY_BASE_CURRENCY = "base_currency"
+        const val KEY_APP_LOCK = "app_lock_enabled"
         const val DEFAULT_BASE_CURRENCY = "CNY"
     }
 }

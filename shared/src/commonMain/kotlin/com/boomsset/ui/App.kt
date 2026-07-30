@@ -24,6 +24,8 @@ import com.boomsset.ui.allocation.AllocationViewModel
 import com.boomsset.ui.assets.AssetListScreen
 import com.boomsset.ui.assets.AssetListViewModel
 import com.boomsset.ui.networth.NetWorthScreen
+import com.boomsset.security.AppLockGate
+import com.boomsset.security.AppLockViewModel
 import com.boomsset.ui.networth.NetWorthViewModel
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -50,6 +52,29 @@ private val tabs = listOf(
 @Composable
 fun App() {
     MaterialTheme {
+        // 应用锁是最外层的门 —— 在它里面才组合任何业务内容
+        val lockViewModel: AppLockViewModel = koinViewModel()
+        val lockState by lockViewModel.state.collectAsStateWithLifecycle()
+
+        AppLockGate(
+            state = lockState,
+            onAuthenticate = lockViewModel::authenticate,
+        ) {
+            AppContent(
+                lockState = lockState,
+                onToggleLock = lockViewModel::setLockEnabled,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppContent(
+    lockState: com.boomsset.security.AppLockUiState,
+    onToggleLock: (Boolean) -> Unit,
+) {
+    run {
         val navController = rememberNavController()
         var currentRoute by remember { mutableStateOf(ROUTE_NET_WORTH) }
         var showAddDialog by remember { mutableStateOf(false) }
@@ -97,6 +122,8 @@ fun App() {
                         state = netWorthState,
                         onSelectPeriod = netWorthViewModel::selectPeriod,
                         onSelectBaseCurrency = netWorthViewModel::selectBaseCurrency,
+                        lockState = lockState,
+                        onToggleLock = onToggleLock,
                     )
                 }
                 composable(ROUTE_ALLOCATION) {

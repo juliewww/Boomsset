@@ -3,6 +3,7 @@ package com.boomsset
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.fragment.app.FragmentActivity
+import com.boomsset.security.CurrentActivityHolder
 import com.boomsset.ui.App
 
 /**
@@ -15,6 +16,14 @@ import com.boomsset.ui.App
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // BiometricPrompt 的构造函数需要 FragmentActivity，而共享层不能持有 Activity。
+        // 用弱引用持有者搭桥，见 CurrentActivityHolder。
+        CurrentActivityHolder.set(this)
         setContent { App() }
+    }
+
+    override fun onDestroy() {
+        CurrentActivityHolder.clear(this)
+        super.onDestroy()
     }
 }

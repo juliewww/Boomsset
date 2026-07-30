@@ -40,7 +40,11 @@ SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
 会永久显示「无法估值」。手填的价写进同一张 `quote` 表，所以当天一次成功的自动刷新会
 覆盖它（有意如此：真取到市场价当然比手填准）。
 
-**还没做的：** 应用锁、iOS 上的交互流程验证（没有 iOS UI 自动化）。
+**应用锁已做（Android 实机验证）：** 生物识别/锁屏密码二选一，
+开启前必须先认证成功、解锁状态**不持久化**（回后台或重启都要重验）。
+锁着时**完全不组合**受保护内容而不是盖遮罩 —— 后者会进任务切换截图、也可能一瞬间露出来。
+
+**还没做的：** iOS 上的交互流程验证（没有 iOS UI 自动化，应用锁的 iOS 侧只验了能编译）。
 
 **教训（五次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
@@ -179,7 +183,10 @@ iOS 工程状态见 **[iosApp/README.md](iosApp/README.md)**（.xcodeproj 尚未
    **App 一启动就崩** —— CMP 的 `PlistSanityCheck` 主动抛异常。
    这个崩溃**没有崩溃报告、系统日志里也查不到**（异常在 dispatch queue 上），
    只有 `xcrun simctl launch --console` 能看到。**排查 iOS 启动问题从 --console 开始。**
-9. **Xcode target 必须显式 `-lsqlite3`**，否则链接失败在 `_sqlite3_step` 未定义。
+9. **`BiometricManager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)` 不能只查组合值。**
+   没录入生物识别时它返回 `NONE_ENROLLED`，**即使设备设了锁屏密码、认证实际能成功** ——
+   结果是设备明明能用应用锁却告诉用户开不了。必须分别查两种再取「任一可用」。
+10. **Xcode target 必须显式 `-lsqlite3`**，否则链接失败在 `_sqlite3_step` 未定义。
    ⚠️ **iOS 单元测试全过不能证明 App 能链接** —— Kotlin/Native 链接测试可执行文件时
    继承了 cinterop 的 linker opts，但静态 framework 交给 Xcode 后那些 opts 不传递。
 

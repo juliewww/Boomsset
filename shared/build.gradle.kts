@@ -76,6 +76,11 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.sqldelight.driver.android)
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.androidx.biometric)
+            // api 而不是 implementation：CurrentActivityHolder 的签名里有 FragmentActivity，
+            // androidApp 的 MainActivity 要能看到这个类型才能注册自己
+            api(libs.androidx.fragment.ktx)
+            implementation(libs.androidx.core.ktx)
         }
 
         iosMain.dependencies {
