@@ -2,6 +2,8 @@ package com.boomsset.ui
 
 import com.boomsset.domain.Money
 import com.boomsset.domain.Quantity
+import com.boomsset.domain.UnitPrice
+import com.boomsset.domain.parseUnitPrice
 import com.boomsset.ui.assets.toQuantityOrNull
 import io.kotest.matchers.shouldBe
 import kotlin.test.Test
@@ -64,6 +66,23 @@ class InputRoundTripTest {
             val quantity = Quantity(scaled)
             val text = quantity.formatForInput()
             withClue(scaled, text) { text.toQuantityOrNull() shouldBe quantity }
+        }
+    }
+
+    @Test
+    fun `单价预填能被解析回原值`() {
+        // 单价 scale=8，覆盖港股 3 位小数和代币的极小值
+        val cases = listOf(
+            0L,
+            1L,                        // 0.00000001，代币级
+            46_240_0000_0L,            // 462.400，港股
+            1300_00000000L,            // 1300
+            133_405_000_000L,          // 1334.05，实测的茅台价
+        )
+        cases.forEach { scaled ->
+            val price = UnitPrice(scaled)
+            val text = price.formatForInput()
+            withClue(scaled, text) { parseUnitPrice(text) shouldBe price }
         }
     }
 

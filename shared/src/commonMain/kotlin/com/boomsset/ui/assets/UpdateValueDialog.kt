@@ -20,7 +20,10 @@ import com.boomsset.domain.Money
 import com.boomsset.domain.Quantity
 import com.boomsset.domain.parseQuantity
 import com.boomsset.domain.Snapshot
+import com.boomsset.domain.UnitPrice
+import com.boomsset.domain.parseUnitPrice
 import com.boomsset.ui.formatForInput
+import com.boomsset.ui.priceDescription
 import com.boomsset.ui.toMinorUnitsOrNull
 
 /**
@@ -36,6 +39,7 @@ fun UpdateValueDialog(
     onDismiss: () -> Unit,
     onConfirmManual: (value: Money, costBasis: Money?) -> Unit,
     onConfirmQuoted: (quantity: Quantity, symbol: String, costBasis: Money?) -> Unit,
+    onSetManualPrice: (symbol: String, price: UnitPrice, currency: String) -> Unit,
 ) {
     val snapshot = valuation.snapshot
     val previousCost = snapshot?.costBasisMinor
@@ -55,14 +59,20 @@ fun UpdateValueDialog(
         )
     }
     var costText by remember { mutableStateOf(previousCost?.formatForInput() ?: "") }
+    // 单价预填当前行情（可能是 stale 的），空着表示不覆盖
+    var priceText by remember {
+        mutableStateOf(valuation.quote?.price?.formatForInput() ?: "")
+    }
 
     val isQuoted = snapshot is Snapshot.Quoted
     val amount = amountText.toMinorUnitsOrNull()
     val quantity = quantityText.toQuantityOrNull()
     val cost = costText.takeIf { it.isNotBlank() }?.toMinorUnitsOrNull()
+    val manualPrice = priceText.takeIf { it.isNotBlank() }?.let { parseUnitPrice(it) }
+    val priceInvalid = priceText.isNotBlank() && manualPrice == null
     val costInvalid = costText.isNotBlank() && cost == null
 
-    val canConfirm = if (isQuoted) quantity != null && !costInvalid
+    val canConfirm = if (isQuoted) quantity != null && !costInvalid && !priceInvalid
     else amount != null && !costInvalid
 
     AlertDialog(
@@ -80,8 +90,23 @@ fun UpdateValueDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "市值由份额 × 行情单价算出，改不了。加仓减仓就是改这里的份额。",
+                        "市值由份额 × 行情单价算出。加仓减仓就是改这里的份额。",
                         style = MaterialTheme.typography.labelSmall,
+                    )
+
+                    OutlinedTextField(
+                        value = priceText,
+                        onValueChange = { priceText = it },
+                        label = { Text("行情单价") },
+                        singleLine = true,
+                        isError = priceText.isNotBlank() && manualPrice == null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        valuation.priceDescription(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (valuation.isPriceStale) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
                     OutlinedTextField(
@@ -127,6 +152,14 @@ fun UpdateValueDialog(
                 enabled = canConfirm,
                 onClick = {
                     if (isQuoted) {
+                        // 单价改了就写一条今天的行情 —— 顺序在前，好让快照写完后立刻能用上
+                        if (manualPrice != null && manualPrice != valuation.quote?.price) {
+                            onSetManualPrice(
+                                snapshot.quoteSymbol,
+                                manualPrice,
+                                valuation.quote?.currency ?: valuation.asset.currency,
+                            )
+                        }
                         onConfirmQuoted(
                             quantity!!,
                             // isQuoted 已经保证了类型，智能转换在这里成立

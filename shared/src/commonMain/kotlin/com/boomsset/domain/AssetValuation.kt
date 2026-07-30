@@ -19,12 +19,32 @@ data class AssetValuation(
     val pnl: ProfitAndLoss?,
     /** 该资产现有的快照条数。用于 [AssetEditPolicy] 判断币种/负债标记能否改。 */
     val snapshotCount: Int = 0,
+    /** 估值用到的那条行情（仅 QUOTED）。用于展示价格日期和判断是否过期。 */
+    val quote: Quote? = null,
+    /** 行情距今多少天。null = 不是 QUOTED，或者根本没有行情。 */
+    val priceAgeDays: Int? = null,
 ) {
     /** 无法估值 —— UI 要显式提示，不能显示成 0。 */
     val isUnpriced: Boolean get() = snapshot != null && baseValue == null
 
     /** 还没录过任何快照。 */
     val hasNoSnapshot: Boolean get() = snapshot == null
+
+    /**
+     * 行情是否已经旧到需要提醒用户。
+     *
+     * domain.md 要求「取价失败时用最后一次成功的单价，并标记为 stale，
+     * UI 上要能看出来这个价格是 3 天前的」。
+     *
+     * 阈值取 3 天而不是 1 天，是因为周末和节假日本来就没有行情 ——
+     * 用 1 天会在每个周一之前都误报。**这里不建交易日历**：那需要维护各市场的
+     * 节假日表，成本远高于收益，而且判断错了反而制造噪音。
+     */
+    val isPriceStale: Boolean get() = (priceAgeDays ?: 0) > STALE_AFTER_DAYS
+
+    companion object {
+        const val STALE_AFTER_DAYS: Int = 3
+    }
 
     /**
      * 成本均价，仅 QUOTED 且填了成本时有值。

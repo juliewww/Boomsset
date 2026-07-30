@@ -122,6 +122,7 @@ fun App() {
                         onUnarchive = assetsViewModel::unarchive,
                         onEditMeta = assetsViewModel::editMeta,
                         onAddSubtype = assetsViewModel::addSubtype,
+                        onSetManualPrice = assetsViewModel::setManualPrice,
                     )
                 }
             }

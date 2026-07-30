@@ -28,6 +28,7 @@ import com.boomsset.domain.AssetValuation
 import com.boomsset.domain.Money
 import com.boomsset.domain.Quantity
 import com.boomsset.ui.bpToPercent
+import com.boomsset.ui.priceDescription
 import com.boomsset.ui.formatWithCurrency
 
 @Composable
@@ -39,6 +40,7 @@ fun AssetListScreen(
     onUnarchive: (assetId: Long) -> Unit,
     onEditMeta: (AssetValuation, AssetMetaEdit) -> Unit,
     onAddSubtype: (name: String, assetClass: AssetClass) -> Unit,
+    onSetManualPrice: (symbol: String, price: com.boomsset.domain.UnitPrice, currency: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var updating by remember { mutableStateOf<AssetValuation?>(null) }
@@ -124,6 +126,7 @@ fun AssetListScreen(
                 onUpdateQuoted(valuation.asset.id, quantity, symbol, cost)
                 updating = null
             },
+            onSetManualPrice = onSetManualPrice,
         )
     }
 
@@ -217,6 +220,16 @@ private fun AssetRow(
                         if (rate != null) append("（${rate.bpToPercent(withSign = true)}）")
                     },
                     style = MaterialTheme.typography.labelMedium,
+                )
+            }
+
+            // 行情日期/过期提示 —— 腾讯是非官方接口，用户必须知道价格有多旧
+            if (valuation.snapshot is com.boomsset.domain.Snapshot.Quoted) {
+                Text(
+                    valuation.priceDescription(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (valuation.isPriceStale) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 

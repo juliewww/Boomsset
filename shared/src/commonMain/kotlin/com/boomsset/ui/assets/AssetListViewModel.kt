@@ -10,6 +10,8 @@ import com.boomsset.domain.AssetValuation
 import com.boomsset.domain.Money
 import com.boomsset.domain.PortfolioSeriesCalculator
 import com.boomsset.domain.Quantity
+import com.boomsset.domain.Quote
+import com.boomsset.domain.UnitPrice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -133,6 +135,31 @@ class AssetListViewModel(
                 // 估值模式不在这里改 —— 转换要走「追加一条新模式快照」的流程
                 defaultValuationMode = valuation.asset.defaultValuationMode,
                 defaultQuoteSymbol = valuation.asset.defaultQuoteSymbol,
+            )
+        }
+    }
+
+    /**
+     * 手动设置某个行情代码今天的单价。
+     *
+     * 存在的理由：腾讯接口是非官方的，可能失效或返回垃圾数据。没有这个入口的话，
+     * 一旦取不到价，QUOTED 资产会永久显示「无法估值」而用户毫无补救手段。
+     *
+     * ⚠️ **写的是同一张 `quote` 表，所以当天一次成功的自动刷新会覆盖它。**
+     * 这是有意的：手动价是「自动取不到」时的兜底，真取到了市场价当然比手填的准。
+     * 想要「钉住」价格需要给 quote 加一个 is_manual 标记，那是另一个改动。
+     */
+    fun setManualPrice(symbol: String, price: UnitPrice, currency: String) {
+        viewModelScope.launch {
+            val today = clock.now().toLocalDateTime(zone).date
+            repository.upsertQuote(
+                Quote(
+                    symbol = symbol,
+                    asOfDay = today.toString(),
+                    price = price,
+                    currency = currency,
+                    fetchedAt = clock.now(),
+                ),
             )
         }
     }
