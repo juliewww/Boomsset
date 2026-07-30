@@ -36,36 +36,20 @@ fun AssetListScreen(
     onUpdateManual: (assetId: Long, value: Money, costBasis: Money?) -> Unit,
     onUpdateQuoted: (assetId: Long, quantity: Quantity, symbol: String, costBasis: Money?) -> Unit,
     onArchive: (assetId: Long) -> Unit,
+    onUnarchive: (assetId: Long) -> Unit,
+    onEditMeta: (AssetValuation, AssetMetaEdit) -> Unit,
+    onAddSubtype: (name: String, assetClass: AssetClass) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var updating by remember { mutableStateOf<AssetValuation?>(null) }
     var archiving by remember { mutableStateOf<AssetValuation?>(null) }
+    var editing by remember { mutableStateOf<AssetValuation?>(null) }
+    var showArchived by remember { mutableStateOf(false) }
 
     if (state.loading) {
         Text("加载中…", modifier = modifier.padding(16.dp))
         return
     }
-    if (state.isEmpty) {
-        Column(
-            modifier = modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                "没有在持资产。去「净值」页点加号添加。",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            // 全部归档后如果不提这一句，用户会以为数据丢了
-            if (state.archivedCount > 0) {
-                Text(
-                    "另有 ${state.archivedCount} 项已归档 —— 数据没丢，" +
-                        "它们的历史仍计入净值曲线，只是不再持有。",
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
-        }
-        return
-    }
-
     LazyColumn(
         modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -73,8 +57,13 @@ fun AssetListScreen(
     ) {
         item {
             Text(
-                "点任一项更新它现在值多少。这是这个 App 的核心动作 —— 不记流水，只记快照。",
-                style = MaterialTheme.typography.labelSmall,
+                if (state.isEmpty) {
+                    "没有在持资产。去「净值」页点加号添加。"
+                } else {
+                    "点任一项更新它现在值多少。这是这个 App 的核心动作 —— 不记流水，只记快照。"
+                },
+                style = if (state.isEmpty) MaterialTheme.typography.bodyMedium
+                else MaterialTheme.typography.labelSmall,
             )
         }
 
@@ -94,19 +83,31 @@ fun AssetListScreen(
                     valuation = valuation,
                     baseCurrency = state.baseCurrency,
                     onClick = { updating = valuation },
-                    onLongClick = { archiving = valuation },
+                    onEdit = { editing = valuation },
+                    onArchiveClick = { archiving = valuation },
                 )
             }
         }
 
         if (state.archivedCount > 0) {
             item {
-                Text(
-                    "另有 ${state.archivedCount} 项已归档 —— 它们的历史仍计入净值曲线，" +
-                        "但不再持有。",
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
+                Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { showArchived = !showArchived }) {
+                        Text(if (showArchived) "收起已归档" else "查看 ${state.archivedCount} 项已归档")
+                    }
+                    Text(
+                        "已归档的历史仍计入净值曲线，只是不再持有。",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+            if (showArchived) {
+                items(state.archived, key = { "archived-${it.asset.id}" }) { valuation ->
+                    ArchivedRow(
+                        valuation = valuation,
+                        onUnarchive = { onUnarchive(valuation.asset.id) },
+                    )
+                }
             }
         }
     }
@@ -126,6 +127,19 @@ fun AssetListScreen(
         )
     }
 
+    editing?.let { valuation ->
+        EditAssetDialog(
+            valuation = valuation,
+            subtypes = state.subtypes,
+            onDismiss = { editing = null },
+            onSave = { edit ->
+                onEditMeta(valuation, edit)
+                editing = null
+            },
+            onAddSubtype = onAddSubtype,
+        )
+    }
+
     archiving?.let { valuation ->
         ArchiveConfirmDialog(
             name = valuation.asset.name,
@@ -139,11 +153,28 @@ fun AssetListScreen(
 }
 
 @Composable
+private fun ArchivedRow(valuation: AssetValuation, onUnarchive: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(valuation.asset.name, style = MaterialTheme.typography.titleSmall)
+            Text("已归档", style = MaterialTheme.typography.labelSmall)
+            TextButton(onClick = onUnarchive) { Text("取消归档") }
+            Text(
+                // 归档时那条 0 值快照是真实记录，不会被撤销 —— 说清楚，别让用户以为数据丢了
+                "取消归档后它会以 ¥0 出现（归档那条 0 值记录不会被删），需要你再更新一次估值。",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+    }
+}
+
+@Composable
 private fun AssetRow(
     valuation: AssetValuation,
     baseCurrency: String,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    onEdit: () -> Unit,
+    onArchiveClick: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -200,7 +231,10 @@ private fun AssetRow(
                 Text("不计入配置比例", style = MaterialTheme.typography.labelSmall)
             }
 
-            TextButton(onClick = onLongClick) { Text("归档") }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onEdit) { Text("编辑信息") }
+                TextButton(onClick = onArchiveClick) { Text("归档") }
+            }
         }
     }
 }

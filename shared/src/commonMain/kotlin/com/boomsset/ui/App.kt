@@ -119,6 +119,9 @@ fun App() {
                         onUpdateManual = assetsViewModel::updateManualValue,
                         onUpdateQuoted = assetsViewModel::updateQuotedHolding,
                         onArchive = assetsViewModel::archive,
+                        onUnarchive = assetsViewModel::unarchive,
+                        onEditMeta = assetsViewModel::editMeta,
+                        onAddSubtype = assetsViewModel::addSubtype,
                     )
                 }
             }

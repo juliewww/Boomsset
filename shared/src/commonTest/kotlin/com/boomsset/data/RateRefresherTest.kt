@@ -18,12 +18,14 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 import kotlin.time.Instant
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class RateRefresherTest {
 
     private val epoch = Instant.fromEpochMilliseconds(1_785_000_000_000)
@@ -56,6 +58,15 @@ class RateRefresherTest {
             assetId: Long, quantity: Quantity, quoteSymbol: String, costBasis: Money?,
         ) {}
         override suspend fun archiveAsset(assetId: Long) {}
+        override suspend fun unarchiveAsset(assetId: Long) {}
+        override suspend fun updateAssetMeta(
+            assetId: Long, name: String, assetClass: AssetClass, subtypeId: Long,
+            currency: String, includeInAllocation: Boolean,
+            defaultValuationMode: ValuationMode, defaultQuoteSymbol: String?,
+        ) {}
+        override suspend fun createSubtype(
+            name: String, assetClass: AssetClass, defaultValuationMode: ValuationMode,
+        ): Long = 0
         override suspend fun upsertFxRate(rate: FxRate) { writtenRates += rate }
         override suspend fun upsertQuote(quote: Quote) {}
         override fun observeAllocations(): Flow<List<TargetAllocation>> = flowOf(emptyList())

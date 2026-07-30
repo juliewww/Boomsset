@@ -61,6 +61,42 @@ interface PortfolioRepository {
 
     suspend fun archiveAsset(assetId: Long)
 
+    /**
+     * 修改资产元信息。
+     *
+     * ⚠️ **`currency` 和 `isLiability` 会追溯性地重新解释全部历史快照**，
+     * 所以只在该资产仅有一条快照（刚建、还没历史）时才允许改 —— 由调用方用
+     * [AssetEditPolicy] 判断，这里也再挡一道。
+     *
+     * `name` / `assetClass` / `subtypeId` / `includeInAllocation` 可以随时改：
+     * 它们只改变归类和展示，不改变任何记录下来的金额。
+     */
+    suspend fun updateAssetMeta(
+        assetId: Long,
+        name: String,
+        assetClass: AssetClass,
+        subtypeId: Long,
+        currency: String,
+        includeInAllocation: Boolean,
+        defaultValuationMode: ValuationMode,
+        defaultQuoteSymbol: String?,
+    )
+
+    /**
+     * 取消归档。**只清 `archivedAt`，不动快照。**
+     *
+     * 归档时追加的那条 0 值快照是真实记录，不能撤 —— 所以取消归档后资产会显示 0，
+     * 用户需要自己更新一次估值。伪造一条"恢复原值"的快照才是错的。
+     */
+    suspend fun unarchiveAsset(assetId: Long)
+
+    /** 新增自定义品种。domain.md 要求品种可自定义扩展。 */
+    suspend fun createSubtype(
+        name: String,
+        assetClass: AssetClass,
+        defaultValuationMode: ValuationMode,
+    ): Long
+
     /** 按天 upsert 汇率。同一币种对同一天只留一条 —— 主键保证，不需要应用层查重。 */
     suspend fun upsertFxRate(rate: com.boomsset.domain.FxRate)
 
@@ -267,6 +303,45 @@ class SqlDelightPortfolioRepository(
                 fetched_at = clock.now().toEpochMilliseconds(),
             )
         }
+
+    override suspend fun updateAssetMeta(
+        assetId: Long,
+        name: String,
+        assetClass: AssetClass,
+        subtypeId: Long,
+        currency: String,
+        includeInAllocation: Boolean,
+        defaultValuationMode: ValuationMode,
+        defaultQuoteSymbol: String?,
+    ): Unit = withContext(dispatcher) {
+        db.assetQueries.updateMeta(
+            name = name,
+            asset_class = assetClass,
+            subtype_id = subtypeId,
+            currency = currency,
+            include_in_allocation = includeInAllocation,
+            default_valuation_mode = defaultValuationMode,
+            default_quote_symbol = defaultQuoteSymbol,
+            id = assetId,
+        )
+    }
+
+    override suspend fun unarchiveAsset(assetId: Long): Unit = withContext(dispatcher) {
+        db.assetQueries.unarchive(assetId)
+    }
+
+    override suspend fun createSubtype(
+        name: String,
+        assetClass: AssetClass,
+        defaultValuationMode: ValuationMode,
+    ): Long = withContext(dispatcher) {
+        var newId = -1L
+        db.transaction {
+            db.assetSubtypeQueries.insertCustom(name, assetClass, defaultValuationMode)
+            newId = db.assetSubtypeQueries.lastInsertedId().executeAsOne()
+        }
+        newId
+    }
 
     override suspend fun setActiveAllocation(id: Long): Unit = withContext(dispatcher) {
         db.transaction {
