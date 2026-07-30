@@ -315,8 +315,23 @@ Vico 3.x 的两个实测细节：
   **强制对齐资产币种**。不对齐会静默算错：行情价按市场币种计价，而估值按
   `asset.currency` 折算。
 
+**iOS 已实测（Xcode 26.6 / iOS Simulator 26.5 SDK，2026-07-29）**，清掉了三条长期悬置的风险：
+
+1. **framework 链接通过** —— 之前失败在 `xcrun xcodebuild -version`，装了 Xcode 就好了。
+   Kotlin/Native 自己声明的最低要求是 `minimalXcodeVersion=12.5`（读 `~/.konan` 的
+   konan.properties），那些 `xcode_26.4` 引用是它自己下载的 toolchain，不是对已装 Xcode 的要求。
+2. **SQLDelight 的 NativeSqliteDriver 在真机模拟器上工作** —— `iosTest/NativeDatabaseTest`
+   验了 schema 创建、枚举 adapter 双向、**CHECK 约束**、事务、按天 upsert。
+   CHECK 值得单独验：Android 和 iOS 是不同的 SQLite 构建，拦不拦得住是运行时行为。
+3. **Turbine 的 klib 版本差不是问题** —— 它的 iOS klib 对着 stdlib 2.1.21 编、我们在 2.4.10，
+   现在 `PortfolioFlowTest` 在 iOS 上真正执行了它。
+   ⚠️ 之前这条风险其实一直没被验证：Turbine 是个**声明了却没有任何测试导入**的依赖，
+   而链接器会丢掉没引用的符号 —— 所以连"能编译"都说明不了什么。
+   **加跨平台库之后要确认真有测试用到它，否则编译通过是假的安全感。**
+
 **还没验证**：
 - 港股/美股的端到端（只验了 A 股 sh600519；解析和币种映射有单测覆盖）
+- **iOS App 本身还没在模拟器里跑过** —— 共享层验证完了，但 `iosApp/` 缺 .xcodeproj
 - **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
   它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。
 - **SQLDelight 在真实 iOS 上的运行**（NativeSqliteDriver）—— 只验证了能编译，没跑过。
