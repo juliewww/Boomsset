@@ -1,7 +1,9 @@
 package com.boomsset.ui
 
 import com.boomsset.domain.Money
+import com.boomsset.domain.AssetValuation
 import com.boomsset.domain.Quantity
+import com.boomsset.domain.UnitPrice
 import com.boomsset.domain.TargetAllocation
 import com.boomsset.domain.parseMoneyMinor
 import kotlin.math.abs
@@ -106,6 +108,47 @@ fun Quantity.formatForInput(): String {
     if (frac == 0L) return whole.toString()
     val fracText = frac.toString().padStart(Quantity.SCALE, '0').trimEnd('0')
     return "$whole.$fracText"
+}
+
+/** 单价预填到输入框：scale-8 定点 → 不带多余 0 的小数串。 */
+fun UnitPrice.formatForInput(): String {
+    val whole = scaled / UnitPrice.ONE
+    val frac = scaled % UnitPrice.ONE
+    if (frac == 0L) return whole.toString()
+    return "$whole.${frac.toString().padStart(UnitPrice.SCALE, '0').trimEnd('0')}"
+}
+
+/** 单价展示：默认两位小数，但小数位有效就多显示（低价股/代币需要）。 */
+fun UnitPrice.formatDisplay(currency: String): String {
+    val whole = scaled / UnitPrice.ONE
+    val frac = scaled % UnitPrice.ONE
+    val fracText = frac.toString().padStart(UnitPrice.SCALE, '0').trimEnd('0')
+    val body = when {
+        fracText.isEmpty() -> "$whole.00"
+        fracText.length < 2 -> "$whole.${fracText}0"
+        else -> "$whole.$fracText"
+    }
+    return currencySymbol(currency) + body
+}
+
+/**
+ * 行情的日期与新鲜度描述。
+ *
+ * domain.md 要求「UI 上要能看出来这个价格是 3 天前的」——
+ * 取价失败时会退回 stale 价格，用户必须知道自己看的不是当前市价。
+ */
+fun AssetValuation.priceDescription(): String {
+    val q = quote ?: return "还没有这个代码的行情。可以手填一个单价先用着。"
+    val price = q.price.formatDisplay(q.currency)
+    return when (val age = priceAgeDays) {
+        null -> "单价 $price（日期 ${q.asOfDay}）"
+        0 -> "单价 $price · 今天的行情"
+        1 -> "单价 $price · 昨天的行情"
+        else -> {
+            val tail = if (isPriceStale) " ⚠️ 可能已过期，必要时手填覆盖" else ""
+            "单价 $price · $age 天前的行情$tail"
+        }
+    }
 }
 
 /**

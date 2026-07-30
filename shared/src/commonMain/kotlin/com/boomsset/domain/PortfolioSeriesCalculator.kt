@@ -1,6 +1,7 @@
 package com.boomsset.domain
 
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.daysUntil
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.DateTimeUnit
@@ -121,6 +122,7 @@ object PortfolioSeriesCalculator {
                 val snapshot = snapshots[asset.id]
                 val local = snapshot?.let { PortfolioCalculator.localValue(it, context.quotes) }
                 val rate = context.rateTo(asset.currency)
+                val quote = (snapshot as? Snapshot.Quoted)?.let { context.quotes[it.quoteSymbol] }
                 AssetValuation(
                     asset = asset,
                     snapshot = snapshot,
@@ -134,6 +136,8 @@ object PortfolioSeriesCalculator {
                         PortfolioCalculator.profitAndLoss(it, context.quotes)
                     },
                     snapshotCount = counts[asset.id] ?: 0,
+                    quote = quote,
+                    priceAgeDays = quote?.let { daysBetween(it.asOfDay, today) },
                 )
             }
     }
@@ -152,6 +156,14 @@ object PortfolioSeriesCalculator {
             context = data.valuationContextAt(today, baseCurrency),
         )
     }
+}
+
+/**
+ * 两个 ISO 日期之间相差多少天。解析失败返回 null 而不是猜。
+ */
+internal fun daysBetween(fromIsoDay: String, to: LocalDate): Int? {
+    val from = runCatching { LocalDate.parse(fromIsoDay) }.getOrNull() ?: return null
+    return from.daysUntil(to)
 }
 
 /**
