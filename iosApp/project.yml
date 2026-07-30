@@ -76,3 +76,27 @@ targets:
           cd "$SRCROOT/.."
           ./gradlew :shared:embedAndSignAppleFrameworkForXcode
         basedOnDependencyAnalysis: false
+
+  iosAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: iosAppUITests
+    dependencies:
+      - target: iosApp
+    settings:
+      base:
+        # UI 测试也不需要签名（跑模拟器）
+        CODE_SIGNING_ALLOWED: false
+        CODE_SIGN_IDENTITY: ""
+        TEST_TARGET_NAME: iosApp
+
+schemes:
+  iosApp:
+    build:
+      targets:
+        iosApp: all
+        iosAppUITests: [test]
+    test:
+      targets:
+        - iosAppUITests

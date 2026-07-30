@@ -14,6 +14,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AssetValuation
 import com.boomsset.domain.Money
@@ -117,7 +119,9 @@ fun UpdateValueDialog(
                         },
                         singleLine = true,
                         isError = amountText.isNotBlank() && amount == null,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().semantics {
+                            contentDescription = FIELD_UPDATE_AMOUNT
+                        },
                     )
                 }
 
@@ -128,7 +132,9 @@ fun UpdateValueDialog(
                         label = { Text("总投入成本（元）") },
                         singleLine = true,
                         isError = costInvalid,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().semantics {
+                            contentDescription = FIELD_UPDATE_COST
+                        },
                     )
                     Text(
                         if (isQuoted) {
@@ -175,6 +181,10 @@ fun UpdateValueDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+/** 更新弹窗里输入框的无障碍标识，UI 测试按这些字符串定位。 */
+const val FIELD_UPDATE_AMOUNT = "field-update-amount"
+const val FIELD_UPDATE_COST = "field-update-cost"
 
 /**
  * 份额字符串 → 定点整数（scale = 8）。委托给 [com.boomsset.domain.parseQuantity]。

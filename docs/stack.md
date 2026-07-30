@@ -367,6 +367,25 @@ Vico 3.x 的两个实测细节：
 这直接消掉了 AGENTS.md 里「pbxproj 冲突极难解」那条约束的根因 ——
 需要 review 的变成一份二十几行的 YAML。
 
+### iOS UI 测试（XCUITest）—— 三个探测出来的事实
+
+CMP 把整个界面画在 Skia canvas 上，所以第一件事是确认 XCUITest 到底能不能定位元素。
+**能** —— CMP 的 semantics 会映射到 UIAccessibility。但有三个坑，都是实测出来的：
+
+1. **Compose 的 `OutlinedTextField` 在无障碍树里是 `TextView`，不是 `TextField`。**
+   `app.textFields` 一个都找不到。
+2. **不能靠 `OutlinedTextField` 的 `label` 定位** —— 它只在部分状态下映射成无障碍 label，
+   聚焦后就没了（读屏用户也会听到空白）。所以给关键输入框加了显式
+   `Modifier.semantics { contentDescription = ... }` —— 这同时是真实的无障碍改善。
+3. **Compose 把 `contentDescription` 和可见 label 拼接**成
+   `'field-asset-name, 名称，如「招行活期」'`，所以 XCUITest 要**前缀匹配**，不能精确匹配。
+
+另外两个操作层面的注意：输完一个字段要**收起键盘**（换行触发 ImeAction.Done），
+否则下一个字段可能在键盘下面、`tap()` 打到键盘上，报错是
+"Neither element nor any descendant has keyboard focus" —— 看起来像找不到元素，
+其实是点错了位置。以及 `-uitest-reset` 启动参数让每个测试从干净数据库开始
+（实现在 Swift 侧，不污染共享的生产代码）。
+
 **还没验证**：
 - 港股/美股的端到端（只验了 A 股 sh600519；解析和币种映射有单测覆盖）
 - **iOS 上的交互流程**（添加/更新/归档资产）—— 没有 iOS UI 自动化，Android 侧是实机点过的
