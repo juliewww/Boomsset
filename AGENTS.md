@@ -30,9 +30,12 @@
 （schema 创建、枚举 adapter、CHECK 约束、事务、按天 upsert）和用到 Turbine 的
 `PortfolioFlowTest`。
 
-**还没做的：** 应用锁、行情的手动覆盖。
-`iosApp/` 仍缺 .xcodeproj（**iOS App 本身还没在模拟器里跑过**，只验证了共享层），
-见 iosApp/README.md。
+**iOS App 已在模拟器里跑起来（实测）：** 共享 Compose UI 正常渲染、Koin 启动成功、
+SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
+`iosApp/` 用 **XcodeGen** 生成工程 —— 提交的是 `project.yml`，`.xcodeproj` 和 `Info.plist`
+都是生成物且已 gitignore。见 iosApp/README.md。
+
+**还没做的：** 应用锁、行情的手动覆盖、iOS 上的交互流程验证（没有 iOS UI 自动化）。
 
 **教训（五次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
@@ -167,6 +170,13 @@ iOS 工程状态见 **[iosApp/README.md](iosApp/README.md)**（.xcodeproj 尚未
    照常工作 —— 改一行的事，但等做应用锁时才发现就要返工。
 7. **iOS 的 `Info.plist` 必须有 `NSFaceIDUsageDescription`**，否则首次调用 Face ID 时
    **直接崩溃**（Touch ID 不需要，Face ID 需要）。
+8. **iOS 的 `Info.plist` 还必须有 `CADisableMinimumFrameDurationOnPhone`**，否则
+   **App 一启动就崩** —— CMP 的 `PlistSanityCheck` 主动抛异常。
+   这个崩溃**没有崩溃报告、系统日志里也查不到**（异常在 dispatch queue 上），
+   只有 `xcrun simctl launch --console` 能看到。**排查 iOS 启动问题从 --console 开始。**
+9. **Xcode target 必须显式 `-lsqlite3`**，否则链接失败在 `_sqlite3_step` 未定义。
+   ⚠️ **iOS 单元测试全过不能证明 App 能链接** —— Kotlin/Native 链接测试可执行文件时
+   继承了 cinterop 的 linker opts，但静态 framework 交给 Xcode 后那些 opts 不传递。
 
 ## 领域模型
 

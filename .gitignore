@@ -13,3 +13,11 @@ xcuserdata/
 DerivedData/
 .xcode.env.local
 Pods/
+
+# XcodeGen 生成的工程 —— 提交 iosApp/project.yml 就够了。
+# 这样 .pbxproj 变成构建产物而不是需要手工维护的文件，
+# AGENTS.md 担心的「冲突极难解」就不存在了。
+iosApp/*.xcodeproj
+# Info.plist 也是 XcodeGen 从 project.yml 生成的（它会原地重写这个文件），
+# 所以同样不提交 —— project.yml 是唯一事实来源。
+iosApp/iosApp/Info.plist

@@ -1,0 +1,78 @@
+# XcodeGen 的工程定义。跑 `xcodegen generate` 生成 iosApp.xcodeproj。
+#
+# 为什么用 XcodeGen 而不是把 .xcodeproj 提交进仓库：
+# AGENTS.md 说 .pbxproj「尽量别手改，冲突极难解」。用生成器之后，
+# **提交的是这份 YAML**（可读、可 review、可合并），pbxproj 变成构建产物、进 .gitignore。
+# 那条约束的根因就消掉了。
+
+name: iosApp
+options:
+  bundleIdPrefix: com.boomsset
+  deploymentTarget:
+    # Kotlin 2.4 的下限就是 iOS 15.0，见 AGENTS.md 约束 1
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: iosApp
+    info:
+      path: iosApp/Info.plist
+      properties:
+        CFBundleDisplayName: 旺资
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # ⚠️ 必须有，否则首次调用 Face ID 直接崩溃（AGENTS.md 约束 7）。
+        # 应用锁还没做，但这行现在就放好。
+        NSFaceIDUsageDescription: 使用面容 ID 解锁旺资，保护你的资产数据
+        # ⚠️⚠️ Compose Multiplatform **强制要求**这一项，否则 App 一启动就崩：
+        # `ComposeUIViewController` 里的 PlistSanityCheck 会抛 IllegalStateException。
+        # 它的意思是没有这个键，ProMotion 机型上会被限制在 60Hz。
+        #
+        # 这个崩溃极难查：异常发生在 dispatch queue 上，所以**没有崩溃报告、
+        # 系统日志里也没有**，只有 `xcrun simctl launch --console` 能看到。
+        # 而且 iOS 单元测试全部通过 —— 它们从不创建 ComposeUIViewController。
+        CADisableMinimumFrameDurationOnPhone: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.boomsset
+        # 只有 arm64 —— iosX64 已被移除，见 AGENTS.md 约束 1
+        ARCHS: arm64
+        ONLY_ACTIVE_ARCH: true
+        # Gradle 把 framework 放在这里，按配置和 SDK 分目录
+        FRAMEWORK_SEARCH_PATHS:
+          - $(inherited)
+          - $(SRCROOT)/../shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)
+        # ⚠️ 必须显式链接系统 sqlite3，否则链接失败在 `_sqlite3_step` 等符号未定义。
+        # SQLDelight 的 native driver 走 SQLiter，它的 cinterop 只声明需要 sqlite3，
+        # 不会替消费方链接。
+        #
+        # 容易误判的地方：**iOS 单元测试是能通过的** —— Kotlin/Native 自己链接测试
+        # 可执行文件时会继承 cinterop 的 linker opts。但静态 framework 交给 Xcode 之后
+        # 那些 opts 不会传递到 App 的链接命令行上。所以「iOS 测试全绿」不代表 App 能链接。
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -lsqlite3
+        # 本地跑模拟器不需要签名
+        CODE_SIGNING_ALLOWED: false
+        CODE_SIGN_IDENTITY: ""
+    dependencies:
+      # 静态 framework，由下面的 Run Script 先构建出来
+      - framework: SharedKit.framework
+        embed: false
+        link: true
+    preBuildScripts:
+      - name: Build shared framework
+        # embedAndSignAppleFrameworkForXcode 会读 Xcode 注入的环境变量
+        # （CONFIGURATION / SDK_NAME / ARCHS）来决定编哪个 target
+        script: |
+          cd "$SRCROOT/.."
+          ./gradlew :shared:embedAndSignAppleFrameworkForXcode
+        basedOnDependencyAnalysis: false

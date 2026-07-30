@@ -329,9 +329,28 @@ Vico 3.x 的两个实测细节：
    而链接器会丢掉没引用的符号 —— 所以连"能编译"都说明不了什么。
    **加跨平台库之后要确认真有测试用到它，否则编译通过是假的安全感。**
 
+**iOS App 已在模拟器跑通（2026-07-30）**，过程中撞到三个坑，都记在 `iosApp/project.yml` 的注释里：
+
+1. **链接失败在 `_sqlite3_step`** —— Xcode target 需要显式 `-lsqlite3`。
+   **最容易误判的一点：iOS 单元测试是全过的。** Kotlin/Native 链接自己的测试可执行文件时
+   会继承 SQLiter cinterop 的 linker opts，但静态 framework 交给 Xcode 之后那些 opts
+   不会出现在 App 的链接命令行上。所以「iOS 测试全绿」不等于「App 能链接」。
+2. **`CADisableMinimumFrameDurationOnPhone` 缺失导致启动即崩** ——
+   CMP 的 `PlistSanityCheck` 主动抛 `IllegalStateException`（意思是没这个键 ProMotion
+   机型会被限在 60Hz）。**这个崩溃没有崩溃报告、系统日志里也没有**，因为异常发生在
+   dispatch queue 上；`simctl launch` 只返回一个 PID 然后 App 静静消失。
+   唯一能看到 Kotlin 异常和堆栈的是 `xcrun simctl launch --console`。
+3. 一开始怀疑是 Xcode 16+ 的 debug dylib / Previews 机制，加了 `ENABLE_DEBUG_DYLIB: NO`。
+   **后来实测证明那不是原因**（开着也能启动），已经去掉 —— 留一个错误的解释比没有更糟。
+
+工程用 **XcodeGen**：提交 `project.yml`，`.xcodeproj` 和 `Info.plist` 都是生成物。
+这直接消掉了 AGENTS.md 里「pbxproj 冲突极难解」那条约束的根因 ——
+需要 review 的变成一份二十几行的 YAML。
+
 **还没验证**：
 - 港股/美股的端到端（只验了 A 股 sh600519；解析和币种映射有单测覆盖）
-- **iOS App 本身还没在模拟器里跑过** —— 共享层验证完了，但 `iosApp/` 缺 .xcodeproj
+- **iOS 上的交互流程**（添加/更新/归档资产）—— 没有 iOS UI 自动化，Android 侧是实机点过的
+- iOS 真机（非模拟器），需要签名配置
 - **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
   它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。
 - **SQLDelight 在真实 iOS 上的运行**（NativeSqliteDriver）—— 只验证了能编译，没跑过。
