@@ -13,6 +13,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -20,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.data.SUPPORTED_CURRENCIES
+import com.boomsset.security.AppLockUiState
+import com.boomsset.security.AuthCapability
 import com.boomsset.domain.Money
 import com.boomsset.domain.Period
 import com.boomsset.ui.bpToPercent
@@ -30,6 +33,8 @@ fun NetWorthScreen(
     state: NetWorthUiState,
     onSelectPeriod: (Period) -> Unit,
     onSelectBaseCurrency: (String) -> Unit,
+    lockState: AppLockUiState,
+    onToggleLock: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -42,7 +47,12 @@ fun NetWorthScreen(
         when {
             state.loading -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
 
-            state.isEmpty -> EmptyHint()
+            state.isEmpty -> {
+                EmptyHint()
+                // 空状态下也要能开应用锁 —— 提前 return 会砍掉这个入口，
+                // 这是 AGENTS.md 里那条「空状态不要用提前 return」的教训
+                AppLockToggle(lockState, onToggleLock)
+            }
 
             else -> {
                 SummaryCard(state)
@@ -51,6 +61,7 @@ fun NetWorthScreen(
                 state.series?.let { NetWorthChart(it) }
                 if (state.unpricedCount > 0) UnpricedWarning(state.unpricedCount)
                 GrowthVsReturnNote()
+                AppLockToggle(lockState, onToggleLock)
             }
         }
     }
@@ -91,6 +102,50 @@ private fun SummaryCard(state: NetWorthUiState) {
                     "仅覆盖已填成本的 ${pnl.coveredAssetIds.size} 项资产",
                     style = MaterialTheme.typography.labelSmall,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * 应用锁开关。
+ *
+ * 不可用时**说明原因并禁用**，而不是让用户开了之后发现进不去 ——
+ * 「没录入」是去系统设置能解决的，「不支持」是无解的，两者要说清区别。
+ */
+@Composable
+private fun AppLockToggle(lockState: AppLockUiState, onToggle: (Boolean) -> Unit) {
+    val canUse = lockState.capability == AuthCapability.AVAILABLE
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("应用锁", style = MaterialTheme.typography.titleSmall)
+                Switch(
+                    checked = lockState.lockEnabled,
+                    onCheckedChange = onToggle,
+                    enabled = canUse || lockState.lockEnabled,
+                )
+            }
+            Text(
+                when (lockState.capability) {
+                    AuthCapability.AVAILABLE ->
+                        "开启后每次打开旺资都需要验证身份。开启时会先验一次。"
+                    AuthCapability.NOT_ENROLLED ->
+                        "这台设备还没设锁屏密码或生物识别 —— 去系统设置里加上就能用了。"
+                    AuthCapability.NO_HARDWARE ->
+                        "这台设备不支持生物识别，也没有锁屏密码可用。"
+                    AuthCapability.TEMPORARILY_UNAVAILABLE ->
+                        "验证暂时不可用（可能是多次失败被锁定），稍后再试。"
+                },
+                style = MaterialTheme.typography.labelSmall,
+            )
+            lockState.lastError?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error)
             }
         }
     }

@@ -11,6 +11,7 @@ import com.boomsset.network.FxRateSource
 import com.boomsset.network.QuoteSource
 import com.boomsset.network.TencentQuoteSource
 import com.boomsset.network.createHttpClient
+import com.boomsset.security.AppLockViewModel
 import com.boomsset.data.createDatabase
 import com.boomsset.ui.allocation.AllocationViewModel
 import com.boomsset.ui.assets.AssetListViewModel
@@ -60,6 +61,7 @@ val sharedModule: Module = module {
     }
     factory { AllocationViewModel(repository = get(), settings = get()) }
     factory { AssetListViewModel(repository = get(), settings = get()) }
+    factory { AppLockViewModel(settings = get(), authenticator = get()) }
 }
 
 /**
