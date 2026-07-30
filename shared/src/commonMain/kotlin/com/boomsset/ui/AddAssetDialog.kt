@@ -1,5 +1,7 @@
 package com.boomsset.ui
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -19,6 +21,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AssetClass
 import com.boomsset.data.SUPPORTED_CURRENCIES
@@ -83,13 +87,24 @@ fun AddAssetDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加资产") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // 必须可滚动：键盘弹起后对话框下半部分会被裁掉，
+            // 用户（和 UI 测试）都够不到市值/成本字段 —— iOS 上实测出来的，
+            // Android 模拟器屏幕高才刚好没暴露。
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("名称，如「招行活期」") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    // 显式 contentDescription：OutlinedTextField 的 label 只在某些状态下
+                    // 才映射成无障碍 label（实测在 iOS 上聚焦后就没了），读屏用户会听到空白。
+                    // 顺带也让 UI 测试能稳定定位。
+                    modifier = Modifier.fillMaxWidth().semantics {
+                        contentDescription = FIELD_NAME
+                    },
                 )
 
                 Text("大类", style = MaterialTheme.typography.labelMedium)
@@ -170,7 +185,9 @@ fun AddAssetDialog(
                         label = { Text(if (isLiability) "欠款金额" else "当前市值") },
                         singleLine = true,
                         isError = amountText.isNotBlank() && amount == null,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().semantics {
+                            contentDescription = FIELD_AMOUNT
+                        },
                     )
                 }
 
@@ -181,7 +198,9 @@ fun AddAssetDialog(
                         label = { Text("总投入成本（可留空）") },
                         singleLine = true,
                         isError = costText.isNotBlank() && cost == null,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().semantics {
+                            contentDescription = FIELD_COST
+                        },
                     )
                     Text(
                         "填了成本才能显示浮动盈亏和收益率。",
@@ -240,6 +259,15 @@ fun AddAssetDialog(
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+/**
+ * 输入框的无障碍标识。
+ *
+ * 抽成常量是因为 UI 测试要按同样的字符串定位 —— 字面量散在两处早晚会不一致。
+ */
+const val FIELD_NAME = "field-asset-name"
+const val FIELD_AMOUNT = "field-asset-amount"
+const val FIELD_COST = "field-asset-cost"
 
 /** 新建资产的入参。字段多了之后用 data class 比八个位置参数安全。 */
 data class NewAsset(
