@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标配色。改设计请改 tools/appicon/generate.py 里的同名常量，两边要一致。 -->
+<resources>
+    <color name="ic_launcher_bg_top">#F7F9FC</color>
+    <color name="ic_launcher_bg_bottom">#E6EDF6</color>
+</resources>

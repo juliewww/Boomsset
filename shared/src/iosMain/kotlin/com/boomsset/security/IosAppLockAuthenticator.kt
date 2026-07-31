@@ -36,7 +36,7 @@ import kotlin.coroutines.resume
  */
 class IosAppLockAuthenticator : AppLockAuthenticator {
 
-    @OptIn(ExperimentalForeignApi::class)
+    @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
     override fun capability(): AuthCapability = memScoped {
         // canEvaluatePolicy 的 NSError 是出参，Kotlin/Native 上要显式分配指针
         val errorPtr = alloc<ObjCObjectVar<NSError?>>()

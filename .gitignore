@@ -21,3 +21,7 @@ iosApp/*.xcodeproj
 # Info.plist 也是 XcodeGen 从 project.yml 生成的（它会原地重写这个文件），
 # 所以同样不提交 —— project.yml 是唯一事实来源。
 iosApp/iosApp/Info.plist
+
+# Python 字节码（tools/ 下的生成脚本会产生）
+__pycache__/
+*.pyc
