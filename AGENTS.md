@@ -3,7 +3,7 @@
 ## 项目状态
 
 **核心循环已闭环（Android 实机验证过）。** 三个页面：净值曲线 / 资产配置 / 资产列表。
-添加资产 → 定期更新估值 → 归档，全流程可用。**77 个单元测试全绿。**
+添加资产 → 定期更新估值 → 归档，全流程可用。**168 个单元测试全绿。**
 
 实跑验证过（含直接查 SQLite 确认）：更新是**追加快照**而非改写（成本正确结转），
 归档追加 0 值快照且历史一字未改，配置比例加总 100%。
@@ -26,7 +26,7 @@
 （金额数字不变但含义变了），判据在 `AssetEditPolicy`。品种可自定义添加，归档可取消。
 
 **iOS 已验证（Xcode 26.6 + iOS Simulator 26.5 SDK）：** framework 链接通过、
-**126 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
+**148 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
 （schema 创建、枚举 adapter、CHECK 约束、事务、按天 upsert）和用到 Turbine 的
 `PortfolioFlowTest`。
 
@@ -53,14 +53,19 @@ SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
 那不是设计决策，只是没人配过。配 ColorScheme 时**必须逐个角色写全**：没传的参数取基线默认值，
 而基线的 surface 家族是带紫调的灰，只改 primary 会让 Card 和 BottomBar 仍然发紫。
 
-**iOS 交互流程已验证（XCUITest，6 个测试全绿）：** 空状态、tab 切换、添加资产后
-净值和盈亏正确、更新弹窗的预填能被解析、配置比例、应用锁能力提示。
+**空状态已可用（两端实机验证）：** 净值页给出三步上手指引，并说明「记快照不记流水」
+（不说清楚，用户会按记账 App 的预期去用）。**配置页零资产时照样能用** ——
+显示目标比例本身，预设可切换、比例可编辑。
+
+**iOS 交互流程已验证（XCUITest，8 个测试全绿）：** 空状态、tab 切换、添加资产后
+净值和盈亏正确、更新弹窗的预填能被解析、配置比例、应用锁能力提示，
+以及**零资产时目标配置入口可达**和空状态指引。
 跑法：`cd iosApp && xcodebuild test -scheme iosApp -destination "id=<UDID>"`。
 
 **还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）；
 iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会自动派生）。
 
-**教训（七次都是实跑才发现、编译和单测全绿）：**
+**教训（八次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
 2. 预填用带千分位的 `formatAmount()`，而解析器拒绝逗号 → **≥¥1000 的资产无法更新**
 3. 汇率刷新只在 ViewModel `init` 跑一次，那时还没有资产、需要的币种是空集 →
@@ -87,8 +92,21 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
    顶着安全区放大会在别的 OEM 遮罩下被削，所以改为**加粗笔画**来补视觉重量。
    **图标必须装到设备上看，本地合成证明不了它在启动器里的样子。**
 
-**另一条通则：空状态不要用提前 `return` 实现。** 提前 return 会把「空状态下仍然需要的
-入口」（已归档、设置、帮助）一并砍掉。第 1 条和第 5 条都属于这一类。
+8. 配置页零资产时走 `state.isEmpty` 分支只渲染一行「还没有资产，先去净值页添加」，
+   而 `AllocationPicker`（切换/编辑/新建目标配置的**唯一**入口）在 `else` 分支里
+   → **新用户根本设不了目标配置**。而那恰恰是录第一笔资产*之前*就想做的事。
+   **这条通则当时已经写在本文件里了，还是又犯了一次** —— 因为规则的字面只提了
+   提前 `return`，这次用的是 `when` 的分支，形式不同、后果一样。
+
+**另一条通则（第 1、5、8 条都是它）：空状态不能走一条不包含入口的渲染分支。**
+**不要只盯着提前 `return`** —— `when`/`if` 分支、早退的 `LazyColumn` item，任何
+「空态和有数据走不同路径」的写法都会犯。可操作的检查：**把这一页所有入口列出来
+（已归档、设置、帮助、目标配置、应用锁…），逐个确认空态下它还在。**
+入口最好干脆放在分支之外，只让「主体内容」分支化。
+
+而且**这类 bug 只有 UI 测试能抓到**：数据层一直是对的（预设来自
+`observeAllocations()`，和持仓无关），state 层测试只能证明数据在。
+所以每修一次都要配一条 XCUITest，并且**先撤掉修复确认它真的会失败**。
 
 第 2 条的教训是：格式化和解析各自都有测试，**但没有测试跨过它们之间的接缝**。
 现在有 `InputRoundTripTest` 锁住「预填的字符串必须能被自己的解析器读回原值」。
@@ -152,8 +170,8 @@ docs/            详细文档，按需查阅
 
 ```bash
 ./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
-./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，146 个）
-./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（126 个，需要 Xcode）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，168 个）
+./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（148 个，需要 Xcode）
 ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS 链接（需要 Xcode）
 ./gradlew :androidApp:assembleDebug                # Android 构建
 ./gradlew :shared:allTests                         # 两端一起
@@ -172,7 +190,7 @@ Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
 所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
 
-**JVM 和 iOS 的测试数不一样（146 vs 126），这是对的**：
+**JVM 和 iOS 的测试数不一样（168 vs 148），这是对的**：
 - 数据库测试（`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`）在
   `androidHostTest`，用 JVM 的 JDBC driver
 - `iosTest/NativeDatabaseTest` 单独验 iOS 的 `NativeSqliteDriver`（**不同的 SQLite 构建**，

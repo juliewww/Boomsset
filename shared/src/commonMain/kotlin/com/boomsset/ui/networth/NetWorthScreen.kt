@@ -220,15 +220,44 @@ private fun GrowthVsReturnNote() {
     )
 }
 
+/**
+ * 空状态的上手指引。
+ *
+ * 原来只有一句"点右下角加号"。问题是**新用户不知道这个 App 的工作方式**：
+ * 它不记流水、记快照，这跟大部分记账 App 相反 —— 不先说清楚，用户会按记流水的
+ * 预期去用，然后觉得功能缺失。所以这里把三步说完，并且指出配置可以先设。
+ *
+ * 刻意保持短：三条各一行。空状态放长篇说明没人看。
+ */
 @Composable
 private fun EmptyHint() {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("还没有资产", style = MaterialTheme.typography.titleMedium)
             Text(
-                "点右下角加号记一笔。旺资不记流水 —— 你只需要定期更新每项资产现在值多少。",
+                "旺资不记流水，记的是快照 —— 你不用逐笔录收支，只要定期更新每项资产现在值多少。",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            Step("1", "点右下角加号，添加一项资产（存款、基金、股票、房产都行）")
+            Step("2", "以后每月或每季回来更新一次市值，净值曲线就长出来了")
+            Step("3", "去「配置」页设定目标比例，就能看到自己离目标有多远")
+            Text(
+                "现在就可以先去「配置」页看看内置的几套目标比例 —— 那一页不需要有资产也能用。",
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
+    }
+}
+
+@Composable
+private fun Step(number: String, text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            number,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
