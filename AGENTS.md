@@ -44,7 +44,7 @@ SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
 开启前必须先认证成功、解锁状态**不持久化**（回后台或重启都要重验）。
 锁着时**完全不组合**受保护内容而不是盖遮罩 —— 后者会进任务切换截图、也可能一瞬间露出来。
 
-**品牌色与 app icon 已做（两端实机验证）：** 品牌色**墨蓝 `#1F4E85`**，
+**品牌色与 app icon 已做（两端实机验证）：** 品牌色**琥珀棕 `#8A5A18`**，
 定义在 [Theme.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt)，跟随系统深浅色。
 图标是「配置环 + 旺」，全部尺寸由 [tools/appicon/generate.py](tools/appicon/generate.py) 生成 ——
 **那是唯一事实来源，res/ 和 Assets.xcassets 里的 PNG 是产物，别手改。**
@@ -126,7 +126,7 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
 | 网络 | Ktor（只用于拉汇率/行情，不同步用户数据） |
 | 图表 | Vico（坐标是 `:compose-m3`，**不是** `:multiplatform` —— 见 stack.md，这里极易搞错） |
 | 测试 | kotlin-test + Kotest 断言 + Turbine + Compose ui-test；mock 默认手写 fake |
-| 配色 | 品牌色墨蓝 `#1F4E85`，`Theme.kt` 与图标生成器**共用同一组常量**（改一边必须改另一边） |
+| 配色 | 品牌色琥珀棕 `#8A5A18`，`Theme.kt` 与图标生成器**共用同一组常量**（改一边必须改另一边） |
 
 ## 项目结构
 
