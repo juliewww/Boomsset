@@ -52,35 +52,50 @@ fun AllocationScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         val view = state.view
+        val active = state.allocations.firstOrNull { it.isActive }
+
+        Header(view, active)
+
+        // ⚠️ 这一块**必须在任何空状态分支之外**。
+        //
+        // 它曾经写在 `else` 分支里，于是零资产时整块被跳过 —— 而它是切换/编辑/新建
+        // 目标配置的**唯一**入口，结果新用户根本够不到目标配置。而目标配置恰恰是
+        // 录第一笔资产**之前**就想设的东西（"我想先看看该怎么配"）。
+        //
+        // 这是 AGENTS.md 那条通则的第三次犯：空状态不能走一条不含入口的分支。
+        // 注意它不限于提前 `return` —— 这次是 `when` 的分支，形式不同、后果一样。
+        if (state.allocations.isNotEmpty()) {
+            AllocationPicker(
+                allocations = state.allocations,
+                onSelect = onSelectAllocation,
+                onEdit = { editing = it },
+                onCreate = { creating = true },
+                onRestore = onRestoreBuiltIn,
+                onDelete = onDeleteAllocation,
+            )
+        }
+
         when {
             state.loading -> Text("加载中…", style = MaterialTheme.typography.bodyMedium)
-            view == null || state.isEmpty -> Text(
-                "还没有资产，先去「净值」页添加。",
+
+            view == null -> Text(
+                "读不到配置数据。",
                 style = MaterialTheme.typography.bodyMedium,
             )
 
+            // 还没有资产时显示**目标比例本身**，而不是一行"去添加资产"。
+            // 这一页在没有数据时也该是有用的：它回答"我打算怎么配"，
+            // 这个问题不依赖任何持仓。
+            state.isEmpty -> TargetPreview(active)
+
+            // 净资产 ≤ 0 时比例在数学上无意义，直说而不是显示乱数
+            view.netWorth.minorUnits <= 0L -> NegativeNetWorthNotice()
+
             else -> {
-                Header(view)
-
-                AllocationPicker(
-                    allocations = state.allocations,
-                    onSelect = onSelectAllocation,
-                    onEdit = { editing = it },
-                    onCreate = { creating = true },
-                    onRestore = onRestoreBuiltIn,
-                    onDelete = onDeleteAllocation,
-                )
-
-                // 净资产 ≤ 0 时比例在数学上无意义，直说而不是显示乱数
-                if (view.netWorth.minorUnits <= 0L) {
-                    NegativeNetWorthNotice()
-                } else {
-                    AssetClass.displayOrder.forEach { assetClass ->
-                        ClassRow(view, assetClass)
-                    }
-                    if (view.hasNegativeExposure) NegativeExposureNotice()
+                AssetClass.displayOrder.forEach { assetClass ->
+                    ClassRow(view, assetClass)
                 }
-
+                if (view.hasNegativeExposure) NegativeExposureNotice()
                 DenominatorNote()
             }
         }
@@ -158,19 +173,79 @@ private fun AllocationPicker(
     }
 }
 
+/**
+ * 标题区。**`view` 可空** —— 加载中和零资产时也要显示标题和当前对比的目标名，
+ * 否则这一页在最需要解释自己的时候反而什么都不说。
+ */
 @Composable
-private fun Header(view: AllocationView) {
+private fun Header(view: AllocationView?, active: TargetAllocation?) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("资产配置", style = MaterialTheme.typography.titleLarge)
+        if (view != null) {
+            Text(
+                "净资产 ${view.netWorth.formatWithCurrency(view.baseCurrency)}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        // 目标名取自 state.allocations，不依赖 view —— 没有资产时它照样有值
         Text(
-            "净资产 ${view.netWorth.formatWithCurrency(view.baseCurrency)}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        Text(
-            view.target?.let { "对比目标：${it.name}" } ?: "尚未设定目标配置",
+            active?.let { "对比目标：${it.name}" } ?: "尚未设定目标配置",
             style = MaterialTheme.typography.labelMedium,
         )
     }
+}
+
+/**
+ * 零资产时显示目标比例。
+ *
+ * 刻意用和 [ClassRow] 一样的卡片 + 进度条版式：等真的有了资产，同一个位置会换成
+ * 当前比例和偏离，位置和形状不变，用户不需要重新找东西在哪。
+ */
+@Composable
+private fun TargetPreview(active: TargetAllocation?) {
+    if (active == null) {
+        Text(
+            "还没有目标配置。点上面的「＋ 新建」定一套，或者先去「净值」页添加资产。",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        return
+    }
+
+    Text(
+        "这是你的目标比例。添加资产后，这里会换成当前比例和与目标的偏离。",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+
+    AssetClass.displayOrder.forEach { assetClass ->
+        val targetBp = active.targetsBp[assetClass] ?: 0
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(assetClass.label(), style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "目标 ${targetBp.bpToPercent(decimals = 0)}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                LinearProgressIndicator(
+                    progress = {
+                        (targetBp.toFloat() / TargetAllocation.TOTAL_BP).coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+
+    Text(
+        "去「净值」页点右下角加号添加第一笔资产，就能看到自己离目标有多远。",
+        style = MaterialTheme.typography.labelMedium,
+    )
 }
 
 @Composable

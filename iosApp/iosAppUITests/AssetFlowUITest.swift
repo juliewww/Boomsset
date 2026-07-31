@@ -47,7 +47,8 @@ final class AssetFlowUITest: XCTestCase {
         waitFor(app.staticTexts["还没有资产"], "空状态")
 
         app.buttons["配置"].tap()
-        waitFor(app.staticTexts["还没有资产，先去「净值」页添加。"], "配置页空态")
+        // 配置页在零资产时也显示标题和目标比例，不再是一行"去添加资产"
+        waitFor(app.staticTexts["资产配置"], "配置页")
 
         app.buttons["资产"].tap()
         waitFor(app.staticTexts["没有在持资产。去「净值」页点加号添加。"], "资产页空态")
@@ -120,6 +121,71 @@ final class AssetFlowUITest: XCTestCase {
         XCTAssertTrue(app.staticTexts["净资产 ¥100,000.00"].exists)
         // 内置预设可切换
         XCTAssertTrue(app.staticTexts["平衡"].exists || app.buttons["平衡"].exists)
+    }
+
+    /// 回归测试：**零资产时目标配置的入口必须够得到。**
+    ///
+    /// 曾经够不到 —— `AllocationScreen` 在 `state.isEmpty` 分支只渲染一行
+    /// "还没有资产，先去「净值」页添加"，而切换/编辑/新建目标配置的唯一入口
+    /// `AllocationPicker` 写在 `else` 分支里，整块被跳过。新用户于是根本设不了目标配置，
+    /// 而那恰恰是录第一笔资产**之前**就想做的事。
+    ///
+    /// 和「全部归档后取消不了归档」是同一类 bug（空状态走了一条不含入口的分支），
+    /// 第三次。数据层一直是对的，所以**只有 UI 测试能抓到它** ——
+    /// `AllocationUiStateTest` 只能证明数据在。
+    func testAllocationTargetsReachableWithNoAssets() throws {
+        waitFor(app.staticTexts["还没有资产"], "净值页空状态")
+
+        app.buttons["配置"].tap()
+        waitFor(app.staticTexts["资产配置"], "配置页标题")
+
+        // 三套内置预设都能切
+        for preset in ["稳健", "平衡", "激进"] {
+            XCTAssertTrue(
+                app.staticTexts[preset].exists || app.buttons[preset].exists,
+                "零资产时预设「\(preset)」必须可选，实际树：\n\(app.debugDescription)"
+            )
+        }
+        // 编辑比例和新建都要在
+        XCTAssertTrue(
+            app.buttons["编辑比例"].exists || app.staticTexts["编辑比例"].exists,
+            "零资产时必须能编辑比例"
+        )
+        XCTAssertTrue(
+            app.staticTexts["＋ 新建"].exists || app.buttons["＋ 新建"].exists,
+            "零资产时必须能新建配置"
+        )
+
+        // 目标比例本身要显示出来 —— 这一页在没有数据时也该是有用的。
+        // 「平衡」的权益类目标是 40%
+        XCTAssertTrue(
+            app.staticTexts["目标 40%"].exists,
+            "零资产时应显示目标比例，实际树：\n\(app.debugDescription)"
+        )
+
+        // 编辑对话框真的打得开，不只是按钮存在
+        app.buttons["编辑比例"].tap()
+        XCTAssertTrue(
+            app.staticTexts["编辑「平衡」"].waitForExistence(timeout: 5),
+            "点「编辑比例」应打开编辑对话框，实际树：\n\(app.debugDescription)"
+        )
+    }
+
+    /// 净值页的空状态要给出上手指引，而不只是"点加号"
+    func testEmptyStateExplainsHowTheAppWorks() throws {
+        waitFor(app.staticTexts["还没有资产"], "空状态")
+
+        // 关键概念：记快照不记流水。不说清楚，用户会按记账 App 的预期去用
+        XCTAssertTrue(
+            app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "不记流水")
+            ).firstMatch.exists,
+            "空状态必须说明这个 App 记快照而不是记流水"
+        )
+        // 三步指引都在
+        for step in ["1", "2", "3"] {
+            XCTAssertTrue(app.staticTexts[step].exists, "缺第 \(step) 步指引")
+        }
     }
 
     /// 应用锁在 iOS 上的能力判断 —— 模拟器默认没录入生物识别
