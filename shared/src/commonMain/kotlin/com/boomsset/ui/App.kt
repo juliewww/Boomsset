@@ -3,7 +3,7 @@ package com.boomsset.ui
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.MaterialTheme
+import com.boomsset.ui.theme.BoomssetTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -51,7 +51,7 @@ private val tabs = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App() {
-    MaterialTheme {
+    BoomssetTheme {
         // 应用锁是最外层的门 —— 在它里面才组合任何业务内容
         val lockViewModel: AppLockViewModel = koinViewModel()
         val lockState by lockViewModel.state.collectAsStateWithLifecycle()

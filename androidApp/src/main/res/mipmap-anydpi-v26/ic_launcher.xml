@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（Android 8.0+，本项目 minSdk 26 所以一直走这条）。
+
+  前景 PNG 已经缩进了直径 66/108 的保证可见圆 —— 启动器的遮罩形状由 OEM 决定
+  （圆 / 方 / squircle / 水滴），不缩进的话环会被裁掉一圈。缩放在
+  tools/appicon/generate.py 的 adaptive_foreground() 里算。
+
+  monochrome 是 Android 13+ 的主题图标（跟随壁纸取色）。系统只用这个 drawable 的
+  **alpha 通道**当剪影，所以可以直接复用彩色前景 —— 它的 alpha 正好是「环 + 旺」的形状。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

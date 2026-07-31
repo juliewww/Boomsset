@@ -43,6 +43,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.boomsset
+        # 图标在 iosApp/Assets.xcassets 里，由 tools/appicon/generate.py 生成
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # 只有 arm64 —— iosX64 已被移除，见 AGENTS.md 约束 1
         ARCHS: arm64
         ONLY_ACTIVE_ARCH: true

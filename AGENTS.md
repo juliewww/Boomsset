@@ -44,13 +44,23 @@ SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
 开启前必须先认证成功、解锁状态**不持久化**（回后台或重启都要重验）。
 锁着时**完全不组合**受保护内容而不是盖遮罩 —— 后者会进任务切换截图、也可能一瞬间露出来。
 
+**品牌色与 app icon 已做（两端实机验证）：** 品牌色**琥珀棕 `#8A5A18`**，
+定义在 [Theme.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt)，跟随系统深浅色。
+图标是「配置环 + 旺」，全部尺寸由 [tools/appicon/generate.py](tools/appicon/generate.py) 生成 ——
+**那是唯一事实来源，res/ 和 Assets.xcassets 里的 PNG 是产物，别手改。**
+
+在此之前全局只有一句裸 `MaterialTheme {}`，界面跑的是 Material 3 自带的**默认紫** ——
+那不是设计决策，只是没人配过。配 ColorScheme 时**必须逐个角色写全**：没传的参数取基线默认值，
+而基线的 surface 家族是带紫调的灰，只改 primary 会让 Card 和 BottomBar 仍然发紫。
+
 **iOS 交互流程已验证（XCUITest，6 个测试全绿）：** 空状态、tab 切换、添加资产后
 净值和盈亏正确、更新弹窗的预填能被解析、配置比例、应用锁能力提示。
 跑法：`cd iosApp && xcodebuild test -scheme iosApp -destination "id=<UDID>"`。
 
-**还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）。
+**还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）；
+iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会自动派生）。
 
-**教训（六次都是实跑才发现、编译和单测全绿）：**
+**教训（七次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
 2. 预填用带千分位的 `formatAmount()`，而解析器拒绝逗号 → **≥¥1000 的资产无法更新**
 3. 汇率刷新只在 ViewModel `init` 跑一次，那时还没有资产、需要的币种是空集 →
@@ -70,6 +80,12 @@ SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
 6. `AddAssetDialog` 的内容没加 `verticalScroll` → iOS 上键盘一弹，**市值和成本字段
    被裁掉、用户够不到**。Android 模拟器屏幕高，刚好放得下所以一直没暴露。
    **对话框内容默认就该可滚动** —— 键盘会吃掉一半屏幕。
+
+7. 图标的自适应前景按规范缩进了 66/108 安全区，本地按 72dp 视口合成看几乎贴边，
+   **但实机上环明显更小** —— Pixel Launcher 对自适应图标还会**再缩一次**
+   （Launcher3 的图标归一化，不在 `AdaptiveIconDrawable` 规范里）。
+   顶着安全区放大会在别的 OEM 遮罩下被削，所以改为**加粗笔画**来补视觉重量。
+   **图标必须装到设备上看，本地合成证明不了它在启动器里的样子。**
 
 **另一条通则：空状态不要用提前 `return` 实现。** 提前 return 会把「空状态下仍然需要的
 入口」（已归档、设置、帮助）一并砍掉。第 1 条和第 5 条都属于这一类。
@@ -110,6 +126,7 @@ SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
 | 网络 | Ktor（只用于拉汇率/行情，不同步用户数据） |
 | 图表 | Vico（坐标是 `:compose-m3`，**不是** `:multiplatform` —— 见 stack.md，这里极易搞错） |
 | 测试 | kotlin-test + Kotest 断言 + Turbine + Compose ui-test；mock 默认手写 fake |
+| 配色 | 品牌色琥珀棕 `#8A5A18`，`Theme.kt` 与图标生成器**共用同一组常量**（改一边必须改另一边） |
 
 ## 项目结构
 
@@ -121,6 +138,7 @@ shared/          KMP library，绝大部分代码在这
   src/commonTest/   共享测试
 androidApp/      Android 应用入口（com.android.application）
 iosApp/          Xcode 工程
+tools/appicon/   app icon 生成器（PNG 都是产物，改设计改这里）
 docs/            详细文档，按需查阅
 ```
 
