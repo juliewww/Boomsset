@@ -9,7 +9,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
 /**
- * 旺资的品牌配色 —— **琥珀棕**。
+ * 旺资的品牌配色 —— **中性表面 + 琥珀棕作唯一暖色强调**。
+ *
+ * 表面和文字梯度取自**有知有行**的 design token（页面 `#FFFFFF`、区域 `#FAFAFA`、
+ * 分隔 `#E0E0E0`，文字 `#262626` → `#5C5C5C` → `#808080` → `#BFBFBF`）。
+ *
+ * **为什么换掉暖米色底：**"不够高级"的主因不在色相，在底色。暖米色底本身就读作
+ * "米黄/复古"，而且它让所有强调色的对比度都变差。中性白灰底 + 一个暖色强调
+ * 是更稳的组合 —— 品牌琥珀棕在中性底上反而更突出，图标也不用重做。
  *
  * 在此之前 `App()` 里只有一句裸 `MaterialTheme {}`，界面跑的是 Material 3 库自带的
  * 默认紫。那不是设计决策，只是没人配过 —— 淡紫 FAB 和紫色导航指示条都是从那来的。
@@ -32,91 +39,98 @@ private val BrandAmber = Color(0xFF8A5A18)
 private val LightScheme = lightColorScheme(
     primary = BrandAmber,
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFF7E1BC),
+    primaryContainer = Color(0xFFF5E7D0),
     onPrimaryContainer = Color(0xFF2C1700),
-    inversePrimary = Color(0xFFF5BC6E),
+    inversePrimary = Color(0xFFE8B871),
 
-    secondary = Color(0xFF705B41),
+    // 次要色走中性灰 —— 有知有行的做法：只留一个强调色，其余全部中性
+    secondary = Color(0xFF5C5C5C),
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFF9E3C7),
-    onSecondaryContainer = Color(0xFF271905),
+    secondaryContainer = Color(0xFFF0F0F0),
+    onSecondaryContainer = Color(0xFF262626),
 
-    // 冷灰蓝，不是绿 —— 见文件头注释
-    tertiary = Color(0xFF3F5A73),
+    // 第三色刻意留在琥珀色系内，**不用任何分类色的色相** ——
+    // 否则它会和某个大类的颜色撞车，让读者以为两者有关
+    tertiary = Color(0xFFA97B33),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFD3E3F2),
-    onTertiaryContainer = Color(0xFF0B1D2B),
+    tertiaryContainer = Color(0xFFF3E4CB),
+    onTertiaryContainer = Color(0xFF2A1A00),
 
+    // error 和「超配」是两回事，色值也不同（超配是 #C5453F）
     error = Color(0xFFB3261E),
     onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFFF9DEDC),
     onErrorContainer = Color(0xFF410E0B),
 
-    background = Color(0xFFFFFBF5),
-    onBackground = Color(0xFF201B14),
-    surface = Color(0xFFFFFBF5),
-    onSurface = Color(0xFF201B14),
-    surfaceVariant = Color(0xFFEFE0CC),
-    onSurfaceVariant = Color(0xFF4E4536),
+    background = Color(0xFFFFFFFF),
+    onBackground = Color(0xFF262626),
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF262626),
+    surfaceVariant = Color(0xFFF0F0F0),
+    onSurfaceVariant = Color(0xFF5C5C5C),
     surfaceTint = BrandAmber,
-    inverseSurface = Color(0xFF35302A),
-    inverseOnSurface = Color(0xFFFAEFE3),
+    inverseSurface = Color(0xFF262626),
+    inverseOnSurface = Color(0xFFFAFAFA),
 
-    surfaceDim = Color(0xFFE4D8C8),
-    surfaceBright = Color(0xFFFFFBF5),
+    surfaceDim = Color(0xFFF0F0F0),
+    surfaceBright = Color(0xFFFFFFFF),
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFFDF5EA),
-    surfaceContainer = Color(0xFFF7EEE1),
-    surfaceContainerHigh = Color(0xFFF2E8DA),
-    surfaceContainerHighest = Color(0xFFECE2D3),
+    surfaceContainerLow = Color(0xFFFCFCFC),
+    surfaceContainer = Color(0xFFFAFAFA),
+    surfaceContainerHigh = Color(0xFFF5F5F5),
+    surfaceContainerHighest = Color(0xFFF0F0F0),
 
-    outline = Color(0xFF80765F),
-    outlineVariant = Color(0xFFD2C5B0),
+    outline = Color(0xFF808080),
+    outlineVariant = Color(0xFFE0E0E0),
     scrim = Color(0xFF000000),
 )
 
+/**
+ * 深色模式是**另选的一组中性灰**，不是浅色的自动翻转。
+ * 暖色强调在深底上要提亮（`#E8B871`），否则琥珀棕会糊进背景。
+ */
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFF5BC6E),
-    onPrimary = Color(0xFF4A2E00),
-    primaryContainer = Color(0xFF6A4400),
-    onPrimaryContainer = Color(0xFFF7E1BC),
+    primary = Color(0xFFE8B871),
+    onPrimary = Color(0xFF452B00),
+    primaryContainer = Color(0xFF654100),
+    onPrimaryContainer = Color(0xFFF5E7D0),
     inversePrimary = BrandAmber,
 
-    secondary = Color(0xFFDFC3A2),
-    onSecondary = Color(0xFF3E2E18),
-    secondaryContainer = Color(0xFF56442D),
-    onSecondaryContainer = Color(0xFFF9E3C7),
+    secondary = Color(0xFFC6C6C6),
+    onSecondary = Color(0xFF2E2E2E),
+    secondaryContainer = Color(0xFF3A3A3A),
+    onSecondaryContainer = Color(0xFFEDEDED),
 
-    tertiary = Color(0xFFA8C7E0),
-    onTertiary = Color(0xFF0C2F45),
-    tertiaryContainer = Color(0xFF26455C),
-    onTertiaryContainer = Color(0xFFD3E3F2),
+    tertiary = Color(0xFFC9A46A),
+    onTertiary = Color(0xFF3E2A00),
+    tertiaryContainer = Color(0xFF56401A),
+    onTertiaryContainer = Color(0xFFF0DFC4),
 
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
     errorContainer = Color(0xFF8C1D18),
     onErrorContainer = Color(0xFFF9DEDC),
 
-    background = Color(0xFF17130D),
-    onBackground = Color(0xFFECE0D2),
-    surface = Color(0xFF17130D),
-    onSurface = Color(0xFFECE0D2),
-    surfaceVariant = Color(0xFF4E4536),
-    onSurfaceVariant = Color(0xFFD2C5B0),
-    surfaceTint = Color(0xFFF5BC6E),
-    inverseSurface = Color(0xFFECE0D2),
-    inverseOnSurface = Color(0xFF35302A),
+    background = Color(0xFF121212),
+    onBackground = Color(0xFFEDEDED),
+    surface = Color(0xFF121212),
+    onSurface = Color(0xFFEDEDED),
+    surfaceVariant = Color(0xFF3A3A3A),
+    onSurfaceVariant = Color(0xFFC6C6C6),
+    surfaceTint = Color(0xFFE8B871),
+    inverseSurface = Color(0xFFEDEDED),
+    inverseOnSurface = Color(0xFF262626),
 
-    surfaceDim = Color(0xFF17130D),
-    surfaceBright = Color(0xFF3E382F),
-    surfaceContainerLowest = Color(0xFF110E08),
-    surfaceContainerLow = Color(0xFF201B14),
-    surfaceContainer = Color(0xFF241F17),
-    surfaceContainerHigh = Color(0xFF2F2921),
-    surfaceContainerHighest = Color(0xFF3A342B),
+    surfaceDim = Color(0xFF121212),
+    surfaceBright = Color(0xFF383838),
+    surfaceContainerLowest = Color(0xFF0D0D0D),
+    surfaceContainerLow = Color(0xFF1A1A1A),
+    surfaceContainer = Color(0xFF1C1C1C),
+    surfaceContainerHigh = Color(0xFF262626),
+    surfaceContainerHighest = Color(0xFF303030),
 
-    outline = Color(0xFF9A8E76),
-    outlineVariant = Color(0xFF4E4536),
+    outline = Color(0xFF8F8F8F),
+    outlineVariant = Color(0xFF3A3A3A),
     scrim = Color(0xFF000000),
 )
 
