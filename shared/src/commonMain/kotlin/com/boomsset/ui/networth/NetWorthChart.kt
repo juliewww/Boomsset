@@ -2,6 +2,7 @@ package com.boomsset.ui.networth
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -14,7 +15,10 @@ import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModelProducer
 import com.patrykandpatrick.vico.compose.cartesian.data.lineModel
+import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
+import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 
 /**
@@ -22,6 +26,10 @@ import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
  *
  * y 值传的是**元**（minorUnits / 100）而不是分 —— Vico 内部按 Double 处理，
  * 这里只是展示，不参与任何金额计算。真正的加总一律在 [com.boomsset.domain.Money] 上做。
+ *
+ * 配色：**只有一条序列，所以用品牌色**，不占用大类的分类色。
+ * 单序列不需要图例 —— 标题已经说明它是什么；给它一个分类色反而会让人以为
+ * 它和某个大类有关。线下方铺一层同色的淡填充，让趋势在小尺寸下更好读。
  */
 @Composable
 fun NetWorthChart(
@@ -39,9 +47,20 @@ fun NetWorthChart(
         }
     }
 
+    val brand = MaterialTheme.colorScheme.primary
+
     CartesianChartHost(
         chart = rememberCartesianChart(
-            rememberLineCartesianLayer(),
+            rememberLineCartesianLayer(
+                lineProvider = LineCartesianLayer.LineProvider.series(
+                    LineCartesianLayer.rememberLine(
+                        fill = LineCartesianLayer.LineFill.single(Fill(brand)),
+                        areaFill = LineCartesianLayer.AreaFill.single(
+                            Fill(brand.copy(alpha = 0.16f)),
+                        ),
+                    ),
+                ),
+            ),
             startAxis = VerticalAxis.rememberStart(),
             bottomAxis = HorizontalAxis.rememberBottom(
                 valueFormatter = { _, x, _ ->

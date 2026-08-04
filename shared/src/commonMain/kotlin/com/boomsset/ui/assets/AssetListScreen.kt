@@ -1,6 +1,12 @@
 package com.boomsset.ui.assets
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import com.boomsset.ui.theme.chartColors
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -74,11 +80,22 @@ fun AssetListScreen(
             if (rows.isEmpty()) return@forEach
 
             item(key = "header-$assetClass") {
-                Text(
-                    assetClass.label(),
-                    style = MaterialTheme.typography.titleSmall,
+                // 色块和配置页用的是同一套大类色 —— 三个页面同一种视觉语言，
+                // 用户在配置页认到的"蓝色=流动资金"在这里仍然成立。
+                // 色块旁边一定有名字：身份不能只靠颜色。
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(top = 8.dp),
-                )
+                ) {
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(chartColors.of(assetClass)),
+                    )
+                    Text(assetClass.label(), style = MaterialTheme.typography.titleSmall)
+                }
             }
             items(rows, key = { it.asset.id }) { valuation ->
                 AssetRow(
