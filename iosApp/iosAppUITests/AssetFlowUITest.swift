@@ -62,9 +62,10 @@ final class AssetFlowUITest: XCTestCase {
         waitFor(app.staticTexts["还没有资产"], "空状态")
         app.buttons["＋"].tap()
 
-        waitFor(app.staticTexts["添加资产"], "添加对话框")
+        waitFor(app.staticTexts["添加资产"], "添加资产页")
+        pickSubtype("现金")
 
-        type("field-asset-name", "Cash")
+        // 名称已由品种预填（"现金"），不用手输 —— 这正是新流程要省掉的步骤
         type("field-asset-amount", "100000")
         type("field-asset-cost", "95000")
 
@@ -83,10 +84,10 @@ final class AssetFlowUITest: XCTestCase {
         try addCashAsset(value: "100000", cost: "95000")
 
         app.buttons["资产"].tap()
-        waitFor(app.staticTexts["Cash"], "资产列表里的 Cash")
-        app.staticTexts["Cash"].tap()
+        waitFor(app.staticTexts["现金"], "资产列表里的现金")
+        app.staticTexts["现金"].tap()
 
-        waitFor(app.staticTexts["更新「Cash」"], "更新对话框")
+        waitFor(app.staticTexts["更新「现金」"], "更新对话框")
 
         // 预填必须是 100000.00（不带千分位）—— 带逗号的话保存会永久禁用
         // TextView 的 value 就是当前文本内容
@@ -171,6 +172,65 @@ final class AssetFlowUITest: XCTestCase {
         )
     }
 
+    /// 添加资产是**独立页面**，第一步按品种选、大类自动带出，币种是下拉。
+    ///
+    /// 三条都是实际使用后的反馈：对话框太窄放不下这个表单；币种用一排 chip
+    /// 占掉表单最显眼的一块而它几乎从不改；以及**用户不知道自己要加的东西属于哪个大类**，
+    /// 所以不该让他先选大类。
+    func testAddAssetIsAFullPagePickingBySubtype() throws {
+        waitFor(app.staticTexts["还没有资产"], "空状态")
+        app.buttons["＋"].tap()
+        waitFor(app.staticTexts["添加资产"], "添加资产页")
+
+        // 独立页面：底部 tab 栏在录入期间必须收起，误点会丢掉已填内容
+        XCTAssertFalse(app.buttons["配置"].exists, "添加页不该还显示底部 tab")
+        XCTAssertTrue(app.buttons["取消"].exists, "独立页面必须有退路")
+
+        // 第一步是品种，不是大类。用户认得的名字要直接可选。
+        // 支付宝和微信钱包在第一屏（流动资金排在最前，因为最常记）
+        for subtype in ["支付宝", "微信钱包"] {
+            XCTAssertTrue(
+                app.buttons[subtype].exists || app.staticTexts[subtype].exists,
+                "品种「\(subtype)」应在第一屏可选，实际树：\n\(app.debugDescription)"
+            )
+        }
+        pickSubtype("支付宝")
+
+        // 大类是**结果**而不是提问 —— 选完直接告诉用户它归到哪
+        XCTAssertTrue(
+            app.staticTexts["归入流动资金"].exists,
+            "应显示品种带出来的大类，实际树：\n\(app.debugDescription)"
+        )
+        // 名称已预填品种名
+        XCTAssertTrue(
+            app.debugDescription.contains("支付宝"),
+            "名称应预填品种名"
+        )
+        // 币种是下拉，不是一排 chip
+        XCTAssertTrue(
+            textView("field-asset-currency").exists,
+            "币种应为下拉框，实际树：\n\(app.debugDescription)"
+        )
+    }
+
+    /// 选了负债类品种，负债开关应当自动打开 —— 不用用户再想一遍"房贷是负债"
+    func testLiabilitySubtypePresetsTheLiabilityFlag() throws {
+        waitFor(app.staticTexts["还没有资产"], "空状态")
+        app.buttons["＋"].tap()
+        waitFor(app.staticTexts["添加资产"], "添加资产页")
+
+        // 负债自成一组、排在列表末尾 —— 滚下去应当找到
+        XCTAssertNotNil(scrollUntilVisible("负债"), "负债应当单独成组")
+        pickSubtype("房贷")
+
+        XCTAssertTrue(
+            app.staticTexts["负债 · 从另类实物抵扣"].exists,
+            "房贷应预设为负债并说明抵扣哪一类，实际树：\n\(app.debugDescription)"
+        )
+        // 负债没有"成本"和"估值方式"的概念，这两块要收起来
+        XCTAssertFalse(app.staticTexts["怎么估值"].exists, "负债不该显示估值方式")
+    }
+
     /// 净值页的空状态要给出上手指引，而不只是"点加号"
     func testEmptyStateExplainsHowTheAppWorks() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
@@ -241,12 +301,51 @@ final class AssetFlowUITest: XCTestCase {
             .firstMatch
     }
 
+    /// 往下滚直到某个标签可见可点。
+    ///
+    /// **品种列表比一屏长，所以必须滚。** 无障碍树只报**可见区域内**的节点 ——
+    /// 屏幕外的 chip 用 `exists` 判断就是 false，报错看着像"元素不存在"，
+    /// 其实只是还没滚到。Android 的 uiautomator 同理（实测：负债那一组要滚一屏才出现）。
+    private func scrollUntilVisible(_ label: String, maxSwipes: Int = 8) -> XCUIElement? {
+        let window = app.windows.firstMatch
+        for _ in 0...maxSwipes {
+            for candidate in [app.buttons[label], app.staticTexts[label]] {
+                guard candidate.exists && candidate.isHittable else { continue }
+                // **只判 isHittable 不够。** 卡在屏幕边缘的元素 isHittable 仍是 true，
+                // 但 tap 打的是它的中心点，而那个点在可视区之外 —— 于是"点了没反应"，
+                // 比"找不到元素"难查得多（实测：滚到负债组后点房贷一直不进详情页）。
+                // 要求元素**整个**落在窗口内，上边再留出 TopAppBar 的高度。
+                let f = candidate.frame
+                if f.minY > window.frame.minY + 96 && f.maxY < window.frame.maxY - 24 {
+                    return candidate
+                }
+            }
+            app.swipeUp()
+            // 惯性滚动没停时元素还在移动，立刻 tap 也会打偏。等它停下来。
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return nil
+    }
+
+
+    /// 选品种。**新流程的第一步** —— 大类由品种带出，用户不用判断"现金算哪一类"。
+    private func pickSubtype(_ name: String) {
+        guard let chip = scrollUntilVisible(name) else {
+            print(app.debugDescription)
+            XCTFail("滚遍整页也找不到品种「\(name)」")
+            return
+        }
+        chip.tap()
+        // 选完进入详情表单，标志是那张"已选品种"卡片上的「换一个」
+        waitFor(app.buttons["换一个"], "详情表单")
+    }
+
     private func addCashAsset(value: String, cost: String?) throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
         app.buttons["＋"].tap()
-        waitFor(app.staticTexts["添加资产"], "添加对话框")
+        waitFor(app.staticTexts["添加资产"], "添加资产页")
+        pickSubtype("现金")
 
-        type("field-asset-name", "Cash")
         type("field-asset-amount", value)
         if let cost { type("field-asset-cost", cost) }
 

@@ -29,6 +29,7 @@ import com.boomsset.domain.AllocationView
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.TargetAllocation
 import com.boomsset.ui.bpToPercent
+import com.boomsset.ui.label
 import com.boomsset.ui.formatWithCurrency
 
 @Composable
@@ -299,14 +300,6 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
             }
         }
     }
-}
-
-private fun AssetClass.label(): String = when (this) {
-    AssetClass.LIQUID -> "流动资金"
-    AssetClass.FIXED_INCOME -> "固定收益"
-    AssetClass.EQUITY -> "权益类"
-    AssetClass.ALTERNATIVE -> "另类实物"
-    AssetClass.PROTECTION -> "保障类"
 }
 
 @Composable

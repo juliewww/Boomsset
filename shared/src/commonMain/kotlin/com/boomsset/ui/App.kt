@@ -8,6 +8,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -17,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.boomsset.ui.allocation.AllocationScreen
@@ -32,6 +34,9 @@ import org.koin.compose.viewmodel.koinViewModel
 private const val ROUTE_NET_WORTH = "net_worth"
 private const val ROUTE_ALLOCATION = "allocation"
 private const val ROUTE_ASSETS = "assets"
+
+/** 添加资产是**独立页面**而不是对话框 —— 见 AddAssetScreen 的注释。 */
+private const val ROUTE_ADD_ASSET = "add_asset"
 
 private data class Tab(val route: String, val label: String)
 
@@ -76,8 +81,13 @@ private fun AppContent(
 ) {
     run {
         val navController = rememberNavController()
-        var currentRoute by remember { mutableStateOf(ROUTE_NET_WORTH) }
-        var showAddDialog by remember { mutableStateOf(false) }
+
+        // 当前路由**从导航状态派生**，不再用一个手工维护的 var。
+        // 手工维护在只有 tab 的时候还能凑合，但一旦有了"添加资产"这种非 tab 页面，
+        // 系统返回键会改变实际页面而不更新那个 var —— 底部栏和加号就会跟真实页面脱节。
+        val backStackEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = backStackEntry?.destination?.route ?: ROUTE_NET_WORTH
+        val onAddRoute = currentRoute == ROUTE_ADD_ASSET
 
         // ViewModel 在这一层取，好让加号按钮能触达 NetWorthViewModel。
         // 注意 koinViewModel 依赖 di/Modules.kt 里的显式 factory —— Native 没有反射。
@@ -85,15 +95,27 @@ private fun AppContent(
         val netWorthState by netWorthViewModel.state.collectAsStateWithLifecycle()
 
         Scaffold(
-            topBar = { TopAppBar(title = { Text("旺资") }) },
+            topBar = {
+                TopAppBar(
+                    title = { Text(if (onAddRoute) "添加资产" else "旺资") },
+                    navigationIcon = {
+                        // 独立页面要有退路。放在 TopAppBar 而不是页面内容里，
+                        // 这样它不受页面内分步（选品种 / 填详情）的影响
+                        if (onAddRoute) {
+                            TextButton(onClick = { navController.popBackStack() }) { Text("取消") }
+                        }
+                    },
+                )
+            },
             bottomBar = {
+                // 添加资产时藏起底部栏：录一半时误点 tab 会丢掉已填的内容
+                if (onAddRoute) return@Scaffold
                 NavigationBar {
                     tabs.forEach { tab ->
                         NavigationBarItem(
                             selected = currentRoute == tab.route,
                             onClick = {
                                 if (currentRoute != tab.route) {
-                                    currentRoute = tab.route
                                     navController.navigate(tab.route) {
                                         popUpTo(ROUTE_NET_WORTH) { inclusive = false }
                                         launchSingleTop = true
@@ -108,7 +130,9 @@ private fun AppContent(
             },
             floatingActionButton = {
                 if (currentRoute == ROUTE_NET_WORTH) {
-                    FloatingActionButton(onClick = { showAddDialog = true }) { Text("＋") }
+                    FloatingActionButton(
+                        onClick = { navController.navigate(ROUTE_ADD_ASSET) },
+                    ) { Text("＋") }
                 }
             },
         ) { innerPadding ->
@@ -138,6 +162,17 @@ private fun AppContent(
                         onDeleteAllocation = allocationViewModel::deleteAllocation,
                     )
                 }
+                composable(ROUTE_ADD_ASSET) {
+                    AddAssetScreen(
+                        subtypes = netWorthState.subtypes,
+                        defaultCurrency = netWorthState.baseCurrency,
+                        onCancel = { navController.popBackStack() },
+                        onConfirm = { newAsset ->
+                            netWorthViewModel.addAsset(newAsset)
+                            navController.popBackStack()
+                        },
+                    )
+                }
                 composable(ROUTE_ASSETS) {
                     val assetsViewModel: AssetListViewModel = koinViewModel()
                     val assetsState by assetsViewModel.state.collectAsStateWithLifecycle()
@@ -153,18 +188,6 @@ private fun AppContent(
                     )
                 }
             }
-        }
-
-        if (showAddDialog) {
-            AddAssetDialog(
-                subtypes = netWorthState.subtypes,
-                defaultCurrency = netWorthState.baseCurrency,
-                onDismiss = { showAddDialog = false },
-                onConfirm = { newAsset ->
-                    netWorthViewModel.addAsset(newAsset)
-                    showAddDialog = false
-                },
-            )
         }
     }
 }
