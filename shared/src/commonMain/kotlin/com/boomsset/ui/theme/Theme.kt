@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -131,8 +132,11 @@ fun BoomssetTheme(
     // 不设的话浅色主题下状态栏是白字压白底
     ApplySystemBarsAppearance(darkTheme)
 
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkScheme else LightScheme,
-        content = content,
-    )
+    // 图表配色和主题用**同一个** darkTheme —— 让图表自己去读系统深浅色会和主题不一致
+    CompositionLocalProvider(LocalChartColors provides chartColorsFor(darkTheme)) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkScheme else LightScheme,
+            content = content,
+        )
+    }
 }

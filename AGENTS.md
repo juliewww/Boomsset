@@ -3,7 +3,7 @@
 ## 项目状态
 
 **核心循环已闭环（Android 实机验证过）。** 三个页面：净值曲线 / 资产配置 / 资产列表。
-添加资产 → 定期更新估值 → 归档，全流程可用。**168 个单元测试全绿。**
+添加资产 → 定期更新估值 → 归档，全流程可用。**174 个单元测试全绿。**
 
 实跑验证过（含直接查 SQLite 确认）：更新是**追加快照**而非改写（成本正确结转），
 归档追加 0 值快照且历史一字未改，配置比例加总 100%。
@@ -26,7 +26,7 @@
 （金额数字不变但含义变了），判据在 `AssetEditPolicy`。品种可自定义添加，归档可取消。
 
 **iOS 已验证（Xcode 26.6 + iOS Simulator 26.5 SDK）：** framework 链接通过、
-**148 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
+**154 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
 （schema 创建、枚举 adapter、CHECK 约束、事务、按天 upsert）和用到 Turbine 的
 `PortfolioFlowTest`。
 
@@ -62,6 +62,14 @@ zsh 不对未加引号的变量做分词，会被当成单个参数，报 `-s re
 **空状态已可用（两端实机验证）：** 净值页给出三步上手指引，并说明「记快照不记流水」
 （不说清楚，用户会按记账 App 的预期去用）。**配置页零资产时照样能用** ——
 显示目标比例本身，预设可切换、比例可编辑。
+
+**图表配色成体系（两端实机验证，浅深两色）：** 五大类各有颜色，**顺序固定不可重排** ——
+顺序本身是色盲安全机制。偏离度用分歧色：超配红、低配蓝、达标中性灰。
+三个页面（净值/配置/资产）共用同一套大类色，「蓝色=流动资金」在哪一页都成立。
+⚠️ **色值不是手挑的**，是用色盲模拟 + 对比度验证器跑出来的；改色值必须重跑，
+方法和命令写在 [ChartColorsTest](shared/src/commonTest/kotlin/com/boomsset/ui/theme/ChartColorsTest.kt) 的注释里。
+浅色模式下有几个大类色低于 3:1 的色块对比度，**必须靠"色块旁边永远有名字 + 百分比"补偿** ——
+改版式时别把那些标签去掉。
 
 **添加资产是独立页面（两端实机验证）：** 不是对话框 —— 对话框放不下这个表单，
 键盘一弹只剩两三行。**第一步选品种、不选大类**：用户不知道支付宝算哪一类，
@@ -170,6 +178,7 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
 | 图表 | Vico（坐标是 `:compose-m3`，**不是** `:multiplatform` —— 见 stack.md，这里极易搞错） |
 | 测试 | kotlin-test + Kotest 断言 + Turbine + Compose ui-test；mock 默认手写 fake |
 | 配色 | 品牌色琥珀棕 `#8A5A18`，`Theme.kt` 与图标生成器**共用同一组常量**（改一边必须改另一边） |
+| 图表配色 | 大类=分类色（固定顺序）、偏离度=分歧色，见 [ChartColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/ChartColors.kt)。**色值是验证过的，改了要重跑验证器** |
 
 ## 项目结构
 
@@ -195,8 +204,8 @@ docs/            详细文档，按需查阅
 
 ```bash
 ./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
-./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，168 个）
-./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（148 个，需要 Xcode）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，174 个）
+./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（154 个，需要 Xcode）
 ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS 链接（需要 Xcode）
 ./gradlew :androidApp:assembleDebug                # Android 构建
 ./gradlew :shared:allTests                         # 两端一起
@@ -215,7 +224,7 @@ Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
 所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
 
-**JVM 和 iOS 的测试数不一样（168 vs 148），这是对的**：
+**JVM 和 iOS 的测试数不一样（174 vs 154），这是对的**：
 - 数据库测试（`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`）在
   `androidHostTest`，用 JVM 的 JDBC driver
 - `iosTest/NativeDatabaseTest` 单独验 iOS 的 `NativeSqliteDriver`（**不同的 SQLite 构建**，

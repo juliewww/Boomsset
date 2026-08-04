@@ -1,5 +1,11 @@
 package com.boomsset.ui.allocation
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import com.boomsset.ui.theme.chartColors
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -226,7 +232,7 @@ private fun TargetPreview(active: TargetAllocation?) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(assetClass.label(), style = MaterialTheme.typography.titleSmall)
+                    ClassLabel(assetClass)
                     Text(
                         "目标 ${targetBp.bpToPercent(decimals = 0)}",
                         style = MaterialTheme.typography.titleSmall,
@@ -237,6 +243,8 @@ private fun TargetPreview(active: TargetAllocation?) {
                     progress = {
                         (targetBp.toFloat() / TargetAllocation.TOTAL_BP).coerceIn(0f, 1f)
                     },
+                    color = chartColors.of(assetClass),
+                    trackColor = chartColors.track,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -263,7 +271,7 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(assetClass.label(), style = MaterialTheme.typography.titleSmall)
+                ClassLabel(assetClass)
                 Text(
                     shareBp?.bpToPercent() ?: "—",
                     style = MaterialTheme.typography.titleSmall,
@@ -277,6 +285,8 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
                     val bp = shareBp ?: 0
                     (bp.coerceAtLeast(0).toFloat() / TargetAllocation.TOTAL_BP).coerceIn(0f, 1f)
                 },
+                color = chartColors.of(assetClass),
+                trackColor = chartColors.track,
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -290,15 +300,45 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
             )
 
             if (targetBp != null && deviationBp != null) {
+                // 颜色**不是唯一线索**：超配/低配/已达标 这几个词一直在，
+                // 色盲用户和黑白打印都读得出方向。颜色只是让它可扫视。
                 Text(
                     "目标 ${targetBp.bpToPercent(decimals = 0)}，" +
                         if (deviationBp == 0) "已达标"
                         else "${if (deviationBp > 0) "超配" else "低配"} " +
                             "${kotlin.math.abs(deviationBp).bpToPercent()}",
                     style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (deviationBp == 0) FontWeight.Normal else FontWeight.Medium,
+                    color = when {
+                        deviationBp > 0 -> chartColors.over
+                        deviationBp < 0 -> chartColors.under
+                        else -> chartColors.onTarget
+                    },
                 )
             }
         }
+    }
+}
+
+/**
+ * 大类标签 = 小色块 + 名称。
+ *
+ * **色块旁边一定有名字。** 身份不能只靠颜色 —— 浅色模式下有几个大类色低于 3:1 的
+ * 色块对比度，靠色块本身认不出来；而且色盲用户和黑白打印都需要文字。
+ */
+@Composable
+private fun ClassLabel(assetClass: AssetClass) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(chartColors.of(assetClass)),
+        )
+        Text(assetClass.label(), style = MaterialTheme.typography.titleSmall)
     }
 }
 
