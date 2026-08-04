@@ -127,6 +127,10 @@ fun BoomssetTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
+    // 状态栏图标要跟着主题反色 —— 见 ApplySystemBarsAppearance 的注释，
+    // 不设的话浅色主题下状态栏是白字压白底
+    ApplySystemBarsAppearance(darkTheme)
+
     MaterialTheme(
         colorScheme = if (darkTheme) DarkScheme else LightScheme,
         content = content,
