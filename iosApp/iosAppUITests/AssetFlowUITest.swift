@@ -85,7 +85,8 @@ final class AssetFlowUITest: XCTestCase {
 
         app.buttons["资产"].tap()
         waitFor(app.staticTexts["现金"], "资产列表里的现金")
-        app.staticTexts["现金"].tap()
+        // 走**可见按钮**这条路，不是点整张卡片 —— 见 testUpdatingValueIsAVisibleAction
+        app.buttons["更新估值"].firstMatch.tap()
 
         waitFor(app.staticTexts["更新「现金」"], "更新对话框")
 
@@ -229,6 +230,33 @@ final class AssetFlowUITest: XCTestCase {
         )
         // 负债没有"成本"和"估值方式"的概念，这两块要收起来
         XCTAssertFalse(app.staticTexts["怎么估值"].exists, "负债不该显示估值方式")
+    }
+
+    /// 回归测试：**更新估值必须有看得见的按钮。**
+    ///
+    /// 之前它只有隐形入口（整张卡片可点）。用户想把支付宝从 10 万改成 12 万，
+    /// 看到的唯一两个可点的东西是「编辑信息」和「归档」，自然点前者 ——
+    /// 但那个对话框**根本没有金额字段**，于是合理地得出"改不了资产"的结论。
+    /// 这是实际使用反馈出来的。
+    ///
+    /// App 最核心的动作不能只有隐形入口。
+    func testUpdatingValueIsAVisibleAction() throws {
+        try addCashAsset(value: "100000", cost: nil)
+        app.buttons["资产"].tap()
+        waitFor(app.staticTexts["现金"], "资产列表里的现金")
+
+        // 按钮必须存在且写明它是干什么的
+        let update = app.buttons["更新估值"].firstMatch
+        XCTAssertTrue(
+            update.exists,
+            "每一行都要有看得见的「更新估值」按钮，实际树：\n\(app.debugDescription)"
+        )
+        // 而且点了真的能改金额
+        update.tap()
+        waitFor(app.staticTexts["更新「现金」"], "更新对话框")
+        let field = textView("field-update-amount")
+        waitFor(field, "市值输入框")
+        XCTAssertTrue(field.isEnabled, "更新对话框里的市值必须可改")
     }
 
     /// 净值页的空状态要给出上手指引，而不只是"点加号"

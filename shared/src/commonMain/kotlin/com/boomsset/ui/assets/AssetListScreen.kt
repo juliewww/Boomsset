@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,7 +69,7 @@ fun AssetListScreen(
                 if (state.isEmpty) {
                     "没有在持资产。去「净值」页点加号添加。"
                 } else {
-                    "点任一项更新它现在值多少。这是这个 App 的核心动作 —— 不记流水，只记快照。"
+                    "点「更新估值」记下它现在值多少。这是这个 App 的核心动作 —— 不记流水，只记快照。"
                 },
                 style = if (state.isEmpty) MaterialTheme.typography.bodyMedium
                 else MaterialTheme.typography.labelSmall,
@@ -261,8 +262,17 @@ private fun AssetRow(
                 Text("不计入配置比例", style = MaterialTheme.typography.labelSmall)
             }
 
+            // 「更新估值」必须是**看得见的按钮**，而且排在最前。
+            //
+            // 之前它只有一个隐形入口：整张卡片可点。结果用户想把支付宝从 10 万改成 12 万时，
+            // 看到的唯一两个可点的东西是「编辑信息」和「归档」—— 自然会点前者，
+            // 但那个只改名称/分类、**不含金额**，于是合理地得出"改不了资产"的结论。
+            // （实际反馈就是这样。）
+            //
+            // 卡片可点保留，作为熟悉之后的快捷方式；但**核心动作不能只有隐形入口**。
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = onEdit) { Text("编辑信息") }
+                FilledTonalButton(onClick = onClick) { Text("更新估值") }
+                TextButton(onClick = onEdit) { Text("改名称分类") }
                 TextButton(onClick = onArchiveClick) { Text("归档") }
             }
         }
