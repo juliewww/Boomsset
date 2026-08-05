@@ -16,8 +16,8 @@ import kotlin.test.Test
  *
  * 重跑方式（两个模式都要，底色用**图形实际渲染的那一层**，即 surfaceContainer）：
  * ```
- * node scripts/validate_palette.js "<五个浅色 hex>" --mode light --surface "#F7EEE1"
- * node scripts/validate_palette.js "<五个深色 hex>" --mode dark  --surface "#241F17"
+ * node scripts/validate_palette.js "<五个浅色 hex>" --mode light --surface "#FFFFFF"
+ * node scripts/validate_palette.js "<五个深色 hex>" --mode dark  --surface "#1C1C1C"
  * ```
  */
 class ChartColorsTest {
@@ -52,17 +52,20 @@ class ChartColorsTest {
      * 已验证的色值。改动任何一个都要重新跑验证器 —— 见类注释。
      *
      * 实测结果（OKLab ΔE ×100）：
-     * 浅色 最差相邻对 9.1 / 正常视力 19.6；深色 8.4 / 19.3。门槛是 8 / 15。
+     * 浅色 最差相邻对 11.5 / 正常视力 20.4；深色 10.8 / 16.6。门槛是 8 / 15。
+     *
+     * 色相取自有知有行，但经过 snap-to-passing（色相角不动，挪亮度和彩度到合规）——
+     * 直接用他们的原值会在亮度区间和彩度下限上 FAIL，见 ChartColors 的类注释。
      */
     @Test
     fun `色值就是验证过的那组`() {
         chartColorsFor(darkTheme = false).assetClassColors shouldBe listOf(
-            Color(0xFF2A78D6), Color(0xFFEB6834), Color(0xFF1BAF7A),
-            Color(0xFFEDA100), Color(0xFFE87BA4),
+            Color(0xFF3E86D0), Color(0xFF2EB88A), Color(0xFFE58A26),
+            Color(0xFF3FB3D1), Color(0xFF585CA2),
         )
         chartColorsFor(darkTheme = true).assetClassColors shouldBe listOf(
-            Color(0xFF3987E5), Color(0xFFD95926), Color(0xFF199E70),
-            Color(0xFFC98500), Color(0xFFD55181),
+            Color(0xFF4186CE), Color(0xFF00AB79), Color(0xFFCF7600),
+            Color(0xFF219FBC), Color(0xFF5F63AA),
         )
     }
 
