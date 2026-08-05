@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AllocationView
 import com.boomsset.domain.AssetClass
+import com.boomsset.domain.Money
 import com.boomsset.domain.TargetAllocation
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.label
@@ -61,7 +62,7 @@ fun AllocationScreen(
         val view = state.view
         val active = state.allocations.firstOrNull { it.isActive }
 
-        Header(view, active)
+        Header(view)
 
         // ⚠️ 这一块**必须在任何空状态分支之外**。
         //
@@ -99,6 +100,11 @@ fun AllocationScreen(
             view.netWorth.minorUnits <= 0L -> NegativeNetWorthNotice()
 
             else -> {
+                AllocationDonut(
+                    shares = AssetClass.displayOrder.map { it to (view.exposures[it]?.netExposure ?: Money.ZERO) },
+                    netWorth = view.netWorth,
+                    baseCurrency = view.baseCurrency,
+                )
                 AssetClass.displayOrder.forEach { assetClass ->
                     ClassRow(view, assetClass)
                 }
@@ -181,11 +187,14 @@ private fun AllocationPicker(
 }
 
 /**
- * 标题区。**`view` 可空** —— 加载中和零资产时也要显示标题和当前对比的目标名，
+ * 标题区。**`view` 可空** —— 加载中和零资产时也要显示标题，
  * 否则这一页在最需要解释自己的时候反而什么都不说。
+ *
+ * 当前对比的是哪一套目标，**不在这里重复显示** —— [AllocationPicker] 的
+ * chip 行已经用 `selected` 状态标出来了，两处都写一遍是纯粹的重复信息。
  */
 @Composable
-private fun Header(view: AllocationView?, active: TargetAllocation?) {
+private fun Header(view: AllocationView?) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("资产配置", style = MaterialTheme.typography.titleLarge)
         if (view != null) {
@@ -194,11 +203,6 @@ private fun Header(view: AllocationView?, active: TargetAllocation?) {
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        // 目标名取自 state.allocations，不依赖 view —— 没有资产时它照样有值
-        Text(
-            active?.let { "对比目标：${it.name}" } ?: "尚未设定目标配置",
-            style = MaterialTheme.typography.labelMedium,
-        )
     }
 }
 

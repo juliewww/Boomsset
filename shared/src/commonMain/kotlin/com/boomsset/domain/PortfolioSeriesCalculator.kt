@@ -59,6 +59,19 @@ object PortfolioSeriesCalculator {
     /**
      * @param today 用户本地时区的今天。由调用方传入而不是内部取 Clock，这样可测。
      * @param pointCount 取样点数量。12 个月 / 12 个季度 / 12 年。
+     * @param trimBeforeFirstSnapshot 丢掉「第一条快照之前」的取样点。
+     *
+     * 默认 `false`，保持 [periodSampleDates] 原本"固定取 N 个周期"的行为不变——
+     * 有一条测试（"资产创建之前的时点不计入"）明确依赖"资产建立前的周期显示为 0 值点"
+     * 这条结转语义，trim 不应该改写那条语义，只是**在展示层决定要不要把那些点画出来**。
+     *
+     * 传 `true` 时：实跑反馈是"按年/按季看的时候，账号才用了几个月，
+     * 前面一大截全是 0，还占满了图"。裁剪规则是丢掉**结束时刻早于最早快照时刻**的
+     * 那些取样点——不是看"净值是不是 0"，因为账户清零之后的真实 0（比如全部资产
+     * 归档）不该被当成"没数据"抹掉，那是历史的一部分。
+     *
+     * 永远至少保留最后一个点（今天所在的周期），哪怕它也早于最早快照 ——
+     * 空状态由 `hasAssets` 单独判断，这里不需要再处理"一个点都不剩"的情况。
      */
     fun buildSeries(
         data: PortfolioData,
@@ -67,8 +80,16 @@ object PortfolioSeriesCalculator {
         today: LocalDate,
         zone: TimeZone,
         pointCount: Int = 12,
+        trimBeforeFirstSnapshot: Boolean = false,
     ): NetWorthSeries {
-        val dates = periodSampleDates(today, period, pointCount)
+        val allDates = periodSampleDates(today, period, pointCount)
+        val earliestSnapshot = data.snapshots.minOfOrNull { it.asOf }
+        val dates = if (trimBeforeFirstSnapshot && earliestSnapshot != null) {
+            val firstWithData = allDates.indexOfFirst { it.endOfDayIn(zone) >= earliestSnapshot }
+            if (firstWithData < 0) listOf(allDates.last()) else allDates.subList(firstWithData, allDates.size)
+        } else {
+            allDates
+        }
         val points = dates.map { date ->
             val at = date.endOfDayIn(zone)
             PortfolioCalculator.netWorth(

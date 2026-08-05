@@ -593,3 +593,57 @@ gold 和 pink 被自动排除（snap 代价最大，各 ΔE 8.7 / 5.7）。
 
 **盈亏没有上色。** 中国股市红涨绿跌，给盈亏上色是合理的下一步，但要先决定
 红色在这个 App 里的唯一含义 —— 现在红色是"超配"，再让它同时表示"上涨"会冲突。
+
+
+## 查 Vico API 必须对着 pinned 的 tag 查
+
+第一次查 `HorizontalAxis.ItemPlacer.aligned()` 的参数时用 WebFetch 抓的是
+GitHub `master` 分支的源码，得到的签名带一个 `shiftExtremeLabels` 参数——
+编译报"找不到参数"，因为项目锁定的 3.2.3 版本根本没有这个参数
+（后来才在更新的版本里加的）。
+
+正确做法：
+
+```bash
+# 1. 用项目里锁定的版本号找到对应的 git tag，拿到那个 tag 指向的 commit sha
+gh api repos/patrykandpatrick/vico/git/refs/tags | python3 -c "
+import json,sys
+for t in json.load(sys.stdin):
+    if 'v3.2.3' in t['ref']: print(t['ref'], t['object']['sha'])"
+
+# 2. 不确定文件路径就搜，别凭经验猜——这个库的目录结构比包名深好几层
+gh api search/code -X GET -f q='filename:PieChartModel.kt repo:patrykandpatrick/vico'
+
+# 3. 用第 1 步拿到的 sha 作为 ?ref= 去查源码，这才是项目实际链接的那个 API
+gh api "repos/patrykandpatrick/vico/contents/<path>?ref=<sha>" --jq '.content' | base64 -d
+```
+
+`gh api` 比 WebFetch 更可靠：WebFetch 抓到的是页面内容摘要（可能被小模型转述、
+可能抓到默认分支而不是你要的版本），`gh api` 直接给 raw 内容、还能指定 `?ref=`
+精确到 commit。**Vico 相关的坑不只是包路径，版本之间的参数也会变**——
+两条教训是一回事：不要信"看起来像"，去查真正链接的那份源码。
+
+## Vico 的 PieChart
+
+`com.patrykandpatrick.vico.compose.pie` 下有现成的环形/饼图组件
+（`PieChart` / `PieChartHost` / `PieChartModelProducer` / `pieSeries {}`），
+不需要自己用 Canvas 画。用法和已经在用的折线图（`CartesianChartModelProducer` /
+`lineModel {}`）是同一套模式：
+
+```kotlin
+val modelProducer = remember { PieChartModelProducer() }
+LaunchedEffect(values) {
+    modelProducer.runTransaction { pieSeries { series(values) } }
+}
+val chart = rememberPieChart(
+    sliceProvider = PieChart.SliceProvider.series(
+        colors.map { PieChart.Slice(fill = Fill(it)) }
+    ),
+    innerSize = PieSize.Inner.fixed(64.dp),  // > 0 就是圆环，0 是实心饼图
+)
+PieChartHost(chart = chart, modelProducer = modelProducer, ...)
+```
+
+`PieChartModel.Entry` 要求非负（`>= 0f`），负值会在构造时直接抛异常——
+和 [ClassRow](../shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)
+的进度条一个道理，负净敞口画不成一个扇区，传之前要 `coerceAtLeast(0)`。

@@ -3,7 +3,7 @@
 ## 项目状态
 
 **核心循环已闭环（Android 实机验证过）。** 三个页面：净值曲线 / 资产配置 / 资产列表。
-添加资产 → 定期更新估值 → 归档，全流程可用。**174 个单元测试全绿。**
+添加资产 → 定期更新估值 → 归档，全流程可用。**178 个单元测试全绿。**
 
 实跑验证过（含直接查 SQLite 确认）：更新是**追加快照**而非改写（成本正确结转），
 归档追加 0 值快照且历史一字未改，配置比例加总 100%。
@@ -26,7 +26,7 @@
 （金额数字不变但含义变了），判据在 `AssetEditPolicy`。品种可自定义添加，归档可取消。
 
 **iOS 已验证（Xcode 26.6 + iOS Simulator 26.5 SDK）：** framework 链接通过、
-**154 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
+**158 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
 （schema 创建、枚举 adapter、CHECK 约束、事务、按天 upsert）和用到 Turbine 的
 `PortfolioFlowTest`。
 
@@ -62,6 +62,33 @@ zsh 不对未加引号的变量做分词，会被当成单个参数，报 `-s re
 **空状态已可用（两端实机验证）：** 净值页给出三步上手指引，并说明「记快照不记流水」
 （不说清楚，用户会按记账 App 的预期去用）。**配置页零资产时照样能用** ——
 显示目标比例本身，预设可切换、比例可编辑。
+
+**净值曲线不再显示"没有数据"的时段、资产配置多了饼图（两端实机验证）：**
+按季/按年看时，账号才用了几个月，原来固定取 12 个周期、前面一大截是"资产还不存在"
+的 0 值点。现在有一个 `trimBeforeFirstSnapshot` 开关（默认关，不改变已有测试锁定的
+结转语义），UI 侧打开后只保留第一条快照之后的取样点。判据是**取样点结束时刻是否早于
+最早快照时刻**，不是"净值是不是 0"——账户清零之后的真实 0（比如全部资产归档）
+不该被这条规则当成"没数据"抹掉。
+
+同时用 Vico 的 `HorizontalAxis.ItemPlacer.aligned(spacing, offset)` 让 x 轴标签
+按点数动态稀疏，不再是"每个点都放一个标签"挤到重叠截断（实测过"10月/11月/12月"
+被截断成"10…/11…/12…"）；`offset` 特意算成"让最后一个下标对齐"，保证最新的点
+永远在最右边有标签，不会因为点数不是 spacing 的整数倍而漏标。
+
+配置页加了环形占比图（Vico 的 `PieChart`／`PieChartHost`，同一个包早就在用于折线图），
+和 [ClassRow](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)
+的进度条共用 [chartColors](shared/src/commonMain/kotlin/com/boomsset/ui/theme/ChartColors.kt)
+那五个固定顺序的大类色 —— 圆环没有另配一份图例文字，名称和百分比下面的卡片已经写了，
+再写一遍是重复信息（配置页第一版就因为重复"对比目标"被反馈过，教训直接搬过来）。
+
+⚠️ **查 Vico API 一定要对着 pinned 的 tag 查，不能信 GitHub 默认分支。**
+第一次查 `HorizontalAxis.ItemPlacer.aligned()` 的参数时用 WebFetch 抓的是
+`master` 分支，得到一个"新版本才有的参数"（`shiftExtremeLabels`），编译报
+"找不到参数"。用 `gh api repos/.../git/refs/tags` 按项目锁定的版本号找到对应
+commit sha，再用 `gh api repos/.../contents/<path>?ref=<sha>` 查源码，才是这个
+项目实际链接的那个 API。Vico 的 pie chart 相关文件路径也是先用
+`gh api search/code` 搜出来的真实路径，没有凭经验猜（猜的话大概率猜错，
+这个库的目录结构比包名深好几层）。
 
 **品牌色再调亮（两端验证）：** `#8A5A18` → `#BD4D03`，反馈是原色不够"积极向上"。
 直接沿旧色相拉高亮度彩度不可行——候选在 sRGB 里会被裁剪，裁剪本身会偷偷改变色相角，
@@ -219,8 +246,8 @@ docs/            详细文档，按需查阅
 
 ```bash
 ./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
-./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，174 个）
-./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（154 个，需要 Xcode）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，178 个）
+./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（158 个，需要 Xcode）
 ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS 链接（需要 Xcode）
 ./gradlew :androidApp:assembleDebug                # Android 构建
 ./gradlew :shared:allTests                         # 两端一起
@@ -239,7 +266,7 @@ Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
 所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
 
-**JVM 和 iOS 的测试数不一样（174 vs 154），这是对的**：
+**JVM 和 iOS 的测试数不一样（178 vs 158），这是对的**：
 - 数据库测试（`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`）在
   `androidHostTest`，用 JVM 的 JDBC driver
 - `iosTest/NativeDatabaseTest` 单独验 iOS 的 `NativeSqliteDriver`（**不同的 SQLite 构建**，

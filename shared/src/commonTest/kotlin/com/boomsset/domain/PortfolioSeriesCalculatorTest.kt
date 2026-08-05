@@ -130,6 +130,88 @@ class PortfolioSeriesCalculatorTest {
         )
     }
 
+    // ---------- 裁剪"资产存在之前"的取样点 ----------
+
+    /**
+     * 回归测试。实际使用反馈：按年/按季看的时候，账号才用了几个月，
+     * 请求的 12 个取样点里前面一大截全是资产还不存在时的 0 值 —— 图表被这些
+     * "没有数据"的点占满，最近几个月反而挤在很小的一段里。
+     *
+     * `trimBeforeFirstSnapshot = true` 应当丢掉那些点，只留下有真实历史的部分。
+     */
+    @Test
+    fun `裁剪时只保留第一条快照之后的取样点`() {
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 3, trimBeforeFirstSnapshot = true,
+        )
+
+        // 不裁的话是 3 个点（5、6、7 月，前两个是 0）；裁剪后只剩 7 月这一个
+        series.points.map { it.netWorth } shouldBe listOf(Money(50_000_00))
+        series.dates shouldBe listOf(today)
+    }
+
+    /**
+     * 归档不是"没有数据" —— 资产真实存在过，只是后来清零了。
+     * 那段历史不该被 trim 当成"账户还没开始"抹掉。
+     */
+    @Test
+    fun `裁剪不会抹掉归零之后的真实历史`() {
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 5, 20), 100_000_00),
+                manual(2, 1, LocalDate(2026, 6, 15), 0), // 卖出归档
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 3, trimBeforeFirstSnapshot = true,
+        )
+
+        // 第一条快照在 5 月，5/6/7 三个点都该保留 —— 6、7 月是 0 是真实归档后的状态，不是被裁掉了
+        series.points.map { it.netWorth } shouldBe listOf(
+            Money(100_000_00),
+            Money.ZERO,
+            Money.ZERO,
+        )
+    }
+
+    /** 不开裁剪时行为必须和以前完全一样 —— 默认值不能悄悄改变现有调用方的语义。 */
+    @Test
+    fun `不裁剪时行为和默认一致`() {
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 3,
+        )
+
+        series.points.map { it.netWorth } shouldBe listOf(Money.ZERO, Money.ZERO, Money(50_000_00))
+    }
+
+    /** 一条快照都没有（零资产）时裁剪没有意义，不该崩、也不该把点数削成 0。 */
+    @Test
+    fun `零资产时裁剪不报错`() {
+        val series = PortfolioSeriesCalculator.buildSeries(
+            PortfolioData.EMPTY, Period.MONTH, cny, today, zone, pointCount = 3, trimBeforeFirstSnapshot = true,
+        )
+
+        series.points.map { it.netWorth } shouldBe listOf(Money.ZERO, Money.ZERO, Money.ZERO)
+    }
+
     @Test
     fun `历史行情按当期取值而不是用最新价`() {
         // 6 月单价 100，7 月涨到 200。6 月那个点必须用 100 算，否则历史曲线被今天的价格污染
