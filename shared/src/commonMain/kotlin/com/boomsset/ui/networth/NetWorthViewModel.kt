@@ -99,6 +99,9 @@ class NetWorthViewModel(
             baseCurrency = currency,
             today = today,
             zone = zone,
+            // 按年/按季看的时候，账号可能才用了几个月 —— 不裁的话前面一大截
+            // 全是「资产还不存在」的 0 值点，占满图表还没有信息量。
+            trimBeforeFirstSnapshot = true,
         )
         NetWorthUiState(
             loading = false,
