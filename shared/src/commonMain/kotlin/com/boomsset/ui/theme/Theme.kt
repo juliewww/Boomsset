@@ -9,14 +9,22 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
 /**
- * 旺资的品牌配色 —— **中性表面 + 琥珀棕作唯一暖色强调**。
+ * 旺资的品牌配色 —— **中性表面 + 一个更鲜亮的暖色强调**。
  *
  * 表面和文字梯度取自**有知有行**的 design token（页面 `#FFFFFF`、区域 `#FAFAFA`、
  * 分隔 `#E0E0E0`，文字 `#262626` → `#5C5C5C` → `#808080` → `#BFBFBF`）。
  *
  * **为什么换掉暖米色底：**"不够高级"的主因不在色相，在底色。暖米色底本身就读作
  * "米黄/复古"，而且它让所有强调色的对比度都变差。中性白灰底 + 一个暖色强调
- * 是更稳的组合 —— 品牌琥珀棕在中性底上反而更突出，图标也不用重做。
+ * 是更稳的组合。
+ *
+ * **`BrandAmber` 从 `#8A5A18` 改成了 `#BD4D03`** —— 原色偏暗沉，反馈是"不够积极向上"。
+ * 直接沿旧色相拉高亮度和彩度不可行：算出来的候选在 sRGB 里会被裁剪，
+ * 裁剪本身会**偷偷改变色相角**（越裁越像纯橙），裁到最后新 primary 和图表的
+ * 「权益类」橙 `#E58A26` 正常视力分离度只剩 ΔE 14.2（门槛 15，验证器会 FAIL）——
+ * 两者在配置页会挨在一起（FAB 和权益类那根条），必须分得开。
+ * 所以改成**在色相角上小幅偏移**（往红那一侧偏 25°）找亮度和彩度都更高的候选，
+ * 新色相角 44.7°、与权益类分离度 ΔE 16.2，同时保住"积极"的观感。
  *
  * 在此之前 `App()` 里只有一句裸 `MaterialTheme {}`，界面跑的是 Material 3 库自带的
  * 默认紫。那不是设计决策，只是没人配过 —— 淡紫 FAB 和紫色导航指示条都是从那来的。
@@ -34,14 +42,14 @@ import androidx.compose.ui.graphics.Color
  * 第三色（tertiary）用**冷灰蓝**而不是 M3 从暖色种子自动推出来的绿 ——
  * 绿色在中文理财语境里读作"跌"，哪怕只是个强调色也别用。
  */
-private val BrandAmber = Color(0xFF8A5A18)
+private val BrandAmber = Color(0xFFBD4D03)
 
 private val LightScheme = lightColorScheme(
     primary = BrandAmber,
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFF5E7D0),
-    onPrimaryContainer = Color(0xFF2C1700),
-    inversePrimary = Color(0xFFE8B871),
+    primaryContainer = Color(0xFFFFDCCD),
+    onPrimaryContainer = Color(0xFF310E00),
+    inversePrimary = Color(0xFFE9A78A),
 
     // 次要色走中性灰 —— 有知有行的做法：只留一个强调色，其余全部中性
     secondary = Color(0xFF5C5C5C),
@@ -51,10 +59,10 @@ private val LightScheme = lightColorScheme(
 
     // 第三色刻意留在琥珀色系内，**不用任何分类色的色相** ——
     // 否则它会和某个大类的颜色撞车，让读者以为两者有关
-    tertiary = Color(0xFFA97B33),
+    tertiary = Color(0xFF914F30),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFF3E4CB),
-    onTertiaryContainer = Color(0xFF2A1A00),
+    tertiaryContainer = Color(0xFFF6D6C9),
+    onTertiaryContainer = Color(0xFF310F00),
 
     // error 和「超配」是两回事，色值也不同（超配是 #C5453F）
     error = Color(0xFFB3261E),
@@ -87,13 +95,14 @@ private val LightScheme = lightColorScheme(
 
 /**
  * 深色模式是**另选的一组中性灰**，不是浅色的自动翻转。
- * 暖色强调在深底上要提亮（`#E8B871`），否则琥珀棕会糊进背景。
+ * 暖色强调在深底上要提亮（`#E9A78A`），否则会糊进背景 ——
+ * 这个值同样避开了深色模式下权益类图表色 `#CF7600`（ΔE 15.1）。
  */
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFE8B871),
-    onPrimary = Color(0xFF452B00),
-    primaryContainer = Color(0xFF654100),
-    onPrimaryContainer = Color(0xFFF5E7D0),
+    primary = Color(0xFFE9A78A),
+    onPrimary = Color(0xFF3D1200),
+    primaryContainer = Color(0xFF51240E),
+    onPrimaryContainer = Color(0xFFF6D6C9),
     inversePrimary = BrandAmber,
 
     secondary = Color(0xFFC6C6C6),
@@ -101,10 +110,10 @@ private val DarkScheme = darkColorScheme(
     secondaryContainer = Color(0xFF3A3A3A),
     onSecondaryContainer = Color(0xFFEDEDED),
 
-    tertiary = Color(0xFFC9A46A),
-    onTertiary = Color(0xFF3E2A00),
-    tertiaryContainer = Color(0xFF56401A),
-    onTertiaryContainer = Color(0xFFF0DFC4),
+    tertiary = Color(0xFFE9A588),
+    onTertiary = Color(0xFF381200),
+    tertiaryContainer = Color(0xFF572914),
+    onTertiaryContainer = Color(0xFFEFD0C2),
 
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
@@ -117,7 +126,7 @@ private val DarkScheme = darkColorScheme(
     onSurface = Color(0xFFEDEDED),
     surfaceVariant = Color(0xFF3A3A3A),
     onSurfaceVariant = Color(0xFFC6C6C6),
-    surfaceTint = Color(0xFFE8B871),
+    surfaceTint = Color(0xFFE9A78A),
     inverseSurface = Color(0xFFEDEDED),
     inverseOnSurface = Color(0xFF262626),
 
