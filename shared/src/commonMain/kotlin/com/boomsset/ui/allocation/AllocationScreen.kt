@@ -1,9 +1,12 @@
 package com.boomsset.ui.allocation
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import com.boomsset.ui.theme.chartColors
 import androidx.compose.foundation.layout.Arrangement
@@ -17,15 +20,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +50,7 @@ import com.boomsset.domain.TargetAllocation
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.label
 import com.boomsset.ui.formatWithCurrency
+import kotlinx.coroutines.launch
 
 @Composable
 fun AllocationScreen(
@@ -141,7 +154,12 @@ fun AllocationScreen(
  * 目标配置的切换与管理。
  *
  * 多套并存可对比是 domain.md 定的产品决策 —— 这里让它真正可用。
+ *
+ * **编辑/恢复默认/删除不再常驻显示** —— 之前是两个 [TextButton] 常驻在 chip 行下面，
+ * 占用了一整行空间（实机反馈）。现在长按当前目标才展开，chip 行本身已经用
+ * `selected` 状态标出"当前对比哪一套"，不需要额外的常驻按钮或说明文字。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AllocationPicker(
     allocations: List<TargetAllocation>,
@@ -151,37 +169,100 @@ private fun AllocationPicker(
     onRestore: (TargetAllocation) -> Unit,
     onDelete: (Long) -> Unit,
 ) {
-    val active = allocations.firstOrNull { it.isActive }
+    var actionsForId by remember { mutableStateOf<Long?>(null) }
+    val actionsTarget = allocations.firstOrNull { it.id == actionsForId }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("对比哪套目标", style = MaterialTheme.typography.labelMedium)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             allocations.forEach { allocation ->
-                FilterChip(
-                    selected = allocation.isActive,
-                    onClick = { onSelect(allocation.id) },
-                    label = { Text(allocation.name) },
-                )
-            }
-            FilterChip(selected = false, onClick = onCreate, label = { Text("＋ 新建") })
-        }
-
-        active?.let { allocation ->
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { onEdit(allocation) }) { Text("编辑比例") }
-                if (allocation.isBuiltIn) {
-                    TextButton(onClick = { onRestore(allocation) }) { Text("恢复默认") }
+                if (allocation.isActive) {
+                    // 当前目标换成手写的可长按 chip，而不是 FilterChip ——
+                    // FilterChip 自带的 clickable 和外层长按手势叠在一起容易互相吞掉手势，
+                    // 干脆只给这一个 chip 换成 combinedClickable，短按不做事（本来就已经选中）、
+                    // 长按才展开编辑/恢复默认/删除。
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = RoundedCornerShape(50),
+                        modifier = Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { actionsForId = allocation.id },
+                        ),
+                    ) {
+                        Text(
+                            allocation.name,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
                 } else {
-                    TextButton(onClick = { onDelete(allocation.id) }) { Text("删除") }
+                    FilterChip(
+                        selected = false,
+                        onClick = { onSelect(allocation.id) },
+                        label = { Text(allocation.name) },
+                    )
                 }
             }
+            FilterChip(selected = false, onClick = onCreate, label = { Text("＋ 新建") })
+            if (actionsTarget == null) {
+                InfoTooltip("长按上面高亮的目标可以编辑比例，或恢复默认/删除。")
+            }
+        }
+
+        if (actionsTarget != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { onEdit(actionsTarget); actionsForId = null }) {
+                    Text("编辑比例")
+                }
+                if (actionsTarget.isBuiltIn) {
+                    TextButton(onClick = { onRestore(actionsTarget); actionsForId = null }) {
+                        Text("恢复默认")
+                    }
+                } else {
+                    TextButton(onClick = { onDelete(actionsTarget.id); actionsForId = null }) {
+                        Text("删除")
+                    }
+                }
+                TextButton(onClick = { actionsForId = null }) { Text("收起") }
+            }
             // 内置预设不是权威处方 —— domain.md 要求 UI 不能呈现为针对用户的推荐
-            if (allocation.isBuiltIn) {
+            if (actionsTarget.isBuiltIn) {
                 Text(
                     "内置预设是行业常见的起点，不是针对你情况的建议。按自己的目标改。",
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
+        }
+    }
+}
+
+/**
+ * (i) 图标 + 点按弹出的说明气泡。
+ *
+ * 用来把配置页里那些一次性看不懂但**不需要常驻**的解释文字收起来 ——
+ * 之前"对比哪套目标""内置预设是行业常见的起点……"这类句子常驻显示，
+ * 占地方还啰嗦（实机反馈）。`TooltipBox` 默认是长按/悬停触发，这里手动在
+ * `onClick` 里调 `state.show()`，因为触屏上点一下比长按更符合"点 (i) 看说明"的直觉，
+ * 而且这一页已经把"长按"用在了 [AllocationPicker] 的目标 chip 上 ——
+ * 同一屏里不该有两种手势各自绑着不同含义。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InfoTooltip(text: String) {
+    val tooltipState = rememberTooltipState()
+    val scope = rememberCoroutineScope()
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(text) } },
+        state = tooltipState,
+    ) {
+        IconButton(
+            onClick = { scope.launch { tooltipState.show() } },
+            modifier = Modifier.size(28.dp),
+        ) {
+            Text("ⓘ", style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -216,7 +297,7 @@ private fun Header(view: AllocationView?) {
 private fun TargetPreview(active: TargetAllocation?) {
     if (active == null) {
         Text(
-            "还没有目标配置。点上面的「＋ 新建」定一套，或者先去「净值」页添加资产。",
+            "还没有目标配置。点上面的「＋ 新建」定一套，或者先去「资产」页添加资产。",
             style = MaterialTheme.typography.bodyMedium,
         )
         return
@@ -256,7 +337,7 @@ private fun TargetPreview(active: TargetAllocation?) {
     }
 
     Text(
-        "去「净值」页点右下角加号添加第一笔资产，就能看到自己离目标有多远。",
+        "去「资产」页点右下角加号添加第一笔资产，就能看到自己离目标有多远。",
         style = MaterialTheme.typography.labelMedium,
     )
 }
@@ -295,11 +376,18 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
             )
 
             Text(
-                "净敞口 ${exposure.netExposure.formatWithCurrency(view.baseCurrency)}" +
+                buildString {
+                    append("净敞口 ")
+                    // 正负号显式打出来，不能只靠 formatWithCurrency 里负数才有的那个 "-"——
+                    // 光看一串数字看不出"这一类净值是多了还是少了"，加号和减号才是一眼可辨的信号
+                    // （实机反馈）。
+                    if (exposure.netExposure.minorUnits >= 0) append("+")
+                    append(exposure.netExposure.formatWithCurrency(view.baseCurrency))
                     if (!exposure.liabilities.isZero) {
-                        "（资产 ${exposure.assets.formatWithCurrency(view.baseCurrency)} " +
-                            "− 负债 ${exposure.liabilities.formatWithCurrency(view.baseCurrency)}）"
-                    } else "",
+                        append("（资产 ${exposure.assets.formatWithCurrency(view.baseCurrency)} ")
+                        append("− 负债 ${exposure.liabilities.formatWithCurrency(view.baseCurrency)}）")
+                    }
+                },
                 style = MaterialTheme.typography.labelSmall,
             )
 
@@ -374,9 +462,17 @@ private fun NegativeExposureNotice() {
 
 @Composable
 private fun DenominatorNote() {
-    Text(
-        "比例的分母是全部净资产（含自住房）。各大类显示的是净敞口 —— " +
-            "归属到该类的负债已经抵扣，所以比例加总为 100%。",
-        style = MaterialTheme.typography.labelSmall,
-    )
+    // 原来是一整句解释常驻显示，实机反馈是"有很多废话" —— 换成一行极短的提示
+    // + (i) 图标，完整解释收进点开才看的 tooltip。
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            "净敞口已抵扣负债，比例加总 100%",
+            style = MaterialTheme.typography.labelSmall,
+        )
+        InfoTooltip(
+            "比例的分母是全部净资产（含自住房）。各大类显示的是净敞口 —— " +
+                "归属到该类的负债已经抵扣，所以比例加总为 100%。正号表示这类资产扣除对应负债后" +
+                "仍是净资产，负号表示这类的负债超过了资产。",
+        )
+    }
 }

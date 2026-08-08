@@ -14,15 +14,25 @@ import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModelProducer
+import com.patrykandpatrick.vico.compose.cartesian.data.columnModel
 import com.patrykandpatrick.vico.compose.cartesian.data.lineModel
+import com.patrykandpatrick.vico.compose.cartesian.layer.ColumnCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.layer.rememberColumnCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
+import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 /**
- * 净值趋势折线图。
+ * 净值趋势图 —— **柱状图 + 折线图**的组合，不是纯折线。
+ *
+ * 原来只有折线：第一次记完快照、`trimBeforeFirstSnapshot` 裁剪之后序列里只剩
+ * 一个点，而 Vico 的折线需要 2 个以上的点才画得出线段 —— 结果用户看到的只有
+ * 坐标轴，没有任何可见图形（实机反馈："只有一条虚线"）。柱状图不依赖相邻点，
+ * 一个点也能画出一根柱子；多个点时柱子照常都在，折线再叠加在上面表示趋势。
  *
  * y 值传的是**元**（minorUnits / 100）而不是分 —— Vico 内部按 Double 处理，
  * 这里只是展示，不参与任何金额计算。真正的加总一律在 [com.boomsset.domain.Money] 上做。
@@ -40,10 +50,10 @@ fun NetWorthChart(
 
     LaunchedEffect(series) {
         if (series.points.isEmpty()) return@LaunchedEffect
+        val values = series.points.map { it.netWorth.minorUnits / 100.0 }
         modelProducer.runTransaction {
-            lineModel {
-                series(series.points.map { it.netWorth.minorUnits / 100.0 })
-            }
+            columnModel { series(values) }
+            lineModel { series(values) }
         }
     }
 
@@ -66,6 +76,15 @@ fun NetWorthChart(
 
     CartesianChartHost(
         chart = rememberCartesianChart(
+            rememberColumnCartesianLayer(
+                columnProvider = ColumnCartesianLayer.ColumnProvider.series(
+                    rememberLineComponent(
+                        fill = Fill(brand.copy(alpha = 0.5f)),
+                        thickness = 10.dp,
+                        shape = RoundedCornerShape(2.dp),
+                    ),
+                ),
+            ),
             rememberLineCartesianLayer(
                 lineProvider = LineCartesianLayer.LineProvider.series(
                     LineCartesianLayer.rememberLine(

@@ -26,7 +26,9 @@ import com.boomsset.security.AuthCapability
 import com.boomsset.domain.Money
 import com.boomsset.domain.Period
 import com.boomsset.ui.bpToPercent
+import com.boomsset.ui.fallColor
 import com.boomsset.ui.formatWithCurrency
+import com.boomsset.ui.riseColor
 
 @Composable
 fun NetWorthScreen(
@@ -70,19 +72,36 @@ fun NetWorthScreen(
 @Composable
 private fun SummaryCard(state: NetWorthUiState) {
     val net = state.series?.latest?.netWorth ?: Money.ZERO
-    Card(modifier = Modifier.fillMaxWidth()) {
+    // 卡片用品牌色的浅色容器打底 —— 反馈是净值页太灰暗；整页只有这一处用容器强调，
+    // 不会和"表面是中性白灰"的整体设计冲突（见 AGENTS.md）。
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+        ),
+    ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("当前净值", style = MaterialTheme.typography.labelMedium)
+            Text(
+                "当前净值",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
             Text(
                 net.formatWithCurrency(state.baseCurrency),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
 
             state.series?.growthBp?.let { bp ->
                 Text(
                     "净值增长 ${bp.bpToPercent(withSign = true)}（含新增投入）",
                     style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        bp > 0 -> riseColor()
+                        bp < 0 -> fallColor()
+                        else -> MaterialTheme.colorScheme.onPrimaryContainer
+                    },
                 )
             }
 
@@ -97,10 +116,16 @@ private fun SummaryCard(state: NetWorthUiState) {
                         if (rate != null) append("（${rate.bpToPercent(withSign = true)}）")
                     },
                     style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        pnl.pnl.absolute.minorUnits > 0 -> riseColor()
+                        pnl.pnl.absolute.minorUnits < 0 -> fallColor()
+                        else -> MaterialTheme.colorScheme.onPrimaryContainer
+                    },
                 )
                 Text(
                     "仅覆盖已填成本的 ${pnl.coveredAssetIds.size} 项资产",
                     style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             }
         }
@@ -238,7 +263,7 @@ private fun EmptyHint() {
                 "旺资不记流水，记的是快照 —— 你不用逐笔录收支，只要定期更新每项资产现在值多少。",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Step("1", "点右下角加号，添加一项资产（存款、基金、股票、房产都行）")
+            Step("1", "去「资产」页点右下角加号，添加一项资产（存款、基金、股票、房产都行）")
             Step("2", "以后每月或每季回来更新一次市值，净值曲线就长出来了")
             Step("3", "去「配置」页设定目标比例，就能看到自己离目标有多远")
             Text(
