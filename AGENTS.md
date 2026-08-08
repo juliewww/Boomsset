@@ -124,10 +124,36 @@ cyan/purple 彩度不足。在 2520 种组合里搜出 588 组通过，取离原
 以及**零资产时目标配置入口可达**、空状态指引、添加流程按品种选、负债品种预设负债标记。
 跑法：`cd iosApp && xcodebuild test -scheme iosApp -destination "id=<UDID>"`。
 
+**根据真机使用反馈做的第二轮 UI 打磨（两端实机/模拟器验证）：**
+- 净值曲线改成**柱状图+折线图**组合，不再是纯折线 —— 见下方教训 10
+- **加号（添加资产）从净值页挪到资产页**：净值页是只读的趋势概览，添加资产是资产页在做的事，
+  放错页面会让用户在错的地方找入口。空状态提示文案跟着一起改了（不再说"去净值页点加号"）
+- 底部导航选中态**文字也要变成品牌色**，不能只靠一个浅灰指示条 —— 那条太不明显，看不出选中了哪个
+- 净值页加了一点暖色：概览卡片换成 `primaryContainer` 浅色底，涨跌数字上了色
+  （见 [GainLossColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/GainLossColors.kt)，
+  中国股市语境**红涨绿跌**）。这组色是**复用已验证的 M3 角色色而不是新起一组 hex**——
+  `docs/domain.md` 里早就预告"给盈亏上色要另开一组常量"，但那需要重跑 ChartColorsTest 注释里
+  那套 OKLab 验证器，而那个脚本本身没有提交到仓库、这轮时间也不允许重建，所以选了更保守的路：
+  复用已经过审的 primary/error 语义色，而不是引入未经色盲安全验证的新色值
+- 配置页：净敞口的金额加了显式 **+/−** 符号（之前只有负数才看得出符号）；
+  "对比哪套目标"和内置预设的长段说明文字收进了点开才看的 **(i) 图标 tooltip**；
+  "编辑比例/恢复默认/删除"从常驻按钮改成**长按当前目标**才展开
+  （[AllocationScreen.kt](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)
+  的 `InfoTooltip`/`AllocationPicker`）
+- 配置页的环形图**扇区可点**，点开显示那一类的名称和金额，再点一次收起 ——
+  Vico 的 `PieChart` 没有点击回调，命中检测是手写的角度/半径计算，
+  见 [AllocationDonut.kt](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationDonut.kt)
+- 资产页删掉了顶部常驻的"点更新估值记快照"提示；每行原来常驻的"更新估值/改名称分类/归档"
+  三个按钮改成**左滑**才露出来，用 material3 自带的 `SwipeToDismissBox`（不是真的 dismiss，
+  划开不移除数据，只是露出背后的按钮）。**卡片本身仍然整张可点直接打开更新对话框** ——
+  这是刻意保留的，见下方教训 11
+- 添加资产第二步表单（按份额取行情时的「持有份额」「总投入成本」）键盘弹出会挡住字段，
+  补了 `Modifier.imePadding()` —— 见下方教训 12
+
 **还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）；
 iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会自动派生）。
 
-**教训（九次都是实跑才发现、编译和单测全绿）：**
+**教训（十二次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
 2. 预填用带千分位的 `formatAmount()`，而解析器拒绝逗号 → **≥¥1000 的资产无法更新**
 3. 汇率刷新只在 ViewModel `init` 跑一次，那时还没有资产、需要的币种是空集 →
@@ -172,6 +198,50 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
    于是我换到 API 34 去截图 —— **恰好换掉了会暴露这个 bug 的 API 等级**。
    教训：**为了绕开工具问题换设备时，要先确认新设备没有绕掉被测的那个条件。**
    验 edge-to-edge / 系统栏相关的问题必须用 **SDK ≥ 35** 的设备。
+
+10. 净值图表加了 `trimBeforeFirstSnapshot` 之后，第一次记完快照的用户只有一个取样点，
+    Vico 的 `LineCartesianLayer` 画不出线段（折线需要 2 个以上的点）——**图表区域里
+    只有坐标轴，没有任何可见图形**（实机反馈原话："只有一条虚线"，其实是连虚线都没有，
+    看到的是空的网格线）。单测测的是 `NetWorthSeries` 的数据，从没断言过"这个点数下
+    Vico 到底画不画得出东西"，所以编译和单测全绿也发现不了。改成柱状图+折线图组合
+    （`ColumnCartesianLayer` + `LineCartesianLayer` 叠在同一个 `rememberCartesianChart` 里），
+    一个点也能画出一根柱子。**这条通则可以再泛化一次：图表类组件的正确性不能只测数据层，
+    "点数很少（1 个、0 个）时图形是否可见"要专门实机确认**，数据正确不等于画得出来。
+
+11. **验证自定义手势（长按弹出、左滑显示操作）不能用测试框架"最方便"的那个 API —— 而且
+    "换一个更像真实拖拽的 API"这条思路在 iOS 上最终也没能修好，这是留在这里的一个真实缺口。**
+    Compose 的 `SwipeToDismissBox` 用 `anchoredDraggable` 识别拖拽，而 Android 的
+    `adb shell input swipe`、iOS XCUITest 的 `XCUIElement.swipeLeft()` 都是"元素范围内、
+    固定极短时长"的合成手势，生成的中间移动事件太少/太快，两边都识别不到——**实机上
+    手指划一下明明好用，自动化验证却像是没反应**，很容易被误判成"这个功能没做对"。
+    Android 换成 `adb shell input draganddrop`（更接近真实连续拖拽）之后**确认手势本身是好的**——
+    左滑露出按钮、点「更新」能打开对话框，全程实测通过。
+    iOS 这边依样画葫芦换成坐标级的 `XCUICoordinate.press(forDuration:thenDragTo:)`，
+    第一次以为修好了（写进过这条教训），但重新完整跑一遍测试套件后发现**其实还是没触发**——
+    之前"看起来通过"是没有重新跑验证就写下的结论，一个教训：**改完自动化断言必须真的重新跑一遍
+    再记录结果，不能凭"应该好了"就下结论。** 后来又试了带显式速度的重载
+    `press(forDuration:thenDragTo:withVelocity:thenHoldForDuration:)`（给一个远低于默认值的慢速度），
+    依然没用。三种 XCUITest 手势 API 都没能让这台模拟器上的 `anchoredDraggable` 识别成一次拖拽。
+    **结论是把这一小段自动化断言去掉**，改成让相关测试走"直接点卡片"这条已验证稳定的路径
+    （见 `testUpdateValuePrefillIsParseable`/`testUpdatingValueIsAVisibleAction`），
+    并在代码注释里写清楚"左滑这个具体交互没有自动化覆盖，改动这块要手动在真机/模拟器上划一下"——
+    诚实地承认工具链的缺口，比硬凑一个看起来通过、其实没测到东西的断言更负责任。
+    支撑"功能本身没问题"这个判断的是架构论证：`SwipeToDismissBox`/`anchoredDraggable`
+    是纯共享 Kotlin 代码，iOS 和 Android 手势识别逻辑完全一致，唯一的平台差异只在触摸事件
+    怎么送进来那一层——而这一层已经在 Android 上用接近真实连续触摸的方式验证过。
+    另外，**`coordinate(withNormalizedOffset:)` 建在一个还没等到出现的元素上时，
+    内部重试会挂到 XCTest 的默认超时**（实测卡了 600~950 秒才失败，而不是快速报错）——
+    自定义手势的测试助手函数必须先 `waitForExistence` 再取坐标，否则一个"元素暂时不在"
+    的小问题会被拖成看起来像"卡死"的大问题，调试成本差一个数量级。
+
+12. **`verticalScroll` 不等于"键盘弹出时能滚到聚焦字段"。** `AssetDetailForm` 早就有
+    `verticalScroll`（教训 6 修的是完全没有滚动），但按份额取行情时的「持有份额」
+    「总投入成本」两个字段照样被键盘挡住（实机反馈）。原因是**`verticalScroll` 单独
+    存在时不知道键盘占了多少高度**——它仍然按"整个屏幕都看得见"来计算可滚动范围，
+    聚焦字段的"滚入可视区"逻辑因此判断"已经在可视区内"而不多滚。补 `Modifier.imePadding()`
+    让内容区域随键盘高度收缩，滚动容器的可视高度才是真的，才会正确多滚出被键盘吃掉的那截。
+    **两个是不同的坑：`verticalScroll` 解决"内容装不下"，`imePadding` 解决"知道键盘多高"，
+    键盘相关的表单两个都要有，只查有没有 `verticalScroll` 不够。**
 
 **另一条通则（第 1、5、8 条都是它）：空状态不能走一条不包含入口的渲染分支。**
 **不要只盯着提前 `return`** —— `when`/`if` 分支、早退的 `LazyColumn` item，任何

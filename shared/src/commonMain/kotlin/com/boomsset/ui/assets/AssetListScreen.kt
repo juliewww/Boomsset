@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import com.boomsset.ui.fallColor
+import com.boomsset.ui.riseColor
 import com.boomsset.ui.theme.chartColors
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -17,17 +19,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AssetClass
@@ -37,6 +43,7 @@ import com.boomsset.domain.Quantity
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.priceDescription
 import com.boomsset.ui.formatWithCurrency
+import kotlinx.coroutines.launch
 
 @Composable
 fun AssetListScreen(
@@ -64,16 +71,17 @@ fun AssetListScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp),
     ) {
-        item {
-            Text(
-                if (state.isEmpty) {
-                    "没有在持资产。去「净值」页点加号添加。"
-                } else {
-                    "点「更新估值」记下它现在值多少。这是这个 App 的核心动作 —— 不记流水，只记快照。"
-                },
-                style = if (state.isEmpty) MaterialTheme.typography.bodyMedium
-                else MaterialTheme.typography.labelSmall,
-            )
+        // 原来非空态时顶部常驻一句"点更新估值记快照"的说明 —— 占地方，且用惯了的用户
+        // 不需要每次都被提醒（实机反馈）。空状态那句不算"提示"而是状态本身（列表是空的
+        // 总要说一声），所以保留，但因为加号已经就在这一页（见 App.kt 的 FAB 改动），
+        // 不用再指去"净值"页。
+        if (state.isEmpty) {
+            item {
+                Text(
+                    "没有在持资产。点右下角加号添加。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
 
         AssetClass.displayOrder.forEach { assetClass ->
@@ -189,6 +197,19 @@ private fun ArchivedRow(valuation: AssetValuation, onUnarchive: () -> Unit) {
     }
 }
 
+/**
+ * 每行原来常驻显示三个按钮（更新估值/改名称分类/归档），在小屏上占掉快一半的卡片高度
+ * （实机反馈）。改成**左滑**才露出来 —— 用的是 material3 自带的 `SwipeToDismissBox`，
+ * 不新增依赖。它本来是给"划走删除"设计的，这里**不做真正的 dismiss**：`enableDismissFromStartToEnd`
+ * 关掉右滑方向，只留左滑；划开后不移除这一行数据，只是把背后的三个按钮露出来，
+ * 点完或点旁的地方都会 `reset()` 弹回去，效果就是"左滑显示操作、不是划走"。
+ *
+ * 「更新估值」这个核心动作**没有变成纯隐形入口** —— 卡片本身仍然整张可点直接触发更新
+ * （[AssetRowCard] 的 `onClick`），这是之前"核心动作不能只有隐形入口"那条教训要保住的部分
+ * （用户曾经因为找不到能改市值的按钮而误以为"改不了资产"）。左滑收起来的是编辑名称/分类
+ * 和归档 —— 这两个本来就不是高频操作，藏进手势里不会重蹈那次的问题。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AssetRow(
     valuation: AssetValuation,
@@ -196,6 +217,53 @@ private fun AssetRow(
     onClick: () -> Unit,
     onEdit: () -> Unit,
     onArchiveClick: () -> Unit,
+) {
+    val dismissState = rememberSwipeToDismissBoxState()
+    val scope = rememberCoroutineScope()
+
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SwipeActionButton("更新", MaterialTheme.colorScheme.primary) {
+                    scope.launch { dismissState.reset() }
+                    onClick()
+                }
+                SwipeActionButton("编辑", MaterialTheme.colorScheme.onSurfaceVariant) {
+                    scope.launch { dismissState.reset() }
+                    onEdit()
+                }
+                SwipeActionButton("归档", MaterialTheme.colorScheme.error) {
+                    scope.launch { dismissState.reset() }
+                    onArchiveClick()
+                }
+            }
+        },
+    ) {
+        AssetRowCard(valuation = valuation, baseCurrency = baseCurrency, onClick = onClick)
+    }
+}
+
+@Composable
+private fun SwipeActionButton(label: String, color: Color, onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Text(label, color = color, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun AssetRowCard(
+    valuation: AssetValuation,
+    baseCurrency: String,
+    onClick: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -238,6 +306,11 @@ private fun AssetRow(
                         if (rate != null) append("（${rate.bpToPercent(withSign = true)}）")
                     },
                     style = MaterialTheme.typography.labelMedium,
+                    color = when {
+                        pnl.absolute.minorUnits > 0 -> riseColor()
+                        pnl.absolute.minorUnits < 0 -> fallColor()
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
             }
 
@@ -260,20 +333,6 @@ private fun AssetRow(
 
             if (!valuation.asset.includeInAllocation) {
                 Text("不计入配置比例", style = MaterialTheme.typography.labelSmall)
-            }
-
-            // 「更新估值」必须是**看得见的按钮**，而且排在最前。
-            //
-            // 之前它只有一个隐形入口：整张卡片可点。结果用户想把支付宝从 10 万改成 12 万时，
-            // 看到的唯一两个可点的东西是「编辑信息」和「归档」—— 自然会点前者，
-            // 但那个只改名称/分类、**不含金额**，于是合理地得出"改不了资产"的结论。
-            // （实际反馈就是这样。）
-            //
-            // 卡片可点保留，作为熟悉之后的快捷方式；但**核心动作不能只有隐形入口**。
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                FilledTonalButton(onClick = onClick) { Text("更新估值") }
-                TextButton(onClick = onEdit) { Text("改名称分类") }
-                TextButton(onClick = onArchiveClick) { Text("归档") }
             }
         }
     }

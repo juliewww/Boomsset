@@ -36,11 +36,15 @@ final class AssetFlowUITest: XCTestCase {
 
     func testEmptyStateShowsOnboarding() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
-        XCTAssertTrue(app.buttons["＋"].exists, "空状态下加号必须可见")
         // 三个 tab 都在
         XCTAssertTrue(app.buttons["净值"].exists)
         XCTAssertTrue(app.buttons["配置"].exists)
         XCTAssertTrue(app.buttons["资产"].exists)
+
+        // 加号在"资产"页，不在"净值"页 —— 添加资产是资产页在做的事，
+        // 放在净值页（一个只读的趋势概览）会让用户在错的地方找入口（实机反馈）。
+        app.buttons["资产"].tap()
+        XCTAssertTrue(app.buttons["＋"].exists, "资产页空状态下加号必须可见")
     }
 
     func testTabsSwitch() throws {
@@ -51,7 +55,8 @@ final class AssetFlowUITest: XCTestCase {
         waitFor(app.staticTexts["资产配置"], "配置页")
 
         app.buttons["资产"].tap()
-        waitFor(app.staticTexts["没有在持资产。去「净值」页点加号添加。"], "资产页空态")
+        // 加号已经就在这一页了，不用再指去"净值"页
+        waitFor(app.staticTexts["没有在持资产。点右下角加号添加。"], "资产页空态")
 
         app.buttons["净值"].tap()
         waitFor(app.staticTexts["还没有资产"], "回到净值页")
@@ -60,6 +65,7 @@ final class AssetFlowUITest: XCTestCase {
     /// 完整的添加资产流程 —— 对应 Android 上验过的那条
     func testAddManualAssetComputesNetWorthAndPnL() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
+        app.buttons["资产"].tap()
         app.buttons["＋"].tap()
 
         waitFor(app.staticTexts["添加资产"], "添加资产页")
@@ -70,6 +76,9 @@ final class AssetFlowUITest: XCTestCase {
         type("field-asset-cost", "95000")
 
         app.buttons["添加"].tap()
+
+        // 添加完从"资产"页弹回来（加号现在就在这一页），净值和盈亏要去"净值"页看
+        app.buttons["净值"].tap()
 
         // 净值和盈亏都要对：100000 - 95000 = 5000，5000/95000 = 5.26%
         waitFor(app.staticTexts["¥100,000.00"], "净值 ¥100,000.00")
@@ -85,8 +94,11 @@ final class AssetFlowUITest: XCTestCase {
 
         app.buttons["资产"].tap()
         waitFor(app.staticTexts["现金"], "资产列表里的现金")
-        // 走**可见按钮**这条路，不是点整张卡片 —— 见 testUpdatingValueIsAVisibleAction
-        app.buttons["更新估值"].firstMatch.tap()
+        // 更新估值现在有两条路：左滑露出「更新」按钮，或者直接点整行卡片。
+        // 这个测试关心的是预填格式，不是"怎么进入对话框"，所以走**最稳的那条路**——
+        // 直接点卡片。左滑手势本身的验证见 testUpdatingValueIsAVisibleAction 的注释：
+        // XCUITest 在这台模拟器上验不出 `SwipeToDismissBox` 的拖拽手势，不代表功能没做对。
+        app.staticTexts["现金"].tap()
 
         waitFor(app.staticTexts["更新「现金」"], "更新对话框")
 
@@ -148,11 +160,6 @@ final class AssetFlowUITest: XCTestCase {
                 "零资产时预设「\(preset)」必须可选，实际树：\n\(app.debugDescription)"
             )
         }
-        // 编辑比例和新建都要在
-        XCTAssertTrue(
-            app.buttons["编辑比例"].exists || app.staticTexts["编辑比例"].exists,
-            "零资产时必须能编辑比例"
-        )
         XCTAssertTrue(
             app.staticTexts["＋ 新建"].exists || app.buttons["＋ 新建"].exists,
             "零资产时必须能新建配置"
@@ -165,8 +172,20 @@ final class AssetFlowUITest: XCTestCase {
             "零资产时应显示目标比例，实际树：\n\(app.debugDescription)"
         )
 
+        // 编辑比例/恢复默认不再常驻，长按当前目标（"平衡"）才展开 —— 常驻按钮占地方，
+        // 实机反馈要求收起来。零资产时也要能长按到，因为设目标比例恰恰是加第一笔
+        // 资产之前就想做的事。
+        let activeTarget = app.buttons["平衡"].exists ? app.buttons["平衡"] : app.staticTexts["平衡"]
+        XCTAssertTrue(activeTarget.exists, "当前目标「平衡」应可见，实际树：\n\(app.debugDescription)")
+        activeTarget.press(forDuration: 1.0)
+        let editButton = app.buttons["编辑比例"]
+        XCTAssertTrue(
+            editButton.waitForExistence(timeout: 5),
+            "长按当前目标后应展开「编辑比例」，实际树：\n\(app.debugDescription)"
+        )
+
         // 编辑对话框真的打得开，不只是按钮存在
-        app.buttons["编辑比例"].tap()
+        editButton.tap()
         XCTAssertTrue(
             app.staticTexts["编辑「平衡」"].waitForExistence(timeout: 5),
             "点「编辑比例」应打开编辑对话框，实际树：\n\(app.debugDescription)"
@@ -180,6 +199,7 @@ final class AssetFlowUITest: XCTestCase {
     /// 所以不该让他先选大类。
     func testAddAssetIsAFullPagePickingBySubtype() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
+        app.buttons["资产"].tap()
         app.buttons["＋"].tap()
         waitFor(app.staticTexts["添加资产"], "添加资产页")
 
@@ -217,6 +237,7 @@ final class AssetFlowUITest: XCTestCase {
     /// 选了负债类品种，负债开关应当自动打开 —— 不用用户再想一遍"房贷是负债"
     func testLiabilitySubtypePresetsTheLiabilityFlag() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
+        app.buttons["资产"].tap()
         app.buttons["＋"].tap()
         waitFor(app.staticTexts["添加资产"], "添加资产页")
 
@@ -232,28 +253,37 @@ final class AssetFlowUITest: XCTestCase {
         XCTAssertFalse(app.staticTexts["怎么估值"].exists, "负债不该显示估值方式")
     }
 
-    /// 回归测试：**更新估值必须有看得见的按钮。**
+    /// 回归测试：**更新估值不能只有隐形入口。**
     ///
-    /// 之前它只有隐形入口（整张卡片可点）。用户想把支付宝从 10 万改成 12 万，
-    /// 看到的唯一两个可点的东西是「编辑信息」和「归档」，自然点前者 ——
-    /// 但那个对话框**根本没有金额字段**，于是合理地得出"改不了资产"的结论。
-    /// 这是实际使用反馈出来的。
+    /// 最早它真的只有隐形入口（整张卡片可点，没有任何按钮）。用户想把支付宝从
+    /// 10 万改成 12 万，看到的唯一两个可点的东西是「编辑信息」和「归档」，
+    /// 自然点前者 —— 但那个对话框**根本没有金额字段**，于是合理地得出
+    /// "改不了资产"的结论。这是实际使用反馈出来的。
     ///
-    /// App 最核心的动作不能只有隐形入口。
+    /// 后来加了常驻的「更新估值」按钮修好了这个问题；这一轮反馈又要求把它收进
+    /// 左滑手势（常驻按钮占用了快一半的卡片高度）。**这条教训不能因此被绕开**：
+    /// 卡片本身仍然整张可点、直接打开更新对话框，"更新"是**不需要发现手势**
+    /// 就能触达的核心动作；左滑露出的按钮是给知道手势的用户的快捷方式，不是唯一入口。
+    ///
+    /// **左滑本身没有自动化断言 —— 不是没做，是这台工具链验不出来。**
+    /// 依次试过 `swipeLeft()`、坐标级 `press(forDuration:thenDragTo:)`、
+    /// 带显式速度的重载，三种手势在这台模拟器上都无法让 `SwipeToDismissBox` 的
+    /// `anchoredDraggable` 识别成一次拖拽（每次之后的无障碍树里背后的「更新/编辑/归档」
+    /// 仍是未展开状态）。但这个手势本身的识别逻辑是**纯共享 Kotlin 代码**，iOS 和 Android
+    /// 走的是同一份 `anchoredDraggable`，唯一的平台差异只在"触摸事件怎么送进来"这一层——
+    /// 在 Android 上已经用更接近真实连续触摸的 `adb shell input draganddrop`（而不是
+    /// 更粗糙的 `input swipe`）手动验证过整条链路：左滑露出按钮、点「更新」能打开
+    /// 对话框。这里的结论是"XCUITest 合成手势的力度在这台模拟器上不够"，不是
+    /// "这个功能在 iOS 上没做对"——但**这确实是自动化覆盖的一个缺口**，改这块代码时
+    /// 除了跑这条测试，还应该在真机或模拟器上手动划一下确认。
     func testUpdatingValueIsAVisibleAction() throws {
         try addCashAsset(value: "100000", cost: nil)
         app.buttons["资产"].tap()
         waitFor(app.staticTexts["现金"], "资产列表里的现金")
 
-        // 按钮必须存在且写明它是干什么的
-        let update = app.buttons["更新估值"].firstMatch
-        XCTAssertTrue(
-            update.exists,
-            "每一行都要有看得见的「更新估值」按钮，实际树：\n\(app.debugDescription)"
-        )
-        // 而且点了真的能改金额
-        update.tap()
-        waitFor(app.staticTexts["更新「现金」"], "更新对话框")
+        // 不需要先发现左滑手势 —— 直接点整行就能打开更新对话框
+        app.staticTexts["现金"].tap()
+        waitFor(app.staticTexts["更新「现金」"], "点整行应直接打开更新对话框")
         let field = textView("field-update-amount")
         waitFor(field, "市值输入框")
         XCTAssertTrue(field.isEnabled, "更新对话框里的市值必须可改")
@@ -370,6 +400,7 @@ final class AssetFlowUITest: XCTestCase {
 
     private func addCashAsset(value: String, cost: String?) throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
+        app.buttons["资产"].tap()
         app.buttons["＋"].tap()
         waitFor(app.staticTexts["添加资产"], "添加资产页")
         pickSubtype("现金")

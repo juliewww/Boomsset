@@ -4,8 +4,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import com.boomsset.ui.theme.BoomssetTheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -124,12 +126,23 @@ private fun AppContent(
                             },
                             icon = {},
                             label = { Text(tab.label) },
+                            // 默认样式选中态只有图标背后一个灰色指示条，文字颜色不变 ——
+                            // 没有图标时那条指示条几乎看不出来，选中和未选中几乎没区别
+                            // （实机反馈）。显式给选中文字上品牌色，让"当前在哪一页"一眼可辨。
+                            // label 里不用手动读 selected 再设 Text 颜色 —— NavigationBarItem
+                            // 已经把这里的 colors 通过 LocalContentColor 传给 label 内容了。
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
                         )
                     }
                 }
             },
             floatingActionButton = {
-                if (currentRoute == ROUTE_NET_WORTH) {
+                // 加号放在"资产"页而不是"净值"页 —— 净值页是只读的概览（趋势、增长率），
+                // 添加资产是资产页在做的事，放在净值页会让用户在错的地方找操作入口（实机反馈）。
+                if (currentRoute == ROUTE_ASSETS) {
                     FloatingActionButton(
                         onClick = { navController.navigate(ROUTE_ADD_ASSET) },
                     ) { Text("＋") }

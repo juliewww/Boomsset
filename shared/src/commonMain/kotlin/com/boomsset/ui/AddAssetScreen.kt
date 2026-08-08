@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -171,6 +172,12 @@ private fun SubtypeGroup(
 
 /**
  * 第二步：填详情。品种已定，所以大类、默认估值方式、是否负债都有了初值。
+ *
+ * **`verticalScroll` 不够，还要 `imePadding`。** 只有 `verticalScroll` 时，键盘弹出
+ * 不会改变 Column 的可视高度 —— 滚动容器仍然按"整屏都看得见"来算，聚焦字段被键盘挡住
+ * 之后也不会多滚一截露出来（实机反馈：按份额取行情时的「持有份额」「总投入成本」
+ * 字段被键盘挡住）。`imePadding()` 让内容区域随键盘高度收缩，滚动容器才知道
+ * 视口变矮了，聚焦字段的"滚入可视区"逻辑才会真的多滚那一截。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -217,6 +224,7 @@ private fun AssetDetailForm(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
