@@ -48,11 +48,34 @@ fun NetWorthChart(
 ) {
     val modelProducer = remember { CartesianChartModelProducer() }
 
+    // 只有一个点时，Vico 会让那一根柱子撑满整条 x 轴，`thickness` 完全不起作用——
+    // 实机验证过：把 thickness 从 10dp 改到 1dp，柱子宽度肉眼看不出任何变化，
+    // 说明 Vico 是按"这个 x 位置能用的宽度"来画柱子，跟 LineComponent 声明的宽度无关。
+    // 只有 1 个点时"能用的宽度"就是整个绘图区，柱子于是变成一整块实心矩形
+    // （实机反馈原话："宽度太宽"）。
+    //
+    // 改 x 轴范围（比如强行把 minX 往左扩）修不了这个：试过之后 Vico 在测量坐标轴标签宽度时
+    // 会对扩出来的那些"虚拟"x 位置也调一次 valueFormatter，而这些位置没有对应的日期、
+    // formatter 只能返回空字符串——Vico 明确不允许 formatter 返回空串（会直接抛
+    // IllegalStateException 崩溃，见其异常信息："改用 ItemPlacer，别用空字符串"）。
+    // 而 ItemPlacer 的 spacing/offset 逻辑是按"真实点数"算的，不知道哪些 x 位置是刚扩出来的
+    // 虚拟位置，没法简单地把这些位置从候选里摘出去。
+    //
+    // 改用**幽灵系列**：借 `MergeMode.Grouped` 把同一个 x 位置的宽度切成几份——
+    // 真实数据只占其中一份，其余几份是全 0 值的占位系列（0 高度=不可见）。
+    // 这个办法完全不碰 x 轴范围和坐标轴标签，只影响"一个 x 位置内部怎么分宽度"，
+    // 不会重蹈上面那个崩溃。**只在恰好 1 个点时才加占位系列**——2 个点以上时，
+    // 多个真实点本来就会自然分布在整个宽度上，不会出现"一整块"这种一眼看去像
+    // 渲染错误的效果，不需要额外处理。
+    val phantomColumnCount = 5
     LaunchedEffect(series) {
         if (series.points.isEmpty()) return@LaunchedEffect
         val values = series.points.map { it.netWorth.minorUnits / 100.0 }
         modelProducer.runTransaction {
-            columnModel { series(values) }
+            columnModel {
+                series(values)
+                if (values.size == 1) repeat(phantomColumnCount) { series(listOf(0.0)) }
+            }
             lineModel { series(values) }
         }
     }
@@ -74,16 +97,24 @@ fun NetWorthChart(
         if (labelSpacing <= 1) 0 else (series.dates.size - 1) % labelSpacing
     }
 
+    val column = rememberLineComponent(
+        fill = Fill(brand.copy(alpha = 0.5f)),
+        thickness = 10.dp,
+        shape = RoundedCornerShape(2.dp),
+    )
+    // 幽灵系列复用同一个 LineComponent 也没关系——它们的值是 0，画出来的高度是 0，
+    // 用什么颜色都看不见。数量必须跟 columnModel 里 series() 调用的次数对上，
+    // 否则 Vico 找不到对应下标的 column 会抛异常。
+    val columnCount = if (series.points.size == 1) phantomColumnCount + 1 else 1
+    val columnProvider = remember(columnCount, column) {
+        ColumnCartesianLayer.ColumnProvider.series(List(columnCount) { column })
+    }
+
     CartesianChartHost(
         chart = rememberCartesianChart(
             rememberColumnCartesianLayer(
-                columnProvider = ColumnCartesianLayer.ColumnProvider.series(
-                    rememberLineComponent(
-                        fill = Fill(brand.copy(alpha = 0.5f)),
-                        thickness = 10.dp,
-                        shape = RoundedCornerShape(2.dp),
-                    ),
-                ),
+                columnProvider = columnProvider,
+                mergeMode = { ColumnCartesianLayer.MergeMode.Grouped(columnSpacing = 0.dp) },
             ),
             rememberLineCartesianLayer(
                 lineProvider = LineCartesianLayer.LineProvider.series(
