@@ -5,9 +5,10 @@ name: Build Android APK
 # `:androidApp:assembleDebug` 不会触发任何 iOS 编译/链接任务，用便宜又快的 ubuntu-latest
 # 就够，不需要 macOS runner。
 
+# 只手动触发——不跟着每次 push 自动跑。debug APK 不是每次改动都需要一个新包，
+# 手动 run 需要的时候再点，省 Actions 分钟数，Releases 里那份"最新构建"也不会
+# 跟着每次小改动来回抖。
 on:
-  push:
-    branches: [main]
   workflow_dispatch: {}
 
 # 默认的 GITHUB_TOKEN 只有只读权限——发 Release 需要显式声明 contents: write，
