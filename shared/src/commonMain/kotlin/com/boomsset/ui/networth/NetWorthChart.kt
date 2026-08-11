@@ -67,14 +67,25 @@ fun NetWorthChart(
     // 不会重蹈上面那个崩溃。**只在恰好 1 个点时才加占位系列**——2 个点以上时，
     // 多个真实点本来就会自然分布在整个宽度上，不会出现"一整块"这种一眼看去像
     // 渲染错误的效果，不需要额外处理。
-    val phantomColumnCount = 5
+    //
+    // ⚠️ Grouped 按 series() 的调用顺序从左到右排列子柱——第一次实现把真实系列放在
+    // 最前面，结果真实那根柱子紧贴在这个 x 位置**最左边**，而坐标轴标签（"8月"）
+    // 是按**整个位置的中心**画的，于是出现"柱子和它自己的月份标签对不上"（实机反馈）。
+    // 改成左右各放两个占位系列、真实系列夹在正中间（5 个系列，下标 2 正好是中心），
+    // 柱子的水平中心才会和标签的水平中心重合。
+    val phantomColumnsPerSide = 2
     LaunchedEffect(series) {
         if (series.points.isEmpty()) return@LaunchedEffect
         val values = series.points.map { it.netWorth.minorUnits / 100.0 }
         modelProducer.runTransaction {
             columnModel {
-                series(values)
-                if (values.size == 1) repeat(phantomColumnCount) { series(listOf(0.0)) }
+                if (values.size == 1) {
+                    repeat(phantomColumnsPerSide) { series(listOf(0.0)) }
+                    series(values)
+                    repeat(phantomColumnsPerSide) { series(listOf(0.0)) }
+                } else {
+                    series(values)
+                }
             }
             lineModel { series(values) }
         }
@@ -105,7 +116,7 @@ fun NetWorthChart(
     // 幽灵系列复用同一个 LineComponent 也没关系——它们的值是 0，画出来的高度是 0，
     // 用什么颜色都看不见。数量必须跟 columnModel 里 series() 调用的次数对上，
     // 否则 Vico 找不到对应下标的 column 会抛异常。
-    val columnCount = if (series.points.size == 1) phantomColumnCount + 1 else 1
+    val columnCount = if (series.points.size == 1) phantomColumnsPerSide * 2 + 1 else 1
     val columnProvider = remember(columnCount, column) {
         ColumnCartesianLayer.ColumnProvider.series(List(columnCount) { column })
     }
