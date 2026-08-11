@@ -1,0 +1,44 @@
+name: Build Android APK
+
+# 只建 Android 那一半——iOS 目标需要真正的 Xcode，GitHub 的 Linux/macOS 免费 runner
+# 上没有完整装好，硬跑只会在链接那一步失败（本地这次犯过同样的错，见 AGENTS.md）。
+# `:androidApp:assembleDebug` 不会触发任何 iOS 编译/链接任务，用便宜又快的 ubuntu-latest
+# 就够，不需要 macOS runner。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # 项目锁定 compileSdk 37——比 setup-android 默认装的平台新，
+      # 必须显式声明要装的包，不能指望它自己猜。
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-37 build-tools;36.0.0 platform-tools"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew :androidApp:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: boomsset-debug-apk
+          path: androidApp/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
