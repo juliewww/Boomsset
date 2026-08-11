@@ -23,12 +23,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # 项目锁定 compileSdk 37——比 setup-android 默认装的平台新，
-      # 必须显式声明要装的包，不能指望它自己猜。
+      # 项目锁定 compileSdk 37——`platforms;android-37` 这个包名在公开 sdkmanager
+      # 仓库里根本不存在（第一次跑直接报 "Failed to find package"），说明本地能编译
+      # 靠的是 AGP 自己按需下载 SDK 组件,不是提前用 sdkmanager 装好的。这里只接受
+      # license、不指定具体包，把下载工作交给 Gradle/AGP 自己在编译时去做。
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: "platforms;android-37 build-tools;36.0.0 platform-tools"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
