@@ -10,6 +10,11 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+# 默认的 GITHUB_TOKEN 只有只读权限——发 Release 需要显式声明 contents: write，
+# 不然 softprops/action-gh-release 那一步会报 403。
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -36,9 +41,32 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :androidApp:assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK
+      - name: Upload APK (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
           name: boomsset-debug-apk
           path: androidApp/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # 带 commit 短 hash 重命名一份——直接叫 androidApp-debug.apk 的话，
+      # Release 里挂的永远是同名文件，看不出这是哪次构建产出的。
+      - name: Rename APK with commit SHA
+        run: |
+          mkdir -p release
+          cp androidApp/build/outputs/apk/debug/androidApp-debug.apk \
+             "release/boomsset-debug-${GITHUB_SHA::7}.apk"
+
+      # 一个滚动的 "debug-latest" Release，每次构建直接覆盖，而不是每次都新开一个——
+      # 这只是给自己测试用的持续 debug 包，不是正式版本号发布，堆一堆 tag 没有意义。
+      # 想保留某次构建的历史版本，去 Actions 的 workflow artifact 里翻（90 天内）。
+      - name: Publish/update debug release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: debug-latest
+          name: "Debug build (${{ github.sha }})"
+          body: |
+            自动构建，不是正式版本。对应提交：${{ github.sha }}
+
+            这个 Release 每次 push 到 main 都会被覆盖——只保留最新一次构建。
+          prerelease: true
+          files: release/*.apk
