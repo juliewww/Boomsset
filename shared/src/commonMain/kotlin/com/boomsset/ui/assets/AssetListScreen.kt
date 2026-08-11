@@ -1,11 +1,23 @@
 package com.boomsset.ui.assets
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
 import com.boomsset.ui.fallColor
 import com.boomsset.ui.riseColor
 import com.boomsset.ui.theme.chartColors
@@ -19,14 +31,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -35,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.AssetValuation
@@ -44,6 +57,7 @@ import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.priceDescription
 import com.boomsset.ui.formatWithCurrency
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
 fun AssetListScreen(
@@ -197,19 +211,27 @@ private fun ArchivedRow(valuation: AssetValuation, onUnarchive: () -> Unit) {
     }
 }
 
+/** 左滑手势的两个落点：没划开 / 划开露出操作区。 */
+private enum class RevealValue { Settled, Revealed }
+
 /**
  * 每行原来常驻显示三个按钮（更新估值/改名称分类/归档），在小屏上占掉快一半的卡片高度
- * （实机反馈）。改成**左滑**才露出来 —— 用的是 material3 自带的 `SwipeToDismissBox`，
- * 不新增依赖。它本来是给"划走删除"设计的，这里**不做真正的 dismiss**：`enableDismissFromStartToEnd`
- * 关掉右滑方向，只留左滑；划开后不移除这一行数据，只是把背后的三个按钮露出来，
- * 点完或点旁的地方都会 `reset()` 弹回去，效果就是"左滑显示操作、不是划走"。
+ * （实机反馈）。改成**左滑**才露出来。
+ *
+ * **不用 material3 的 `SwipeToDismissBox`。** 它是"划走删除"这个交互设计的组件，
+ * 只有两个落点：没划开（offset=0）和划到底（offset=±整行宽度，也就是整行滑出屏幕）——
+ * 拿它做"划开一点、露出操作按钮"用会导致卡片信息**整个滑没**，不是常见 App
+ * （Gmail、Telegram 那种左滑露出按钮）的效果（实机反馈："不是正规的实现"）。
+ * 改用 Compose Foundation 更底层的 `AnchoredDraggableState`，自己定两个落点：
+ * `Settled`（0）和 `Revealed`（`-actionsWidthPx`，即**操作区自己实际测量出来的宽度**，
+ * 不是整行宽度）——划开后最多让前景卡片让出操作区那么宽，"能显示多少就多少"。
  *
  * 「更新估值」这个核心动作**没有变成纯隐形入口** —— 卡片本身仍然整张可点直接触发更新
  * （[AssetRowCard] 的 `onClick`），这是之前"核心动作不能只有隐形入口"那条教训要保住的部分
  * （用户曾经因为找不到能改市值的按钮而误以为"改不了资产"）。左滑收起来的是编辑名称/分类
  * 和归档 —— 这两个本来就不是高频操作，藏进手势里不会重蹈那次的问题。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AssetRow(
     valuation: AssetValuation,
@@ -218,37 +240,80 @@ private fun AssetRow(
     onEdit: () -> Unit,
     onArchiveClick: () -> Unit,
 ) {
-    val dismissState = rememberSwipeToDismissBoxState()
+    var actionsWidthPx by remember { mutableFloatStateOf(0f) }
+    // **构造时必须直接带上 anchors，不能只在 LaunchedEffect 里后补。**
+    // 第一次实现漏了这个，`requireOffset()` 在第一帧布局时就被 `.offset { }` 读取，
+    // 而 `updateAnchors` 要等 `LaunchedEffect` 跑完才第一次调用——中间那一帧
+    // offset 还没被"初始化"过，直接抛 `IllegalStateException`（真机上一点"资产"
+    // tab 就崩，实机反馈）。构造时先给两个落点都填 0（还没量出操作区宽度），
+    // 等测量完那一帧 `LaunchedEffect` 再更新成真实宽度。
+    val draggableState = remember {
+        AnchoredDraggableState(
+            RevealValue.Settled,
+            DraggableAnchors {
+                RevealValue.Settled at 0f
+                RevealValue.Revealed at 0f
+            },
+        )
+    }
+    // 操作区还没测量出真实宽度之前，两个落点都是 0——先不能划，等测量完那一帧再更新，
+    // 肉眼感觉不到这个延迟。宽度按实际内容算，不是行宽的固定比例，保证"露出刚好够按的
+    // 三个按钮"而不是行宽的某个百分比。
+    LaunchedEffect(actionsWidthPx) {
+        draggableState.updateAnchors(
+            DraggableAnchors {
+                RevealValue.Settled at 0f
+                RevealValue.Revealed at -actionsWidthPx
+            },
+        )
+    }
     val scope = rememberCoroutineScope()
 
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        backgroundContent = {
+    // `anchoredDraggable` 挂在**最外层** Box 上，不是挂在前景卡片那层——这是照抄
+    // material3 自己的 `SwipeToDismissBox` 的结构。第一版把它跟 `.offset {}` 放在
+    // 同一层（前景卡片那个 Box），结果左滑后点背后露出来的按钮完全没反应
+    // （实机反馈）。前景卡片只留 `.offset {}` 负责跟手位移，拖拽手势的识别和
+    // 背后按钮的点击各自在不同层，不会互相抢事件。
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .anchoredDraggable(draggableState, Orientation.Horizontal),
+    ) {
+        // 这层 Box 不参与外层 Box 的尺寸计算（`matchParentSize` 的定义），
+        // 外层高度完全由下面前景卡片撑出来——按钮 Row 直接用 `fillMaxHeight()`
+        // 在 LazyColumn 里会拿到"无限高"约束报错，`matchParentSize` 是 Compose
+        // 里"背景层贴合前景已经量出来的尺寸"的标准写法。
+        Box(Modifier.matchParentSize()) {
             Row(
                 Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .align(Alignment.CenterEnd)
+                    .onSizeChanged { actionsWidthPx = it.width.toFloat() }
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))
                     .padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SwipeActionButton("更新", MaterialTheme.colorScheme.primary) {
-                    scope.launch { dismissState.reset() }
+                    scope.launch { draggableState.animateTo(RevealValue.Settled) }
                     onClick()
                 }
                 SwipeActionButton("编辑", MaterialTheme.colorScheme.onSurfaceVariant) {
-                    scope.launch { dismissState.reset() }
+                    scope.launch { draggableState.animateTo(RevealValue.Settled) }
                     onEdit()
                 }
                 SwipeActionButton("归档", MaterialTheme.colorScheme.error) {
-                    scope.launch { dismissState.reset() }
+                    scope.launch { draggableState.animateTo(RevealValue.Settled) }
                     onArchiveClick()
                 }
             }
-        },
-    ) {
-        AssetRowCard(valuation = valuation, baseCurrency = baseCurrency, onClick = onClick)
+        }
+
+        Box(
+            Modifier.offset { IntOffset(draggableState.requireOffset().roundToInt(), 0) },
+        ) {
+            AssetRowCard(valuation = valuation, baseCurrency = baseCurrency, onClick = onClick)
+        }
     }
 }
 
@@ -259,81 +324,109 @@ private fun SwipeActionButton(label: String, color: Color, onClick: () -> Unit) 
     }
 }
 
+/**
+ * 卡片重新设计过——原来是不带任何 `colors`/`elevation` 的默认 `Card`，容器色是
+ * `surfaceContainerLow`（`#FCFCFC`）叠加默认阴影，跟纯白页面背景放在一起
+ * 只有 3 个色值的差距，阴影的灰边反而成了最显眼的东西，看起来像"一整块灰"
+ * （实机反馈）。改成**纯白容器 + 1dp 细边框**代替阴影去区分卡片边界，
+ * 边框颜色和阴影不一样，不会有那圈模糊的灰晕。左边加一条大类色的竖条——
+ * 复用配置页/表头已经在用的那套 [chartColors]，不是新起的强调色，
+ * 相当于把表头那个色点"拉长"成一条，同一屏内多一点视觉区分，不重复造轮子。
+ */
 @Composable
 private fun AssetRowCard(
     valuation: AssetValuation,
     baseCurrency: String,
     onClick: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(valuation.asset.name, style = MaterialTheme.typography.titleSmall)
-                    if (valuation.asset.isLiability) {
-                        Text("负债", style = MaterialTheme.typography.labelSmall)
-                    }
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(Modifier.fillMaxWidth()) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(chartColors.of(valuation.asset.assetClass)),
+            )
+            AssetRowContent(valuation, baseCurrency)
+        }
+    }
+}
+
+@Composable
+private fun AssetRowContent(valuation: AssetValuation, baseCurrency: String) {
+    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(valuation.asset.name, style = MaterialTheme.typography.titleSmall)
+                if (valuation.asset.isLiability) {
+                    Text("负债", style = MaterialTheme.typography.labelSmall)
                 }
-                Text(
-                    when {
-                        valuation.hasNoSnapshot -> "未录入"
-                        valuation.baseValue == null -> "无法估值"
-                        else -> valuation.baseValue.formatWithCurrency(baseCurrency)
-                    },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
             }
+            Text(
+                when {
+                    valuation.hasNoSnapshot -> "未录入"
+                    valuation.baseValue == null -> "无法估值"
+                    else -> valuation.baseValue.formatWithCurrency(baseCurrency)
+                },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
 
-            // 无法估值时明确说原因，不显示成 0 —— 显示 0 会让用户以为资产没了
-            if (valuation.isUnpriced) {
-                Text(
-                    "无法估值（缺行情/汇率，或数量级超出可计算范围），这项没有计入净值",
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
+        // 无法估值时明确说原因，不显示成 0 —— 显示 0 会让用户以为资产没了
+        if (valuation.isUnpriced) {
+            Text(
+                "无法估值（缺行情/汇率，或数量级超出可计算范围），这项没有计入净值",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
 
-            valuation.pnl?.let { pnl ->
-                val rate = pnl.returnBp
-                Text(
-                    buildString {
-                        append("盈亏 ")
-                        append(pnl.absolute.formatWithCurrency(valuation.asset.currency))
-                        if (rate != null) append("（${rate.bpToPercent(withSign = true)}）")
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = when {
-                        pnl.absolute.minorUnits > 0 -> riseColor()
-                        pnl.absolute.minorUnits < 0 -> fallColor()
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
+        valuation.pnl?.let { pnl ->
+            val rate = pnl.returnBp
+            Text(
+                buildString {
+                    append("盈亏 ")
+                    append(pnl.absolute.formatWithCurrency(valuation.asset.currency))
+                    if (rate != null) append("（${rate.bpToPercent(withSign = true)}）")
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = when {
+                    pnl.absolute.minorUnits > 0 -> riseColor()
+                    pnl.absolute.minorUnits < 0 -> fallColor()
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
 
-            // 行情日期/过期提示 —— 腾讯是非官方接口，用户必须知道价格有多旧
-            if (valuation.snapshot is com.boomsset.domain.Snapshot.Quoted) {
-                Text(
-                    valuation.priceDescription(),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (valuation.isPriceStale) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        // 行情日期/过期提示 —— 腾讯是非官方接口，用户必须知道价格有多旧
+        if (valuation.snapshot is com.boomsset.domain.Snapshot.Quoted) {
+            Text(
+                valuation.priceDescription(),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (valuation.isPriceStale) MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
-            valuation.unitCost?.let { unitCost ->
-                Text(
-                    "成本均价 ${unitCost.formatWithCurrency(valuation.asset.currency)}",
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
+        valuation.unitCost?.let { unitCost ->
+            Text(
+                "成本均价 ${unitCost.formatWithCurrency(valuation.asset.currency)}",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
 
-            if (!valuation.asset.includeInAllocation) {
-                Text("不计入配置比例", style = MaterialTheme.typography.labelSmall)
-            }
+        if (!valuation.asset.includeInAllocation) {
+            Text("不计入配置比例", style = MaterialTheme.typography.labelSmall)
         }
     }
 }
