@@ -7,9 +7,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.boomsset.domain.NetWorthSeries
 import com.boomsset.domain.Period
+import com.boomsset.ui.formatWithCurrency
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
@@ -21,9 +25,19 @@ import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberColumnCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarkerController
+import com.patrykandpatrick.vico.compose.cartesian.marker.ColumnCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.compose.cartesian.marker.DefaultCartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.marker.Interaction
+import com.patrykandpatrick.vico.compose.cartesian.marker.LineCartesianLayerMarkerTarget
+import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
 import com.patrykandpatrick.vico.compose.common.Fill
+import com.patrykandpatrick.vico.compose.common.Insets
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import androidx.compose.foundation.shape.RoundedCornerShape
 
 /**
@@ -44,6 +58,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 @Composable
 fun NetWorthChart(
     series: NetWorthSeries,
+    baseCurrency: String,
     modifier: Modifier = Modifier,
 ) {
     val modelProducer = remember { CartesianChartModelProducer() }
@@ -108,6 +123,56 @@ fun NetWorthChart(
         if (labelSpacing <= 1) 0 else (series.dates.size - 1) % labelSpacing
     }
 
+    // 点击柱子显示这个点的具体净值。
+    //
+    // ⚠️ 一开始直接用 Vico 自带的 `rememberToggleOnTap()`，实机反馈"点击空白处的柱状图也会显示"——
+    // 查了 CartesianChartHost 的源码才发现：Vico 算 marker 目标只看点击的 x 坐标
+    // （`pointerPositionToX`），完全不管 y——`Canvas` 铺满整个图表区域，纵向随便点哪里，
+    // 只要落在某个 x 位置的范围内，就会命中"离这个 x 最近的点"，跟有没有点在柱子上毫无关系。
+    // 这不是我这边的 bug，是 Vico 3.2.3 的默认行为（更像十字线取值，不是"点在柱子上才显示"）。
+    //
+    // 改用自定义 `CartesianMarkerController`：在 `shouldAcceptInteraction` 里读
+    // `Interaction.Tap.point.y`，跟命中目标（narrow 之后的 `ColumnCartesianLayerMarkerTarget`/
+    // `LineCartesianLayerMarkerTarget`）自带的 `canvasY`（柱子顶边或折线点的像素高度）比较——
+    // 点击位置必须落在"柱子顶边到基线之间"（即真的在柱子的可见范围内）才接受这次点击。
+    // 幽灵系列（教训 13）此时反而帮上忙：它们的值是 0，`canvasY` 正好等于基线像素，
+    // 落在幽灵柱子那个横向位置上的点击，纵向条件 `tapY >= canvasY(≈基线)` 基本不可能满足，
+    // 天然被挡在外面——不需要额外判断"这一根是不是真实柱子"。
+    //
+    // valueFormatter 直接按 target.x 下标去 series.points/series.dates 里取值格式化，
+    // 完全不用 Vico 内部的 y 值——一个点只有 1 个真实点时，那个 x 位置上其实挂着
+    // 真实系列 + 4 个幽灵系列（见上面 phantomColumnsPerSide 的注释），Vico 的
+    // marker target 列表会把它们都算进去；用自己的 domain 数据重新查一遍，
+    // 既避免了"要不要把幽灵系列的 0 值也加进求和"这种问题，格式化出来的金额也
+    // 保证和净值页顶部卡片用的是同一个 formatWithCurrency，不会出现两处金额对不上。
+    val markerLabel = rememberTextComponent(
+        style = TextStyle(
+            color = MaterialTheme.colorScheme.inverseOnSurface,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+        ),
+        padding = Insets(horizontal = 8.dp, vertical = 6.dp),
+        background = rememberShapeComponent(
+            fill = Fill(MaterialTheme.colorScheme.inverseSurface),
+            shape = RoundedCornerShape(8.dp),
+        ),
+    )
+    val marker = rememberDefaultCartesianMarker(
+        label = markerLabel,
+        valueFormatter = DefaultCartesianMarker.ValueFormatter { _, targets ->
+            val index = targets.firstOrNull()?.x?.toInt()
+            val date = index?.let { series.dates.getOrNull(it) }
+            val point = index?.let { series.points.getOrNull(it) }
+            if (date == null || point == null) {
+                ""
+            } else {
+                "${formatAxisLabel(date, series.period)} ${point.netWorth.formatWithCurrency(baseCurrency)}"
+            }
+        },
+    )
+
+    val markerController = remember { TapOnRenderedBarMarkerController() }
+
     val column = rememberLineComponent(
         fill = Fill(brand.copy(alpha = 0.5f)),
         thickness = 10.dp,
@@ -160,6 +225,8 @@ fun NetWorthChart(
                     )
                 },
             ),
+            marker = marker,
+            markerController = markerController,
         ),
         modelProducer = modelProducer,
         modifier = modifier.fillMaxWidth().height(220.dp),
@@ -173,4 +240,51 @@ private fun formatAxisLabel(
     Period.MONTH -> "${date.month.ordinal + 1}月"
     Period.QUARTER -> "Q${date.month.ordinal / 3 + 1}"
     Period.YEAR -> date.year.toString()
+}
+
+/**
+ * 只在点击位置真的落在渲染出来的柱子/折线点范围内时才切换显示——语义和
+ * `CartesianMarkerController.rememberToggleOnTap()` 一样（点一下显示、再点一下收起），
+ * 唯一区别是多了一层"点击的 y 坐标是否落在这根柱子可见范围内"的过滤。
+ * 具体原因见 [NetWorthChart] 里这个 controller 的构造处的注释。
+ */
+private class TapOnRenderedBarMarkerController : CartesianMarkerController {
+    private var lastTargets: List<CartesianMarker.Target>? = null
+
+    override val acceptsLongPress = false
+
+    override fun shouldAcceptInteraction(
+        interaction: Interaction,
+        targets: List<CartesianMarker.Target>,
+    ): Boolean {
+        if (interaction !is Interaction.Tap || targets.isEmpty()) return false
+        return targets.any { it.isWithinRenderedMark(interaction.point.y) }
+    }
+
+    override fun shouldShowMarker(
+        interaction: Interaction,
+        targets: List<CartesianMarker.Target>,
+    ): Boolean {
+        val show = targets != lastTargets
+        lastTargets = if (show) targets else null
+        return show
+    }
+
+    override fun hashCode() = 31
+
+    override fun equals(other: Any?) = other === this || other is TapOnRenderedBarMarkerController
+}
+
+private fun CartesianMarker.Target.isWithinRenderedMark(tapY: Float): Boolean = when (this) {
+    is ColumnCartesianLayerMarkerTarget ->
+        columns.firstOrNull()?.let { column ->
+            if (column.entry.y < 0.0) tapY <= column.canvasY else tapY >= column.canvasY
+        } ?: false
+
+    is LineCartesianLayerMarkerTarget ->
+        points.firstOrNull()?.let { point ->
+            if (point.entry.y < 0.0) tapY <= point.canvasY else tapY >= point.canvasY
+        } ?: false
+
+    else -> false
 }

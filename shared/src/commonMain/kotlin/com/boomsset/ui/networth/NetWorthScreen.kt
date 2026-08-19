@@ -60,7 +60,7 @@ fun NetWorthScreen(
                 SummaryCard(state)
                 BaseCurrencySelector(state.baseCurrency, onSelectBaseCurrency)
                 PeriodSelector(state.period, onSelectPeriod)
-                state.series?.let { NetWorthChart(it) }
+                state.series?.let { NetWorthChart(it, state.baseCurrency) }
                 if (state.unpricedCount > 0) UnpricedWarning(state.unpricedCount)
                 GrowthVsReturnNote()
                 AppLockToggle(lockState, onToggleLock)
