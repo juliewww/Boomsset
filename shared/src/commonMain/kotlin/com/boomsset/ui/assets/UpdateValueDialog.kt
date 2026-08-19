@@ -25,6 +25,7 @@ import com.boomsset.domain.Snapshot
 import com.boomsset.domain.UnitPrice
 import com.boomsset.domain.parseUnitPrice
 import com.boomsset.ui.formatForInput
+import com.boomsset.ui.magnitudeHint
 import com.boomsset.ui.priceDescription
 import com.boomsset.ui.toMinorUnitsOrNull
 
@@ -117,6 +118,8 @@ fun UpdateValueDialog(
                         label = {
                             Text(if (valuation.asset.isLiability) "当前欠款（元）" else "当前市值（元）")
                         },
+                        supportingText = amount?.let { Money(it).magnitudeHint() }
+                            ?.let { hint -> { Text("= $hint") } },
                         singleLine = true,
                         isError = amountText.isNotBlank() && amount == null,
                         modifier = Modifier.fillMaxWidth().semantics {
@@ -130,6 +133,8 @@ fun UpdateValueDialog(
                         value = costText,
                         onValueChange = { costText = it },
                         label = { Text("总投入成本（元）") },
+                        supportingText = cost?.let { Money(it).magnitudeHint() }
+                            ?.let { hint -> { Text("= $hint") } },
                         singleLine = true,
                         isError = costInvalid,
                         modifier = Modifier.fillMaxWidth().semantics {

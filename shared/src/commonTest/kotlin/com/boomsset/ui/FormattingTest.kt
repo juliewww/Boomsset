@@ -77,4 +77,38 @@ class FormattingTest {
         Money(1_234_567_800_00).formatCompact("CNY") shouldBe "¥12.3亿"
         Money(500_00).formatCompact("CNY") shouldBe "¥500"
     }
+
+    // ---------- 输入框下面的量级提示：按万分组，不省略整零组 ----------
+
+    @Test
+    fun `不到一万不提示`() {
+        Money(9_999_00).magnitudeHint().shouldBeNull()
+        Money(1_00).magnitudeHint().shouldBeNull()
+        Money(0).magnitudeHint().shouldBeNull()
+    }
+
+    @Test
+    fun `按万分组`() {
+        Money(12_345_00).magnitudeHint() shouldBe "1万2345"
+        Money(123_456_00).magnitudeHint() shouldBe "12万3456"
+        Money(1_234_567_00).magnitudeHint() shouldBe "123万4567"
+        Money(12_345_678_00).magnitudeHint() shouldBe "1234万5678"
+    }
+
+    @Test
+    fun `按亿分组时不省略整零的万组`() {
+        Money(123_456_789_00).magnitudeHint() shouldBe "1亿2345万6789"
+        // 100,005,678 元：万那一组是 0000，分组提示原样保留，不当成"1亿5678"读
+        Money(100_005_678_00).magnitudeHint() shouldBe "1亿0000万5678"
+    }
+
+    @Test
+    fun `负数量级提示带负号`() {
+        Money(-123_456_00).magnitudeHint() shouldBe "-12万3456"
+    }
+
+    @Test
+    fun `只看整数元部分，忽略分`() {
+        Money(123_456_78).magnitudeHint() shouldBe "12万3456"
+    }
 }

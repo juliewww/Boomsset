@@ -84,6 +84,38 @@ fun Money.formatCompact(currency: String): String {
     return (if (negative) "-" else "") + symbol + body
 }
 
+/**
+ * 金额输入框下面的读法提示：把整数元部分按"万/亿"分组显示每一位数字，
+ * 帮用户核对有没有多打/少打一个 0。
+ *
+ * 中文语境数大数字时，西式三位一逗号（"12,345,678"）要先按 3 位分组再拆成
+ * 万/亿才能读出量级，比直接看完整数字还多一步——这里按 4 位（万）分组，
+ * 分组本身就是"千/万/十万/百万"的量级分界，一眼能看出打的是几位数。
+ *
+ * 是纯粹的数位分组（类似加逗号），不是自然语言读法——不会省略中间的整零组
+ * （比如 1 亿 0000 万 5678 不会写成"1 亿 5678"），语义上更接近"每 4 位点一下"
+ * 而不是"读出这个数"，实现也因此不用处理中文数字读法里"零"要不要念的规则。
+ *
+ * 只在整数部分 ≥ 1 万时才显示——更小的数字本来就一眼能看清，不需要提示，
+ * 显示了反而是噪音。
+ *
+ * 例：Money(123456789) → "12345.67" 的整数部分 12345 → "1万2345"
+ *     Money(123456789000) → 整数部分 1234567890 → "12亿3456万7890"
+ */
+fun Money.magnitudeHint(): String? = (minorUnits / 100).yuanMagnitudeHint()
+
+private fun Long.yuanMagnitudeHint(): String? {
+    if (abs(this) < 10_000L) return null
+    val digits = abs(this).toString()
+    val groups = digits.reversed().chunked(4).map { it.reversed() }.reversed()
+    val unitLabels = listOf("", "万", "亿", "万亿")
+    val lastIndex = groups.lastIndex
+    val text = groups.mapIndexed { i, group ->
+        group + unitLabels.getOrElse(lastIndex - i) { "" }
+    }.joinToString("")
+    return if (this < 0) "-$text" else text
+}
+
 /** 把「放大了 10^scale 倍的整数」还原成小数字符串，避免用 Double。 */
 private fun Long.toDecimalString(scale: Int): String {
     val divisor = generateSequence(1L) { it * 10 }.take(scale + 1).last()

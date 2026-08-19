@@ -310,6 +310,8 @@ private fun AssetDetailForm(
                 value = amountText,
                 onValueChange = { amountText = it },
                 label = { Text(if (isLiability) "欠款金额" else "当前市值") },
+                supportingText = amount?.let { Money(it).magnitudeHint() }
+                    ?.let { hint -> { Text("= $hint") } },
                 singleLine = true,
                 isError = amountText.isNotBlank() && amount == null,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = FIELD_AMOUNT },
@@ -321,7 +323,13 @@ private fun AssetDetailForm(
                 value = costText,
                 onValueChange = { costText = it },
                 label = { Text("总投入成本（可留空）") },
-                supportingText = { Text("填了才能显示浮动盈亏和收益率") },
+                supportingText = {
+                    val hint = cost?.let { Money(it).magnitudeHint() }
+                    Text(
+                        if (hint != null) "填了才能显示浮动盈亏和收益率 · = $hint"
+                        else "填了才能显示浮动盈亏和收益率",
+                    )
+                },
                 singleLine = true,
                 isError = costText.isNotBlank() && cost == null,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = FIELD_COST },
