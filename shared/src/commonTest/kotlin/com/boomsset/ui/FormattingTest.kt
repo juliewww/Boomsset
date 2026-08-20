@@ -77,4 +77,44 @@ class FormattingTest {
         Money(1_234_567_800_00).formatCompact("CNY") shouldBe "¥12.3亿"
         Money(500_00).formatCompact("CNY") shouldBe "¥500"
     }
+
+    // ---------- 输入框下面的量级提示：只保留一个万/亿单位，不四舍五入 ----------
+
+    @Test
+    fun `不到一万不提示`() {
+        Money(9_999_00).magnitudeHint().shouldBeNull()
+        Money(1_00).magnitudeHint().shouldBeNull()
+        Money(0).magnitudeHint().shouldBeNull()
+    }
+
+    @Test
+    fun `按万换算成小数，只保留一个单位`() {
+        Money(20_045_00).magnitudeHint() shouldBe "2.0045万"
+        Money(12_345_00).magnitudeHint() shouldBe "1.2345万"
+        Money(123_456_00).magnitudeHint() shouldBe "12.3456万"
+        Money(12_345_678_00).magnitudeHint() shouldBe "1234.5678万"
+    }
+
+    @Test
+    fun `整好是万或亿的整数倍时不带多余的尾零`() {
+        Money(12_000_000).magnitudeHint() shouldBe "12万"
+        Money(12_500_000).magnitudeHint() shouldBe "12.5万"
+    }
+
+    @Test
+    fun `超过一亿换算成亿，小数部分不四舍五入`() {
+        Money(123_456_789_00).magnitudeHint() shouldBe "1.23456789亿"
+        // 100,005,678 元：万那一段是 0000，小数部分原样保留前导零，不能舍成"1.05678亿"
+        Money(100_005_678_00).magnitudeHint() shouldBe "1.00005678亿"
+    }
+
+    @Test
+    fun `负数量级提示带负号`() {
+        Money(-123_456_00).magnitudeHint() shouldBe "-12.3456万"
+    }
+
+    @Test
+    fun `只看整数元部分，忽略分`() {
+        Money(123_456_78).magnitudeHint() shouldBe "12.3456万"
+    }
 }

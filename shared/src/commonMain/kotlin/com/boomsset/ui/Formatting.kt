@@ -84,6 +84,49 @@ fun Money.formatCompact(currency: String): String {
     return (if (negative) "-" else "") + symbol + body
 }
 
+/**
+ * 金额输入框下面的读法提示：整数元部分只用一个"万/亿"字，帮用户核对
+ * 有没有多打/少打一个 0。
+ *
+ * 第一版按 4 位分组挂了多个单位（"2万0045"），实机反馈"太傻"——
+ * 用户想要的是一眼就能读出量级，不是把千分位逗号换成汉字。改成
+ * 只保留最高位那一个单位，其余数字全部落到小数点后面：
+ * 20045 → "2.0045万"，123456789 → "1.23456789亿"。
+ *
+ * 小数部分**不做任何舍入**——这是和 [formatCompact] 的关键区别。
+ * `formatCompact` 用于概览卡片，四舍五入到 1 位小数是可接受的精度损失；
+ * 但这里是"核对有没有多打/少打一个 0"，如果舍入掉尾部数字，
+ * 反而会把想要暴露的那个 0 藏起来。所以只做进制换算和去掉多余的尾零
+ * （比如整好 12 万时显示"12万"而不是"12.0000万"），不四舍五入。
+ *
+ * 只在整数部分 ≥ 1 万时才显示——更小的数字本来就一眼能看清，不需要提示，
+ * 显示了反而是噪音。
+ *
+ * 例：Money(2004500) → "20045.00" 的整数部分 20045 → "2.0045万"
+ *     Money(12345678900) → 整数部分 123456789 → "1.23456789亿"
+ *     Money(1200000_00) → 整数部分 120000（整好 12 万）→ "12万"
+ */
+fun Money.magnitudeHint(): String? = (minorUnits / 100).yuanMagnitudeHint()
+
+private fun Long.yuanMagnitudeHint(): String? {
+    val magnitude = abs(this)
+    if (magnitude < 10_000L) return null
+    val (divisor, fracDigits, unit) = if (magnitude >= 100_000_000L) {
+        Triple(100_000_000L, 8, "亿")
+    } else {
+        Triple(10_000L, 4, "万")
+    }
+    val whole = magnitude / divisor
+    val frac = magnitude % divisor
+    val fracText = if (frac == 0L) {
+        ""
+    } else {
+        "." + frac.toString().padStart(fracDigits, '0').trimEnd('0')
+    }
+    val sign = if (this < 0) "-" else ""
+    return "$sign$whole$fracText$unit"
+}
+
 /** 把「放大了 10^scale 倍的整数」还原成小数字符串，避免用 Double。 */
 private fun Long.toDecimalString(scale: Int): String {
     val divisor = generateSequence(1L) { it * 10 }.take(scale + 1).last()
