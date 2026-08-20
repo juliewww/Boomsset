@@ -173,6 +173,7 @@ private fun AppContent(
                         onCreateAllocation = allocationViewModel::createAllocation,
                         onRestoreBuiltIn = allocationViewModel::restoreBuiltIn,
                         onDeleteAllocation = allocationViewModel::deleteAllocation,
+                        onSetIncludeLiabilities = allocationViewModel::setIncludeLiabilities,
                     )
                 }
                 composable(ROUTE_ADD_ASSET) {

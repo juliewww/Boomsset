@@ -24,6 +24,16 @@ data class AllocationUiState(
     val view: AllocationView? = null,
     /** 全部目标配置，用于切换和对比。 */
     val allocations: List<TargetAllocation> = emptyList(),
+    /**
+     * 配置页专属的显示开关：比例的分子分母要不要扣负债。
+     *
+     * 默认 `true`（算净资产，即原来一直有的行为）——不改变任何人已经在用的默认体验。
+     * **只影响配置页的展示**，不落 DataStore、不改 [view] 本身：净值页的净值、
+     * 资产页的列表都还是走原来那条算法。`AllocationView.exposures` 里本来就分别
+     * 存着 `assets` 和 `liabilities`，两种口径都能从同一份数据现算，不需要
+     * 让 [com.boomsset.domain.PortfolioCalculator] 再算一遍或多存一份状态。
+     */
+    val includeLiabilities: Boolean = true,
 ) {
     val isEmpty: Boolean get() = !loading && view?.exposures?.values?.all { it.assets.isZero } != false
 }
@@ -36,12 +46,14 @@ class AllocationViewModel(
 ) : ViewModel() {
 
     private val baseCurrency = settings.observeBaseCurrency()
+    private val includeLiabilities = MutableStateFlow(true)
 
     val state: StateFlow<AllocationUiState> = combine(
         repository.observePortfolio(),
         repository.observeAllocations(),
         baseCurrency,
-    ) { data, allocations, currency ->
+        includeLiabilities,
+    ) { data, allocations, currency, includeLiabilities ->
         val today = clock.now().toLocalDateTime(zone).date
         AllocationUiState(
             loading = false,
@@ -53,6 +65,7 @@ class AllocationViewModel(
                 target = allocations.firstOrNull { it.isActive },
             ),
             allocations = allocations,
+            includeLiabilities = includeLiabilities,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -62,6 +75,10 @@ class AllocationViewModel(
 
     fun selectAllocation(id: Long) {
         viewModelScope.launch { repository.setActiveAllocation(id) }
+    }
+
+    fun setIncludeLiabilities(value: Boolean) {
+        includeLiabilities.value = value
     }
 
     /**

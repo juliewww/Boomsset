@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AllocationView
 import com.boomsset.domain.AssetClass
+import com.boomsset.domain.ClassExposure
 import com.boomsset.domain.Money
 import com.boomsset.domain.TargetAllocation
 import com.boomsset.ui.bpToPercent
@@ -60,6 +61,7 @@ fun AllocationScreen(
     onCreateAllocation: (name: String, targetsBp: Map<AssetClass, Int>) -> Unit,
     onRestoreBuiltIn: (TargetAllocation) -> Unit,
     onDeleteAllocation: (Long) -> Unit,
+    onSetIncludeLiabilities: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var editing by remember { mutableStateOf<TargetAllocation?>(null) }
@@ -75,7 +77,8 @@ fun AllocationScreen(
         val view = state.view
         val active = state.allocations.firstOrNull { it.isActive }
 
-        Header(view)
+        Header(view, state.includeLiabilities)
+        LiabilityModeToggle(state.includeLiabilities, onSetIncludeLiabilities)
 
         // ⚠️ 这一块**必须在任何空状态分支之外**。
         //
@@ -109,20 +112,22 @@ fun AllocationScreen(
             // 这个问题不依赖任何持仓。
             state.isEmpty -> TargetPreview(active)
 
-            // 净资产 ≤ 0 时比例在数学上无意义，直说而不是显示乱数
-            view.netWorth.minorUnits <= 0L -> NegativeNetWorthNotice()
+            // 分母 ≤ 0 时比例在数学上无意义，直说而不是显示乱数
+            view.displayedTotal(state.includeLiabilities).minorUnits <= 0L -> NegativeNetWorthNotice()
 
             else -> {
                 AllocationDonut(
-                    shares = AssetClass.displayOrder.map { it to (view.exposures[it]?.netExposure ?: Money.ZERO) },
-                    netWorth = view.netWorth,
+                    shares = AssetClass.displayOrder.map {
+                        it to (view.exposures[it]?.displayed(state.includeLiabilities) ?: Money.ZERO)
+                    },
+                    netWorth = view.displayedTotal(state.includeLiabilities),
                     baseCurrency = view.baseCurrency,
                 )
                 AssetClass.displayOrder.forEach { assetClass ->
-                    ClassRow(view, assetClass)
+                    ClassRow(view, assetClass, state.includeLiabilities)
                 }
-                if (view.hasNegativeExposure) NegativeExposureNotice()
-                DenominatorNote()
+                if (view.hasNegativeDisplayed(state.includeLiabilities)) NegativeExposureNotice()
+                DenominatorNote(state.includeLiabilities)
             }
         }
     }
@@ -275,17 +280,77 @@ private fun InfoTooltip(text: String) {
  * chip 行已经用 `selected` 状态标出来了，两处都写一遍是纯粹的重复信息。
  */
 @Composable
-private fun Header(view: AllocationView?) {
+private fun Header(view: AllocationView?, includeLiabilities: Boolean) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("资产配置", style = MaterialTheme.typography.titleLarge)
         if (view != null) {
             Text(
-                "净资产 ${view.netWorth.formatWithCurrency(view.baseCurrency)}",
+                "${if (includeLiabilities) "净资产" else "总资产"} " +
+                    view.displayedTotal(includeLiabilities).formatWithCurrency(view.baseCurrency),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
     }
 }
+
+/**
+ * 配置页专属的口径切换 —— 分子分母要不要扣负债。
+ *
+ * 只影响这一页怎么算比例，不碰 [AllocationView] 本身：`exposures` 里
+ * 本来就分别存着 `assets` 和 `liabilities`，两种口径都能从同一份数据现算。
+ * 净值页的净值定义（domain.md 已定：净资产 = 资产 − 负债）不受这个开关影响，
+ * 那是另一个问题——"我现在身价多少"和"配置比例要不要把负债折算进去"是两件事。
+ */
+@Composable
+private fun LiabilityModeToggle(includeLiabilities: Boolean, onChange: (Boolean) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = includeLiabilities,
+            onClick = { onChange(true) },
+            label = { Text("算净资产") },
+        )
+        FilterChip(
+            selected = !includeLiabilities,
+            onClick = { onChange(false) },
+            label = { Text("不算负债") },
+        )
+    }
+}
+
+/**
+ * 该大类按当前显示模式（是否扣负债）应该展示的敞口。
+ *
+ * 几个 `internal`（而不是 `private`）是为了让 [AllocationDisplayModeTest] 能直接
+ * 测这几条算式——它们虽然写在这个 Compose 文件里，但本身是不碰 UI 的纯函数，
+ * 和文件里其他 `private` 的 Composable 不是一类东西。
+ */
+internal fun ClassExposure.displayed(includeLiabilities: Boolean): Money =
+    if (includeLiabilities) netExposure else assets
+
+/** 全部大类按当前显示模式加总的分母，和 [ClassExposure.displayed] 用同一个口径。 */
+internal fun AllocationView.displayedTotal(includeLiabilities: Boolean): Money =
+    exposures.values.fold(Money.ZERO) { acc, e -> acc + e.displayed(includeLiabilities) }
+
+/**
+ * 当前比例，按显示模式计算；分母 ≤ 0 时返回 null ——
+ * 和 [AllocationView.shareBp] 对分母 ≤ 0 的处理一致（数学上无意义，不能显示乱数）。
+ */
+internal fun AllocationView.displayedShareBp(assetClass: AssetClass, includeLiabilities: Boolean): Int? {
+    val total = displayedTotal(includeLiabilities)
+    if (total.minorUnits <= 0L) return null
+    val amount = exposures[assetClass]?.displayed(includeLiabilities) ?: Money.ZERO
+    return (amount.minorUnits * TargetAllocation.TOTAL_BP / total.minorUnits).toInt()
+}
+
+internal fun AllocationView.displayedDeviationBp(assetClass: AssetClass, includeLiabilities: Boolean): Int? {
+    val current = displayedShareBp(assetClass, includeLiabilities) ?: return null
+    val goal = targetBp(assetClass) ?: return null
+    return current - goal
+}
+
+/** "不算负债"模式下分子就是资产本身，不可能为负——这条警示只在扣负债的口径下才有意义。 */
+internal fun AllocationView.hasNegativeDisplayed(includeLiabilities: Boolean): Boolean =
+    includeLiabilities && exposures.values.any { it.isNegative }
 
 /**
  * 零资产时显示目标比例。
@@ -343,11 +408,11 @@ private fun TargetPreview(active: TargetAllocation?) {
 }
 
 @Composable
-private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
+private fun ClassRow(view: AllocationView, assetClass: AssetClass, includeLiabilities: Boolean) {
     val exposure = view.exposures[assetClass] ?: return
-    val shareBp = view.shareBp(assetClass)
+    val shareBp = view.displayedShareBp(assetClass, includeLiabilities)
     val targetBp = view.targetBp(assetClass)
-    val deviationBp = view.deviationBp(assetClass)
+    val deviationBp = view.displayedDeviationBp(assetClass, includeLiabilities)
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -377,15 +442,22 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
 
             Text(
                 buildString {
-                    append("净敞口 ")
-                    // 正负号显式打出来，不能只靠 formatWithCurrency 里负数才有的那个 "-"——
-                    // 光看一串数字看不出"这一类净值是多了还是少了"，加号和减号才是一眼可辨的信号
-                    // （实机反馈）。
-                    if (exposure.netExposure.minorUnits >= 0) append("+")
-                    append(exposure.netExposure.formatWithCurrency(view.baseCurrency))
-                    if (!exposure.liabilities.isZero) {
-                        append("（资产 ${exposure.assets.formatWithCurrency(view.baseCurrency)} ")
-                        append("− 负债 ${exposure.liabilities.formatWithCurrency(view.baseCurrency)}）")
+                    if (includeLiabilities) {
+                        append("净敞口 ")
+                        // 正负号显式打出来，不能只靠 formatWithCurrency 里负数才有的那个 "-"——
+                        // 光看一串数字看不出"这一类净值是多了还是少了"，加号和减号才是一眼可辨的信号
+                        // （实机反馈）。
+                        if (exposure.netExposure.minorUnits >= 0) append("+")
+                        append(exposure.netExposure.formatWithCurrency(view.baseCurrency))
+                        if (!exposure.liabilities.isZero) {
+                            append("（资产 ${exposure.assets.formatWithCurrency(view.baseCurrency)} ")
+                            append("− 负债 ${exposure.liabilities.formatWithCurrency(view.baseCurrency)}）")
+                        }
+                    } else {
+                        // 不算负债时就是资产本身，没有"净敞口"这个概念——
+                        // 还叫"净敞口"会让人以为负债已经扣了，其实这个模式压根没碰负债。
+                        append("资产 ")
+                        append(exposure.assets.formatWithCurrency(view.baseCurrency))
                     }
                 },
                 style = MaterialTheme.typography.labelSmall,
@@ -461,18 +533,23 @@ private fun NegativeExposureNotice() {
 }
 
 @Composable
-private fun DenominatorNote() {
+private fun DenominatorNote(includeLiabilities: Boolean) {
     // 原来是一整句解释常驻显示，实机反馈是"有很多废话" —— 换成一行极短的提示
     // + (i) 图标，完整解释收进点开才看的 tooltip。
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-            "净敞口已抵扣负债，比例加总 100%",
+            if (includeLiabilities) "净敞口已抵扣负债，比例加总 100%" else "只算资产、未扣负债，比例加总 100%",
             style = MaterialTheme.typography.labelSmall,
         )
         InfoTooltip(
-            "比例的分母是全部净资产（含自住房）。各大类显示的是净敞口 —— " +
-                "归属到该类的负债已经抵扣，所以比例加总为 100%。正号表示这类资产扣除对应负债后" +
-                "仍是净资产，负号表示这类的负债超过了资产。",
+            if (includeLiabilities) {
+                "比例的分母是全部净资产（含自住房）。各大类显示的是净敞口 —— " +
+                    "归属到该类的负债已经抵扣，所以比例加总为 100%。正号表示这类资产扣除对应负债后" +
+                    "仍是净资产，负号表示这类的负债超过了资产。"
+            } else {
+                "「不算负债」口径下分母是全部资产总额（含自住房），负债完全不参与计算。" +
+                    "想看负债怎么影响配置，切回「算净资产」。"
+            },
         )
     }
 }
