@@ -85,35 +85,46 @@ fun Money.formatCompact(currency: String): String {
 }
 
 /**
- * 金额输入框下面的读法提示：把整数元部分按"万/亿"分组显示每一位数字，
- * 帮用户核对有没有多打/少打一个 0。
+ * 金额输入框下面的读法提示：整数元部分只用一个"万/亿"字，帮用户核对
+ * 有没有多打/少打一个 0。
  *
- * 中文语境数大数字时，西式三位一逗号（"12,345,678"）要先按 3 位分组再拆成
- * 万/亿才能读出量级，比直接看完整数字还多一步——这里按 4 位（万）分组，
- * 分组本身就是"千/万/十万/百万"的量级分界，一眼能看出打的是几位数。
+ * 第一版按 4 位分组挂了多个单位（"2万0045"），实机反馈"太傻"——
+ * 用户想要的是一眼就能读出量级，不是把千分位逗号换成汉字。改成
+ * 只保留最高位那一个单位，其余数字全部落到小数点后面：
+ * 20045 → "2.0045万"，123456789 → "1.23456789亿"。
  *
- * 是纯粹的数位分组（类似加逗号），不是自然语言读法——不会省略中间的整零组
- * （比如 1 亿 0000 万 5678 不会写成"1 亿 5678"），语义上更接近"每 4 位点一下"
- * 而不是"读出这个数"，实现也因此不用处理中文数字读法里"零"要不要念的规则。
+ * 小数部分**不做任何舍入**——这是和 [formatCompact] 的关键区别。
+ * `formatCompact` 用于概览卡片，四舍五入到 1 位小数是可接受的精度损失；
+ * 但这里是"核对有没有多打/少打一个 0"，如果舍入掉尾部数字，
+ * 反而会把想要暴露的那个 0 藏起来。所以只做进制换算和去掉多余的尾零
+ * （比如整好 12 万时显示"12万"而不是"12.0000万"），不四舍五入。
  *
  * 只在整数部分 ≥ 1 万时才显示——更小的数字本来就一眼能看清，不需要提示，
  * 显示了反而是噪音。
  *
- * 例：Money(123456789) → "12345.67" 的整数部分 12345 → "1万2345"
- *     Money(123456789000) → 整数部分 1234567890 → "12亿3456万7890"
+ * 例：Money(2004500) → "20045.00" 的整数部分 20045 → "2.0045万"
+ *     Money(12345678900) → 整数部分 123456789 → "1.23456789亿"
+ *     Money(1200000_00) → 整数部分 120000（整好 12 万）→ "12万"
  */
 fun Money.magnitudeHint(): String? = (minorUnits / 100).yuanMagnitudeHint()
 
 private fun Long.yuanMagnitudeHint(): String? {
-    if (abs(this) < 10_000L) return null
-    val digits = abs(this).toString()
-    val groups = digits.reversed().chunked(4).map { it.reversed() }.reversed()
-    val unitLabels = listOf("", "万", "亿", "万亿")
-    val lastIndex = groups.lastIndex
-    val text = groups.mapIndexed { i, group ->
-        group + unitLabels.getOrElse(lastIndex - i) { "" }
-    }.joinToString("")
-    return if (this < 0) "-$text" else text
+    val magnitude = abs(this)
+    if (magnitude < 10_000L) return null
+    val (divisor, fracDigits, unit) = if (magnitude >= 100_000_000L) {
+        Triple(100_000_000L, 8, "亿")
+    } else {
+        Triple(10_000L, 4, "万")
+    }
+    val whole = magnitude / divisor
+    val frac = magnitude % divisor
+    val fracText = if (frac == 0L) {
+        ""
+    } else {
+        "." + frac.toString().padStart(fracDigits, '0').trimEnd('0')
+    }
+    val sign = if (this < 0) "-" else ""
+    return "$sign$whole$fracText$unit"
 }
 
 /** 把「放大了 10^scale 倍的整数」还原成小数字符串，避免用 Double。 */
