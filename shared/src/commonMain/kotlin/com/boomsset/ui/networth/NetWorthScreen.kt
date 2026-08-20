@@ -1,5 +1,6 @@
 package com.boomsset.ui.networth
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -7,17 +8,29 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.data.SUPPORTED_CURRENCIES
@@ -26,6 +39,7 @@ import com.boomsset.security.AuthCapability
 import com.boomsset.domain.Money
 import com.boomsset.domain.Period
 import com.boomsset.ui.bpToPercent
+import com.boomsset.ui.currencySymbol
 import com.boomsset.ui.fallColor
 import com.boomsset.ui.formatWithCurrency
 import com.boomsset.ui.riseColor
@@ -72,6 +86,11 @@ fun NetWorthScreen(
 @Composable
 private fun SummaryCard(state: NetWorthUiState) {
     val net = state.series?.latest?.netWorth ?: Money.ZERO
+    // 只是"划一下别让旁边的人看到具体数字"的临时遮挡，不是账号级别的隐私设置 ——
+    // 不落 DataStore，重开 App 默认又是可见的，免得用户忘记自己藏起来过、
+    // 以为净值消失了。用 rememberSaveable 只是为了转屏之类的配置变化不重置。
+    var netWorthVisible by rememberSaveable { mutableStateOf(true) }
+
     // 卡片用品牌色的浅色容器打底 —— 反馈是净值页太灰暗；整页只有这一处用容器强调，
     // 不会和"表面是中性白灰"的整体设计冲突（见 AGENTS.md）。
     Card(
@@ -81,13 +100,35 @@ private fun SummaryCard(state: NetWorthUiState) {
         ),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "当前净值",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                IconButton(
+                    onClick = { netWorthVisible = !netWorthVisible },
+                    modifier = Modifier.size(28.dp).semantics {
+                        contentDescription = if (netWorthVisible) "隐藏净值" else "显示净值"
+                    },
+                ) {
+                    EyeIcon(
+                        open = netWorthVisible,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
             Text(
-                "当前净值",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Text(
-                net.formatWithCurrency(state.baseCurrency),
+                if (netWorthVisible) {
+                    net.formatWithCurrency(state.baseCurrency)
+                } else {
+                    "${currencySymbol(state.baseCurrency)}****"
+                },
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -128,6 +169,39 @@ private fun SummaryCard(state: NetWorthUiState) {
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             }
+        }
+    }
+}
+
+/**
+ * 手绘的眼睛图标，不是 Material Icons —— 项目没有引入图标库依赖
+ * （配置页 `InfoTooltip` 的 "ⓘ" 用的是同样的取舍：只为一个图标加一个新依赖
+ * 不划算，还要额外核实它有没有 iOS artifact，见 AGENTS.md 硬约束 5）。
+ * 眼形是两条二次贝塞尔曲线拼成的"杏仁形"轮廓，睁眼时中间多画一个瞳孔圆点，
+ * 闭眼时同一个轮廓上加一条对角线划掉。
+ */
+@Composable
+private fun EyeIcon(open: Boolean, tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val eyeOutline = Path().apply {
+            moveTo(0f, h / 2)
+            quadraticTo(w / 2, -h * 0.1f, w, h / 2)
+            quadraticTo(w / 2, h * 1.1f, 0f, h / 2)
+            close()
+        }
+        val strokeWidth = w * 0.09f
+        drawPath(eyeOutline, color = tint, style = Stroke(width = strokeWidth))
+        if (open) {
+            drawCircle(color = tint, radius = h * 0.2f, center = Offset(w / 2, h / 2))
+        } else {
+            drawLine(
+                color = tint,
+                start = Offset(w * 0.08f, h * 0.08f),
+                end = Offset(w * 0.92f, h * 0.92f),
+                strokeWidth = strokeWidth,
+            )
         }
     }
 }
