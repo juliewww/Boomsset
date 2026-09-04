@@ -100,6 +100,14 @@ interface PortfolioRepository {
     /** 按天 upsert 汇率。同一币种对同一天只留一条 —— 主键保证，不需要应用层查重。 */
     suspend fun upsertFxRate(rate: com.boomsset.domain.FxRate)
 
+    /**
+     * 批量按天 upsert 汇率，**一个事务**。
+     *
+     * 历史回补一次会写几百到几千条。逐条写会让数据流发射同样多次，
+     * 每次都触发一遍净值曲线重算 —— 事务把它们收成一次发射。
+     */
+    suspend fun upsertFxRates(rates: List<com.boomsset.domain.FxRate>)
+
     /** 按天 upsert 行情。同上。 */
     suspend fun upsertQuote(quote: com.boomsset.domain.Quote)
 
@@ -294,14 +302,25 @@ class SqlDelightPortfolioRepository(
     }
 
     override suspend fun upsertFxRate(rate: com.boomsset.domain.FxRate): Unit =
+        upsertFxRates(listOf(rate))
+
+    override suspend fun upsertFxRates(rates: List<com.boomsset.domain.FxRate>): Unit =
         withContext(dispatcher) {
-            db.fxRateQueries.upsert(
-                base = rate.base,
-                quote = rate.quote,
-                as_of_day = rate.asOfDay,
-                rate_scaled = rate.rate.scaled,
-                fetched_at = clock.now().toEpochMilliseconds(),
-            )
+            if (rates.isEmpty()) return@withContext
+            val now = clock.now().toEpochMilliseconds()
+            // 一个事务：历史回补一次几百到几千条，逐条提交会让 selectAllRates 那条流
+            // 发射同样多次，每次都重算整条净值曲线（十年数据 ≈ 2500 次）
+            db.transaction {
+                rates.forEach {
+                    db.fxRateQueries.upsert(
+                        base = it.base,
+                        quote = it.quote,
+                        as_of_day = it.asOfDay,
+                        rate_scaled = it.rate.scaled,
+                        fetched_at = now,
+                    )
+                }
+            }
         }
 
     override suspend fun updateAssetMeta(

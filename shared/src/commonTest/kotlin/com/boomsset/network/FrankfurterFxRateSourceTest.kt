@@ -1,7 +1,6 @@
 package com.boomsset.network
 
 import com.boomsset.domain.ExchangeRate
-import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -35,79 +34,115 @@ class FrankfurterFxRateSourceTest {
     }
 
     @Test
-    fun `解析正常响应`() = runTest {
-        val body = """{"amount":1.0,"base":"USD","date":"2026-06-30","rates":{"CNY":6.7855}}"""
-        val rate = source(jsonEngine(body)).fetch("USD", "CNY", LocalDate(2026, 6, 30))!!
+    fun `解析区间响应`() = runTest {
+        // 区间报文的 rates 是**两层**（日期 → 币种 → 汇率），和单日的一层不一样
+        val body = """{"amount":1.0,"base":"CNY","start_date":"2026-06-29","end_date":"2026-07-01",
+            "rates":{"2026-06-29":{"USD":0.14719},"2026-06-30":{"USD":0.14737},
+            "2026-07-01":{"USD":0.14718}}}"""
+        val rates = source(jsonEngine(body))
+            .fetchRange("CNY", "USD", LocalDate(2026, 6, 29), LocalDate(2026, 7, 1))
 
-        rate.base shouldBe "USD"
-        rate.quote shouldBe "CNY"
-        rate.asOfDay shouldBe "2026-06-30"
-        // 6.7855 → scale 8 定点：678550000。**没有经过 Double。**
-        rate.rate shouldBe ExchangeRate(678_550_000)
+        rates.size shouldBe 3
+        rates.map { it.asOfDay } shouldBe
+            listOf("2026-06-29", "2026-06-30", "2026-07-01")
+        // 0.14719 → scale 8 定点。**没有经过 Double。**
+        rates.first().rate shouldBe ExchangeRate(14_719_000)
+        rates.first().base shouldBe "CNY"
+        rates.first().quote shouldBe "USD"
     }
 
     @Test
-    fun `周末请求时存服务方返回的营业日而不是请求日`() = runTest {
-        // 实测：请求 2026-07-26（周日），ECB 没有数据，返回 07-24（周五）
-        val body = """{"amount":1.0,"base":"USD","date":"2026-07-24","rates":{"CNY":6.7722}}"""
-        val requested = LocalDate(2026, 7, 26)
+    fun `日期取自报文的key而不是请求的区间`() = runTest {
+        // 实测：请求 2026-08-29..2026-08-30（周六周日），ECB 没有数据，
+        // 服务方把区间挪到 08-28（周五）再返回。存请求日期会把汇率错误归到
+        // ECB 从未发布的那两天
+        val body = """{"amount":1.0,"base":"CNY","start_date":"2026-08-28",
+            "end_date":"2026-08-28","rates":{"2026-08-28":{"USD":0.14879}}}"""
 
-        val rate = source(jsonEngine(body)).fetch("USD", "CNY", requested)!!
+        val rates = source(jsonEngine(body))
+            .fetchRange("CNY", "USD", LocalDate(2026, 8, 29), LocalDate(2026, 8, 30))
 
-        // 关键断言：存的是 07-24，不是请求的 07-26。
-        // 存请求日期会把汇率错误归到 ECB 从未发布的那一天。
-        rate.asOfDay shouldBe "2026-07-24"
-        rate.asOfDay shouldNotBe requested.toString()
+        rates.single().asOfDay shouldBe "2026-08-28"
+    }
+
+    @Test
+    fun `一天的区间也走同一条路径`() = runTest {
+        // start == end 是合法请求（实测），所以不需要再留一个单日接口
+        val body = """{"amount":1.0,"base":"CNY","start_date":"2026-09-03",
+            "end_date":"2026-09-03","rates":{"2026-09-03":{"USD":0.14883}}}"""
+
+        val rates = source(jsonEngine(body))
+            .fetchRange("CNY", "USD", LocalDate(2026, 9, 3), LocalDate(2026, 9, 3))
+
+        rates.single().asOfDay shouldBe "2026-09-03"
+        rates.single().rate shouldBe ExchangeRate(14_883_000)
     }
 
     @Test
     fun `汇率精度不因浮点丢失`() = runTest {
         // 一个 Double 表示不精确的值
-        val body = """{"amount":1.0,"base":"USD","date":"2026-07-01","rates":{"CNY":7.12345678}}"""
-        val rate = source(jsonEngine(body)).fetch("USD", "CNY", LocalDate(2026, 7, 1))!!
-        rate.rate shouldBe ExchangeRate(712_345_678)
+        val body = """{"amount":1.0,"base":"USD","start_date":"2026-07-01",
+            "end_date":"2026-07-01","rates":{"2026-07-01":{"CNY":7.12345678}}}"""
+        val rates = source(jsonEngine(body))
+            .fetchRange("USD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 1))
+
+        rates.single().rate shouldBe ExchangeRate(712_345_678)
     }
 
     @Test
-    fun `同币种直接返回一比一不发请求`() = runTest {
+    fun `同币种不发请求也不造记录`() = runTest {
         var called = false
         val engine = MockEngine { called = true; respondError(HttpStatusCode.InternalServerError) }
 
-        val rate = source(engine).fetch("CNY", "CNY", LocalDate(2026, 7, 1))!!
-
-        rate.rate shouldBe ExchangeRate.IDENTITY
+        // 估值层对同币种直接用 IDENTITY，不需要落库
+        source(engine).fetchRange("CNY", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
+            .isEmpty() shouldBe true
         called shouldBe false
     }
 
-    // ---------- 失败路径：一律返回 null，让调用方退回 stale 汇率 ----------
+    @Test
+    fun `区间反过来时不发请求`() = runTest {
+        var called = false
+        val engine = MockEngine { called = true; respondError(HttpStatusCode.InternalServerError) }
+
+        source(engine).fetchRange("USD", "CNY", LocalDate(2026, 7, 5), LocalDate(2026, 7, 1))
+            .isEmpty() shouldBe true
+        called shouldBe false
+    }
+
+    // ---------- 失败路径：一律返回空列表，让调用方退回 stale 汇率 ----------
 
     @Test
-    fun `HTTP 错误返回null而不是抛异常`() = runTest {
+    fun `HTTP 错误返回空列表而不是抛异常`() = runTest {
         val engine = MockEngine { respondError(HttpStatusCode.TooManyRequests) }
-        source(engine).fetch("USD", "CNY", LocalDate(2026, 7, 1)).shouldBeNull()
+        source(engine).fetchRange("USD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
+            .isEmpty() shouldBe true
     }
 
     @Test
-    fun `不支持的币种返回null而不是当成一比一`() = runTest {
-        // TWD 不在 ECB 列表里，rates 里没有它。
+    fun `不支持的币种返回空列表而不是当成一比一`() = runTest {
+        // TWD 不在 ECB 列表里，每天的 map 里都没有它。
         // 绝不能退化成 1:1 —— 那会把台币资产按人民币等额计入净值。
-        val body = """{"amount":1.0,"base":"TWD","date":"2026-07-01","rates":{}}"""
-        source(jsonEngine(body)).fetch("TWD", "CNY", LocalDate(2026, 7, 1)).shouldBeNull()
+        val body = """{"amount":1.0,"base":"TWD","start_date":"2026-07-01",
+            "end_date":"2026-07-02","rates":{"2026-07-01":{},"2026-07-02":{}}}"""
+        source(jsonEngine(body))
+            .fetchRange("TWD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
+            .isEmpty() shouldBe true
     }
 
     @Test
-    fun `响应不是合法JSON时返回null`() = runTest {
-        source(jsonEngine("not json at all")).fetch("USD", "CNY", LocalDate(2026, 7, 1))
-            .shouldBeNull()
+    fun `响应不是合法JSON时返回空列表`() = runTest {
+        source(jsonEngine("not json at all"))
+            .fetchRange("USD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
+            .isEmpty() shouldBe true
     }
 
     @Test
-    fun `响应缺date字段时返回null`() = runTest {
-        val body = """{"amount":1.0,"base":"USD","rates":{"CNY":6.78}}"""
-        source(jsonEngine(body)).fetch("USD", "CNY", LocalDate(2026, 7, 1)).shouldBeNull()
+    fun `响应缺rates字段时返回空列表`() = runTest {
+        val body = """{"amount":1.0,"base":"USD","start_date":"2026-07-01"}"""
+        source(jsonEngine(body))
+            .fetchRange("USD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
+            .isEmpty() shouldBe true
     }
 
-    private infix fun String.shouldNotBe(other: String) {
-        if (this == other) throw AssertionError("期望不等于 $other，但实际相等")
-    }
 }

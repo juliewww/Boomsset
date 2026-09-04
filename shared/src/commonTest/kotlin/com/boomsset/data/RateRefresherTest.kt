@@ -21,7 +21,12 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.minus
+import kotlinx.datetime.plus
+import kotlinx.datetime.toLocalDateTime
 import kotlin.test.Test
 import kotlin.time.Instant
 
@@ -29,6 +34,22 @@ import kotlin.time.Instant
 class RateRefresherTest {
 
     private val epoch = Instant.fromEpochMilliseconds(1_785_000_000_000)
+    private val zone = kotlinx.datetime.TimeZone.UTC
+
+    /** 刷新器眼里的"今天"，和下面那个假时钟一致。 */
+    private val today = epoch.toLocalDateTime(zone).date
+
+    private fun manual(id: Long, assetId: Long, day: LocalDate, valueMinor: Long = 100_00) =
+        com.boomsset.domain.Snapshot.Manual(
+            id = id,
+            assetId = assetId,
+            asOf = day.atStartOfDayIn(zone),
+            value = Money(valueMinor),
+            recordedAt = epoch,
+        )
+
+    private fun rate(from: String, to: String, day: String) =
+        FxRate(from, to, day, ExchangeRate(700_000_000))
 
     private fun asset(id: Long, currency: String, archived: Boolean = false) = Asset(
         id = id,
@@ -68,6 +89,7 @@ class RateRefresherTest {
             name: String, assetClass: AssetClass, defaultValuationMode: ValuationMode,
         ): Long = 0
         override suspend fun upsertFxRate(rate: FxRate) { writtenRates += rate }
+        override suspend fun upsertFxRates(rates: List<FxRate>) { writtenRates += rates }
         override suspend fun upsertQuote(quote: Quote) {}
         override fun observeAllocations(): Flow<List<TargetAllocation>> = flowOf(emptyList())
         override suspend fun setActiveAllocation(id: Long) {}
@@ -77,14 +99,33 @@ class RateRefresherTest {
         override suspend fun deleteAllocation(id: Long) {}
     }
 
+    /**
+     * 汇率源的 fake。记下**请求了哪个币种的哪一段区间** —— 这次改动的核心就是
+     * "区间对不对"，只记币种的话历史回补写错了也测不出来。
+     *
+     * 返回值按天枚举整段区间（真接口会跳过周末，这里不模拟那个 ——
+     * 周末落到前一个营业日是 [com.boomsset.network.FrankfurterFxRateSource] 的责任，
+     * 那边有自己的报文级测试）。
+     */
     private class FakeFxSource(
         private val failFor: Set<String> = emptySet(),
     ) : FxRateSource {
         val requested = mutableListOf<String>()
-        override suspend fun fetch(from: String, to: String, on: LocalDate): FxRate? {
+        val ranges = mutableListOf<Triple<String, LocalDate, LocalDate>>()
+
+        override suspend fun fetchRange(
+            from: String,
+            to: String,
+            start: LocalDate,
+            end: LocalDate,
+        ): List<FxRate> {
             requested += from
-            if (from in failFor) return null
-            return FxRate(from, to, on.toString(), ExchangeRate(700_000_000))
+            ranges += Triple(from, start, end)
+            if (from in failFor) return emptyList()
+            return generateSequence(start) { it.plus(1, DateTimeUnit.DAY) }
+                .takeWhile { it <= end }
+                .map { FxRate(from, to, it.toString(), ExchangeRate(700_000_000)) }
+                .toList()
         }
     }
 
@@ -111,7 +152,7 @@ class RateRefresherTest {
         clock = object : kotlin.time.Clock {
             override fun now() = epoch
         },
-        zone = kotlinx.datetime.TimeZone.UTC,
+        zone = zone,
     )
 
     @Test
@@ -128,6 +169,122 @@ class RateRefresherTest {
         // 基准币种 CNY 自己不查（1:1），只查 USD 和 HKD
         fx.requested.sorted() shouldContainExactly listOf("HKD", "USD")
         repo.writtenRates.size shouldBe 2
+    }
+
+    // ---------- 历史区间 ----------
+
+    @Test
+    fun `补到最早那条快照那天 而不是只拉今天`() = runTest {
+        // 这是这次修复的核心。净值曲线上每个历史时点都要用**当时的**汇率折算，
+        // 只拉今天的话，除最新点以外全都取不到汇率 → 资产判成"无法估值" →
+        // 那些点的净值算成 0（实机上表现为 8 月那根柱子是 0）
+        val data = PortfolioData(
+            assets = listOf(asset(1, "USD")),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 5, 10)),
+                manual(2, 1, LocalDate(2026, 6, 30)),
+            ),
+            quotes = emptyList(), fxRates = emptyList(),
+        )
+        val fx = FakeFxSource()
+
+        refresher(FakeRepository(data), fx).refreshForHoldings("CNY")
+
+        fx.ranges.single() shouldBe Triple("USD", LocalDate(2026, 5, 10), today)
+    }
+
+    @Test
+    fun `更早的时点不补 因为那时资产还不存在`() = runTest {
+        // 起点是第一条快照，不是"固定回看 12 个月" —— 昨天才加的资产只补昨天到今天
+        val data = PortfolioData(
+            assets = listOf(asset(1, "USD")),
+            snapshots = listOf(manual(1, 1, today.minus(1, DateTimeUnit.DAY))),
+            quotes = emptyList(), fxRates = emptyList(),
+        )
+        val fx = FakeFxSource()
+
+        refresher(FakeRepository(data), fx).refreshForHoldings("CNY")
+
+        fx.ranges.single() shouldBe Triple("USD", today.minus(1, DateTimeUnit.DAY), today)
+    }
+
+    @Test
+    fun `全部归档的币种只补到最后一条快照那天`() = runTest {
+        // 归档之后它不再贡献当前净值，今天的汇率对它没用；
+        // 但历史时点上它还在，那段区间的汇率仍然要有 —— 否则回看时那些点又变成 0
+        val data = PortfolioData(
+            assets = listOf(asset(1, "USD", archived = true)),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 5, 10)),
+                manual(2, 1, LocalDate(2026, 6, 30), valueMinor = 0),   // 归档的归零快照
+            ),
+            quotes = emptyList(), fxRates = emptyList(),
+        )
+        val fx = FakeFxSource()
+
+        refresher(FakeRepository(data), fx).refreshForHoldings("CNY")
+
+        fx.ranges.single() shouldBe
+            Triple("USD", LocalDate(2026, 5, 10), LocalDate(2026, 6, 30))
+    }
+
+    @Test
+    fun `历史已经补过时只接着补最近几天`() = runTest {
+        // 回补是一次性的。第二天再打开，只差昨天到今天这一两天，
+        // 不该把三年的区间重新拉一遍
+        val data = PortfolioData(
+            assets = listOf(asset(1, "USD")),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 5, 10))),
+            quotes = emptyList(),
+            fxRates = listOf(
+                rate("USD", "CNY", "2026-05-08"),   // 比区间起点更早，说明历史补过了
+                rate("USD", "CNY", "2026-07-20"),
+            ),
+        )
+        val fx = FakeFxSource()
+
+        refresher(FakeRepository(data), fx).refreshForHoldings("CNY")
+
+        // 从已有的最后一天本身开始（不是它的次日）—— 那天可能是周五，
+        // 而今天是周末，只有从周五起才拿得到报价
+        fx.ranges.single() shouldBe Triple("USD", LocalDate(2026, 7, 20), today)
+    }
+
+    @Test
+    fun `已经覆盖到今天就一个请求都不发`() = runTest {
+        val data = PortfolioData(
+            assets = listOf(asset(1, "USD")),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 5, 10))),
+            quotes = emptyList(),
+            fxRates = listOf(
+                rate("USD", "CNY", "2026-05-09"),
+                rate("USD", "CNY", today.toString()),
+            ),
+        )
+        val fx = FakeFxSource()
+
+        val result = refresher(FakeRepository(data), fx).refreshForHoldings("CNY")
+
+        fx.ranges.isEmpty() shouldBe true
+        result.written shouldBe 0
+        result.failed shouldBe 0
+    }
+
+    @Test
+    fun `只有最近的汇率而没有历史时 整段重新补`() = runTest {
+        // 这次修复之前存下来的数据就是这个样子：只有今天一条。
+        // 老用户升级后必须能把历史补上，不能因为"最新的有了"就跳过
+        val data = PortfolioData(
+            assets = listOf(asset(1, "USD")),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 5, 10))),
+            quotes = emptyList(),
+            fxRates = listOf(rate("USD", "CNY", today.toString())),
+        )
+        val fx = FakeFxSource()
+
+        refresher(FakeRepository(data), fx).refreshForHoldings("CNY")
+
+        fx.ranges.single() shouldBe Triple("USD", LocalDate(2026, 5, 10), today)
     }
 
     @Test
