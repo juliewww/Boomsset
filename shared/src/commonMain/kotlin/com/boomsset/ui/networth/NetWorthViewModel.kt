@@ -21,7 +21,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.daysUntil
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
 
@@ -35,6 +37,14 @@ data class NetWorthUiState(
     /** 无法估值的资产数量 —— 行情或汇率缺失。UI 必须提示，不能静默低估净值。 */
     val unpricedCount: Int = 0,
     val hasAssets: Boolean = false,
+    /**
+     * 最近一次记快照的日期，和距今多少天。
+     *
+     * 记快照不记流水，所以净值不会自己更新 —— 这两个值是用户判断"顶上那个数还新不新"
+     * 的唯一线索。见 [PortfolioSeriesCalculator.lastRecordedDate]。
+     */
+    val lastRecordedDate: LocalDate? = null,
+    val daysSinceLastRecord: Int? = null,
 ) {
     /**
      * 空状态看的是**有没有资产**，不是 `series.latest == null`。
@@ -103,6 +113,7 @@ class NetWorthViewModel(
             // 全是「资产还不存在」的 0 值点，占满图表还没有信息量。
             trimBeforeFirstSnapshot = true,
         )
+        val lastRecorded = PortfolioSeriesCalculator.lastRecordedDate(data, zone)
         NetWorthUiState(
             loading = false,
             series = series,
@@ -112,6 +123,8 @@ class NetWorthViewModel(
             subtypes = subtypes,
             unpricedCount = series.latest?.unpricedAssetIds?.size ?: 0,
             hasAssets = data.assets.any { !it.isArchived },
+            lastRecordedDate = lastRecorded,
+            daysSinceLastRecord = lastRecorded?.daysUntil(today),
         )
     }.stateIn(
         scope = viewModelScope,

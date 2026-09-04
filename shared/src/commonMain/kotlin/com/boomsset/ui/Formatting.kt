@@ -2,10 +2,12 @@ package com.boomsset.ui
 
 import com.boomsset.domain.Money
 import com.boomsset.domain.AssetValuation
+import com.boomsset.domain.Period
 import com.boomsset.domain.Quantity
 import com.boomsset.domain.UnitPrice
 import com.boomsset.domain.TargetAllocation
 import com.boomsset.domain.parseMoneyMinor
+import kotlinx.datetime.LocalDate
 import kotlin.math.abs
 
 /**
@@ -63,9 +65,32 @@ fun Money.formatAmount(showDecimals: Boolean = true, grouped: Boolean = true): S
  */
 fun Money.formatForInput(): String = formatAmount(showDecimals = true, grouped = false)
 
-/** 例：Money(123456) + "CNY" → "¥1,234.56" */
+/**
+ * 例：Money(123456) + "CNY" → "¥1,234.56"，Money(-123456) → "-¥1,234.56"
+ *
+ * 负号在**币种符号外面**。原来是 `symbol + formatAmount()`，负数会排成 "¥-1,234.56" ——
+ * 负号被塞进了数字内部，中英文习惯都不这么写；[formatCompact] 一直是对的，这里对齐它。
+ */
 fun Money.formatWithCurrency(currency: String, showDecimals: Boolean = true): String =
-    currencySymbol(currency) + formatAmount(showDecimals)
+    signPrefix(withPlus = false) + currencySymbol(currency) + magnitude().formatAmount(showDecimals)
+
+/**
+ * 带**显式正号**的金额。例：+¥564.00 / -¥564.00 / ¥0.00
+ *
+ * 变化量必须一眼看出涨还是跌，不能靠"有没有减号"去反推
+ * （配置页的净敞口是同一条理由，见 AllocationScreen）。
+ * 零不加号：`+¥0.00` 读起来像"涨了 0"，而事实是"没有变化"。
+ */
+fun Money.formatSigned(currency: String): String =
+    signPrefix(withPlus = true) + currencySymbol(currency) + magnitude().formatAmount()
+
+private fun Money.signPrefix(withPlus: Boolean): String = when {
+    minorUnits < 0 -> "-"
+    withPlus && minorUnits > 0 -> "+"
+    else -> ""
+}
+
+private fun Money.magnitude(): Money = Money(abs(minorUnits))
 
 /**
  * 大额缩写，用于概览卡片。例：¥12,345,678.00 → "¥1234.6万"
@@ -151,6 +176,42 @@ fun AssetValuation.priceDescription(): String {
     }
 }
 
+/** 例：LocalDate(2026, 8, 4) → "8月4日"。年份留给 [periodLabel]，日常场景不需要。 */
+fun LocalDate.monthDayLabel(): String = "${month.ordinal + 1}月${day}日"
+
+/**
+ * 取样点所在周期的名字，**带年份**。
+ *
+ * 年份不能省：净值页最多回看 12 个周期，"相比 9月"在按月下跨年就有歧义
+ * （去年 9 月还是今年 9 月？），而这个标签的全部作用就是把基准说清楚。
+ */
+fun LocalDate.periodLabel(period: Period): String = when (period) {
+    Period.MONTH -> "${year}年${month.ordinal + 1}月"
+    Period.QUARTER -> "${year}年Q${month.ordinal / 3 + 1}"
+    Period.YEAR -> "${year}年"
+}
+
+/**
+ * 最近一次记快照是什么时候。
+ *
+ * 「记快照不记流水」的直接后果：净值这个数字**不会自己更新**，三个月前的记录
+ * 和今天的记录在界面上长得一样。所以日期和"多久以前"都要说，
+ * 让用户自己判断顶上那个数还算不算数 —— 这里不替他下"该更新了"的结论，
+ * 更新节奏因人而异（月度记账的人和季度记账的人对"旧"的容忍度差一个数量级）。
+ *
+ * @return 一条快照都没有时返回 null，调用方不显示这一行。
+ */
+fun lastRecordDescription(date: LocalDate?, ageDays: Int?): String? {
+    if (date == null) return null
+    val head = "最近记录 ${date.monthDayLabel()}"
+    return when (ageDays) {
+        null -> head
+        0 -> "$head · 今天"
+        1 -> "$head · 昨天"
+        else -> "$head · $ageDays 天前"
+    }
+}
+
 /**
  * 基点 → 百分比字符串。例：1234 → "12.34%"，-500 → "-5.00%"
  */
@@ -173,6 +234,14 @@ fun Int.bpToPercent(decimals: Int = 2, withSign: Boolean = false): String {
     }
     return "$sign$body%"
 }
+
+/**
+ * 变化量的百分比：正数带 `+`、负数带 `-`、**零不带号**。
+ *
+ * `bpToPercent(withSign = true)` 会把 0 排成 "+0.00%" —— 读起来像"涨了 0"，
+ * 和金额那边 [Money.formatSigned] 的处理保持一致。
+ */
+fun Int.bpToSignedPercent(): String = bpToPercent(withSign = this > 0)
 
 /**
  * 基点预填到百分比输入框用的格式：**不带 % 号、不带多余的 0**。

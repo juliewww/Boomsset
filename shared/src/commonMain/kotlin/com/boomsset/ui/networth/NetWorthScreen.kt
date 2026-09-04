@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.data.SUPPORTED_CURRENCIES
@@ -35,8 +36,12 @@ import com.boomsset.domain.Money
 import com.boomsset.domain.Period
 import com.boomsset.ui.InfoTooltip
 import com.boomsset.ui.bpToPercent
+import com.boomsset.ui.bpToSignedPercent
 import com.boomsset.ui.fallColor
+import com.boomsset.ui.formatSigned
 import com.boomsset.ui.formatWithCurrency
+import com.boomsset.ui.lastRecordDescription
+import com.boomsset.ui.periodLabel
 import com.boomsset.ui.riseColor
 
 @Composable
@@ -71,16 +76,41 @@ fun NetWorthScreen(
                 PeriodSelector(state.period, onSelectPeriod)
                 state.series?.let { NetWorthChart(it) }
                 if (state.unpricedCount > 0) UnpricedWarning(state.unpricedCount)
-                GrowthVsReturnNote()
                 AppLockToggle(lockState, onToggleLock)
             }
         }
     }
 }
 
+/**
+ * 顶部总资产卡片。
+ *
+ * 原来是**四五行句子**（"净值增长 +2.10%（含新增投入）"、"浮动盈亏 …"、
+ * "仅覆盖已填成本的 3 项资产"），每行都要读完整句才知道那个数是什么，而且：
+ * - **没说数据是哪天的** —— 记快照不记流水，净值不会自己更新，三个月前的记录和
+ *   今天的记录长得一模一样；这是这类 App 最该显示、我们偏偏没显示的一个数
+ * - **没说"增长"是相比什么时候** —— 同一个 +2% 在按月/按季/按年下比的起点完全不同
+ * - **只有百分比没有金额** —— "+2%" 记不住，"+¥12,345" 才记得住
+ * - **总资产和总负债根本看不到**，负债率也没有
+ *
+ * 现在分三段（参考家庭记账类 App 的顶部卡片做法）：
+ * 1. 净值本身 + 数据是哪天记的
+ * 2. 总资产 / 总负债 的分格（标签在上、数值在下），一眼扫到的是数值
+ * 3. 净值增长 / 浮动盈亏 整行一条（标签在左、数值在右），口径解释收进 (i)
+ *
+ * 后两段用了**不同的排布**不是随手写的：短标签短数值适合分格，
+ * 十来个汉字的标签并排就会连数值一起挤断行（见 [MetricRow] 上的注释）。
+ *
+ * **负债那一段只在真的有负债时出现** —— 无债用户看到"总负债 ¥0.00 / 负债率 0.00%"
+ * 是纯噪音，而且此时总资产恒等于净值，再写一遍也是重复。
+ */
 @Composable
 private fun SummaryCard(state: NetWorthUiState) {
-    val net = state.series?.latest?.netWorth ?: Money.ZERO
+    val point = state.series?.latest
+    val net = point?.netWorth ?: Money.ZERO
+    val currency = state.baseCurrency
+    val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
+
     // 卡片用品牌色的浅色容器打底 —— 反馈是净值页太灰暗；整页只有这一处用容器强调，
     // 不会和"表面是中性白灰"的整体设计冲突（见 AGENTS.md）。
     Card(
@@ -89,54 +119,213 @@ private fun SummaryCard(state: NetWorthUiState) {
             containerColor = MaterialTheme.colorScheme.primaryContainer,
         ),
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                "当前净值",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Text(
-                net.formatWithCurrency(state.baseCurrency),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-
-            state.series?.growthBp?.let { bp ->
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "净值增长 ${bp.bpToPercent(withSign = true)}（含新增投入）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = when {
-                        bp > 0 -> riseColor()
-                        bp < 0 -> fallColor()
-                        else -> MaterialTheme.colorScheme.onPrimaryContainer
-                    },
+                    "当前净值",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = onContainer,
                 )
+                Text(
+                    net.formatWithCurrency(currency),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = onContainer,
+                )
+                // 数据新鲜度。没有任何快照时不显示这一行（新用户走的是空状态分支，
+                // 但归档全部资产后也可能落到这里）
+                lastRecordDescription(state.lastRecordedDate, state.daysSinceLastRecord)?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = onContainer)
+                }
             }
 
-            // 浮动盈亏和净值增长是两个不同口径，标签必须写清 —— 见 docs/domain.md
-            val pnl = state.pnl
-            if (pnl != null && pnl.hasCoverage) {
-                val rate = pnl.pnl.returnBp
+            if (point != null && !point.totalLiabilities.isZero) {
+                // 两列而不是三列：360dp 宽的手机上三列每格只有 90dp，
+                // 七位数金额（¥1,234,567.00）就要断行 —— 金额断行比多占一行难看得多。
+                // 负债率跟在总负债下面当注脚，它本来就是这两个数除出来的。
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    KpiCell(
+                        label = "总资产",
+                        value = point.totalAssets.formatWithCurrency(currency),
+                        modifier = Modifier.weight(1f),
+                    )
+                    KpiCell(
+                        label = "总负债",
+                        value = point.totalLiabilities.formatWithCurrency(currency),
+                        // null = 总资产 ≤ 0，此时比率无意义。不写成 0% —— 那会被读成"没负债"
+                        sub = "负债率 ${point.liabilityRatioBp?.bpToPercent() ?: "—"}",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            // 净值增长和浮动盈亏是**两个不同口径**，必须写清区别 ——
+            // 见 docs/domain.md「增长率：两种口径必须分开」。
+            // 完整解释收进 (i)，不再占一整行常驻文字。
+            //
+            // 这两条不做成上面那种分格：标签本身就有十来个汉字，并排时每格
+            // 只剩 120dp，**标签和数值都会断行**（360dp 实测："净值增长（含新增投"
+            // 换行、"-¥12,000.00 ·" 后面吊着一个分隔点）。而且两个标签换行行数不同时，
+            // 下面的数值会一高一低，分格排布反而更乱。改成整行「标签在左、数值在右」：
+            // 数值先量、永远完整，宽度不够只让标签折行。
+            MetricRow(
+                label = "净值增长（含新增投入）",
+                value = growthValue(state),
+                sub = growthSub(state),
+                valueColor = signedColor(state.series?.growthAbsolute?.minorUnits),
+                // 注意这里**不能**写 Markdown 的 `**加粗**`：`Text` 不解析标记，
+                // 星号会原样显示在气泡里（模拟器上截图确认过）。要强调就靠措辞和「」。
+                info = "「净值增长」= 期末净值 ÷ 期初净值 − 1，连你新存进去的钱一起算 —— " +
+                    "这个月存一万工资进来，它也会涨，那不是赚的。" +
+                    "「浮动盈亏」= 市值 − 成本，才反映投资本身的表现，" +
+                    "但它只覆盖填了成本的那几项资产。",
+            )
+            MetricRow(
+                label = "浮动盈亏（投资本身）",
+                value = pnlValue(state),
+                sub = pnlSub(state),
+                valueColor = signedColor(state.pnl?.takeIf { it.hasCoverage }?.pnl?.absolute?.minorUnits),
+            )
+        }
+    }
+}
+
+/** 净值增长：**含新增投入**，金额和百分比一起给。 */
+private fun growthValue(state: NetWorthUiState): String {
+    val series = state.series
+    val delta = series?.growthAbsolute
+    val bp = series?.growthBp
+    return when {
+        // 只有一次记录时没有期初，显示"—"并在注脚说清缺什么 —— 空着会让人以为是 0
+        delta == null -> "—"
+        // 一直没更新估值时结转会让首尾两点完全相等，这在本 App 里很常见。
+        // "¥0.00 · 0.00%" 要读两个数才知道"没动"，直说更快
+        delta.isZero -> "没有变化"
+        bp == null -> delta.formatSigned(state.baseCurrency)
+        else -> "${delta.formatSigned(state.baseCurrency)} · ${bp.bpToSignedPercent()}"
+    }
+}
+
+/**
+ * 增长的基准是哪一期。同一个 +2% 在按月/按季/按年下比的起点完全不同。
+ *
+ * 没有数的时候必须说清是**哪一种**没有：只记过一次，和"记过但两端不可比"，
+ * 用户要做的事完全不同（一个是再记一次，一个是去补行情/汇率）。
+ */
+private fun growthSub(state: NetWorthUiState): String? {
+    val series = state.series ?: return null
+    if (!series.hasBaseline) return "只有一次记录，没有可比的期初"
+    if (series.growthAbsolute == null) return "期初或期末有资产无法估值，两端不可比"
+    return series.baselineDate?.periodLabel(series.period)?.let { "相比 $it" }
+}
+
+/** 浮动盈亏：**剔除新增投入**。 */
+private fun pnlValue(state: NetWorthUiState): String {
+    val pnl = state.pnl?.takeIf { it.hasCoverage } ?: return "—"
+    val rate = pnl.pnl.returnBp
+    val absolute = pnl.pnl.absolute.formatSigned(state.baseCurrency)
+    return if (rate == null) absolute else "$absolute · ${rate.bpToSignedPercent()}"
+}
+
+/** 覆盖面必须写出来：没填成本的资产不参与，这个数只代表填了的那几项。 */
+private fun pnlSub(state: NetWorthUiState): String {
+    // 没有覆盖时不是"盈亏为 0"，是"没填成本所以算不了" —— 顺便告诉用户缺什么
+    val pnl = state.pnl?.takeIf { it.hasCoverage } ?: return "还没填成本"
+    return "覆盖 ${pnl.coveredAssetIds.size} 项资产"
+}
+
+/** 涨跌配色：中国股市语境红涨绿跌，见 [com.boomsset.ui.GainLossColors]。 */
+@Composable
+private fun signedColor(minorUnits: Long?): Color = when {
+    minorUnits == null || minorUnits == 0L -> MaterialTheme.colorScheme.onPrimaryContainer
+    minorUnits > 0L -> riseColor()
+    else -> fallColor()
+}
+
+/**
+ * 「标签在上、数值在下」的一格。
+ *
+ * 数值用 `titleSmall` 而不是 `bodySmall`：这一格里数值才是要被扫视的东西，
+ * 标签是给它定口径的注脚。整句式的 "净值增长 +2.10%（含新增投入）" 做不到这一点 ——
+ * 那行里数字和文字一样重。
+ */
+@Composable
+private fun KpiCell(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    sub: String? = null,
+    valueColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = valueColor,
+        )
+        sub?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
+    }
+}
+
+/**
+ * 整行一个指标：**标签在左、数值在右**，注脚另起一行贴在标签下面。
+ *
+ * 给标签加 `weight(1f)` 而不是给数值 —— Row 先按完整宽度量没有 weight 的子项，
+ * 剩下的才分给带 weight 的。所以**数值总是完整的一行**，宽度不够时折的是标签
+ * （标签是句子，折行读起来无所谓；金额折行会把一个数劈成两半）。
+ */
+@Composable
+private fun MetricRow(
+    label: String,
+    value: String,
+    sub: String? = null,
+    valueColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
+    info: String? = null,
+) {
+    val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
+    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // (i) 要紧跟在标签文字后面，不能直接放进外层 Row —— 标签占了 weight(1f)
+            // 会把 (i) 推到数值旁边，看起来像是在解释数值。`fill = false` 让标签
+            // 只占它真正需要的宽度，(i) 才贴着标签末尾。
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    buildString {
-                        append("浮动盈亏 ")
-                        append(pnl.pnl.absolute.formatWithCurrency(state.baseCurrency))
-                        if (rate != null) append("（${rate.bpToPercent(withSign = true)}）")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = when {
-                        pnl.pnl.absolute.minorUnits > 0 -> riseColor()
-                        pnl.pnl.absolute.minorUnits < 0 -> fallColor()
-                        else -> MaterialTheme.colorScheme.onPrimaryContainer
-                    },
-                )
-                Text(
-                    "仅覆盖已填成本的 ${pnl.coveredAssetIds.size} 项资产",
+                    label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = onContainer,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                if (info != null) InfoTooltip(info)
             }
+            Text(
+                value,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = valueColor,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+        sub?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.labelSmall,
+                color = onContainer,
+            )
         }
     }
 }
@@ -279,20 +468,14 @@ private fun UnpricedWarning(count: Int) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("$count 项资产无法估值", style = MaterialTheme.typography.titleSmall)
             Text(
+                // 同上：`Text` 不解析 Markdown，原来这里的 `**没有**` 在界面上
+                // 就是四个星号（和上面那个 tooltip 是同一个坑）
                 "可能是缺行情/汇率，也可能是份额或价格的数量级超出了可计算范围。" +
-                    "这些资产**没有**计入上面的净值 —— 不按 0 计算，是为了避免静默低估。",
+                    "这些资产没有计入上面的净值 —— 不按 0 计算，是为了避免静默低估。",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
     }
-}
-
-@Composable
-private fun GrowthVsReturnNote() {
-    Text(
-        "「净值增长」包含你新存进去的钱，「浮动盈亏」才反映投资本身的表现。",
-        style = MaterialTheme.typography.labelSmall,
-    )
 }
 
 /**

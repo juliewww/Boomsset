@@ -58,6 +58,27 @@ data class NetWorthPoint(
 ) {
     val netWorth: Money get() = totalAssets - totalLiabilities
     val hasUnpriced: Boolean get() = unpricedAssetIds.isNotEmpty()
+
+    /**
+     * 负债率 = 总负债 / 总资产，基点。
+     *
+     * 分母是**总资产**而不是净资产 —— "欠的钱占身家多大比例"这个问题里，
+     * 净资产做分母会在高杠杆时给出超过 100% 的数，读不出意义。
+     *
+     * @return 总资产 ≤ 0 时返回 null（分母无意义）。**不返回 0** ——
+     *   0% 会被读成"没有负债"，而"一分资产都没有"是另一回事。
+     */
+    val liabilityRatioBp: Int?
+        get() {
+            val assets = totalAssets.minorUnits
+            if (assets <= 0L) return null
+            val liabilities = totalLiabilities.minorUnits
+            // 乘法先于除法，所以数量级极端时会溢出 Long。溢出是静默回绕（不像
+            // FixedPoint 会抛），所以这里主动降级成 null —— 宁可不显示，
+            // 不能显示一个回绕出来的假比率。见 AGENTS.md 教训 4。
+            if (liabilities > Long.MAX_VALUE / TargetAllocation.TOTAL_BP) return null
+            return (liabilities * TargetAllocation.TOTAL_BP / assets).toInt()
+        }
 }
 
 /** 资产配置视图：当前比例 vs 目标比例。 */

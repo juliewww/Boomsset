@@ -6,6 +6,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.plus
+import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
 /**
@@ -41,14 +42,59 @@ data class NetWorthSeries(
     val latest: NetWorthPoint? get() = points.lastOrNull()
     val earliest: NetWorthPoint? get() = points.firstOrNull()
 
-    /** 整段区间的净值增长率（基点）。注意这**包含新增投入**，不是投资收益率。 */
-    val growthBp: Int?
+    /**
+     * 首尾两个端点，只有一个点时为 null（没有可比的期初）。
+     *
+     * 三个「整段区间」的派生值（增长率、变化额、基准日）都从这里取端点 ——
+     * 各自判一次"点够不够"迟早会判得不一样，然后 UI 上出现"增长 —"却又
+     * 写着"相比 2026年8月"这种自相矛盾的组合。
+     */
+    private val endpoints: Pair<NetWorthPoint, NetWorthPoint>?
         get() {
             val from = earliest ?: return null
             val to = latest ?: return null
-            if (from === to) return null
-            return PortfolioCalculator.netWorthGrowthBp(from, to)
+            return if (from === to) null else from to to
         }
+
+    /** 有没有可比的期初（点数 ≥ 2）。UI 要区分「只记过一次」和「记过但算不出」。 */
+    val hasBaseline: Boolean get() = endpoints != null
+
+    /**
+     * 整段区间的净值增长率（基点）。注意这**包含新增投入**，不是投资收益率。
+     *
+     * 任一端有资产无法估值就返回 null：百分比的分母是净值本身，而一个**已知低估**的
+     * 净值做分母会把涨幅按比例放大（房子估不出值时，股票涨 1 万可能显示成 +10%）。
+     */
+    val growthBp: Int?
+        get() = endpoints
+            ?.takeIf { (from, to) -> !from.hasUnpriced && !to.hasUnpriced }
+            ?.let { (from, to) -> PortfolioCalculator.netWorthGrowthBp(from, to) }
+
+    /**
+     * 整段区间的净值变化**额**。和 [growthBp] 取同一对端点，一个绝对一个相对。
+     *
+     * 需要它是因为百分比单独看不出量级："+2%" 可能是两千也可能是二十万，
+     * 而用户真正记得住的是那个金额。
+     *
+     * **两端估值覆盖面不同时返回 null。** 这不是洁癖，是实机踩到的：把查看币种切成 USD，
+     * 8 月那天没有历史汇率 → 那个点的资产整个估不出值、净值算成 0，拿它当期初，
+     * "净值增长"就变成"这个月从 0 涨到全部身家"（+$13,097 相比 8 月）——
+     * 一个纯属虚构的好消息。覆盖面一样时差额仍然有意义（比较的是同一个子集），
+     * 所以这里判的是"覆盖面变没变"，而不是"有没有估不出的资产"。
+     */
+    val growthAbsolute: Money?
+        get() = endpoints
+            ?.takeIf { (from, to) -> from.unpricedAssetIds.toSet() == to.unpricedAssetIds.toSet() }
+            ?.let { (from, to) -> to.netWorth - from.netWorth }
+
+    /**
+     * [growthBp] / [growthAbsolute] 是**相比哪一天**算的。
+     *
+     * UI 必须把它显示出来：同一个"净值增长 +2%"在按月/按季/按年下比的是完全不同的
+     * 起点，不说基准就等于没说清这个数是什么。
+     */
+    val baselineDate: LocalDate?
+        get() = endpoints?.let { dates.firstOrNull() }
 }
 
 /**
@@ -176,6 +222,27 @@ object PortfolioSeriesCalculator {
             snapshots = data.latestSnapshotsAt(at),
             context = data.valuationContextAt(today, baseCurrency),
         )
+    }
+
+    /**
+     * 最近一次记录快照的日期（用户本地时区）。
+     *
+     * 这个 App **记快照不记流水**，所以"数据有多新"直接决定顶上那个净值可不可信 ——
+     * 三个月没更新的净值和今天刚更新的净值长得一模一样，不把日期显示出来，
+     * 用户没有任何线索判断自己在看的是不是过期数字。
+     *
+     * 只看**未归档**资产：归档会追加一条 0 值快照，那是"结束维护"的动作，
+     * 拿它当"最近记录"会让一次归档把整个组合伪装成刚更新过。
+     *
+     * @return 一条快照都没有时返回 null（新用户）。
+     */
+    fun lastRecordedDate(data: PortfolioData, zone: TimeZone): LocalDate? {
+        val activeIds = data.assets.filterNot { it.isArchived }.map { it.id }.toSet()
+        return data.snapshots
+            .filter { it.assetId in activeIds }
+            .maxOfOrNull { it.asOf }
+            ?.toLocalDateTime(zone)
+            ?.date
     }
 }
 

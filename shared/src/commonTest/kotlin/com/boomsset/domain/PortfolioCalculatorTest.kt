@@ -304,4 +304,28 @@ class PortfolioCalculatorTest {
 
         PortfolioCalculator.netWorthGrowthBp(zero, later).shouldBeNull()
     }
+
+    // ---------- 负债率 ----------
+
+    @Test
+    fun `负债率的分母是总资产不是净资产`() {
+        // 300 万房 + 200 万房贷：负债率 = 200/300 = 66.67%。
+        // 用净资产（100 万）做分母会得到 200% —— 那个数读不出任何意义
+        val point = NetWorthPoint(t, cny, Money(3_000_000_00), Money(2_000_000_00))
+
+        point.liabilityRatioBp shouldBe 6666  // 66.66%（基点整除截断）
+        point.netWorth shouldBe Money(1_000_000_00)
+    }
+
+    @Test
+    fun `没有负债时负债率是零`() {
+        NetWorthPoint(t, cny, Money(100_000_00), Money.ZERO).liabilityRatioBp shouldBe 0
+    }
+
+    @Test
+    fun `总资产为零时负债率是null而不是零`() {
+        // 0% 会被读成"没有负债"，而这里的事实是"没有资产可作分母"。
+        // 只有负债、没有资产（比如只录了一笔信用卡）就是这个状态
+        NetWorthPoint(t, cny, Money.ZERO, Money(10_000_00)).liabilityRatioBp.shouldBeNull()
+    }
 }

@@ -1,8 +1,10 @@
 package com.boomsset.ui
 
 import com.boomsset.domain.Money
+import com.boomsset.domain.Period
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
+import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 
 class FormattingTest {
@@ -24,6 +26,37 @@ class FormattingTest {
     fun `带币种符号`() {
         Money(123_456).formatWithCurrency("CNY") shouldBe "¥1,234.56"
         Money(123_456).formatWithCurrency("USD") shouldBe "$1,234.56"
+        // 负号在符号外面，不是"¥-1,234.56"
+        Money(-123_456).formatWithCurrency("CNY") shouldBe "-¥1,234.56"
+    }
+
+    @Test
+    fun `变化额带显式正负号 零不带`() {
+        // 顶部卡片的"净值增长"是变化量，正数没有加号就看不出方向
+        Money(56_400).formatSigned("CNY") shouldBe "+¥564.00"
+        Money(-56_400).formatSigned("CNY") shouldBe "-¥564.00"
+        // "+¥0.00" 读起来像"涨了 0"，而事实是没有变化
+        Money.ZERO.formatSigned("CNY") shouldBe "¥0.00"
+    }
+
+    @Test
+    fun `日期与周期标签`() {
+        LocalDate(2026, 8, 4).monthDayLabel() shouldBe "8月4日"
+        // 周期标签一定带年份：按月最多回看 12 个月，"9月"跨年就有歧义
+        LocalDate(2025, 9, 30).periodLabel(Period.MONTH) shouldBe "2025年9月"
+        LocalDate(2025, 9, 30).periodLabel(Period.QUARTER) shouldBe "2025年Q3"
+        LocalDate(2025, 12, 31).periodLabel(Period.QUARTER) shouldBe "2025年Q4"
+        LocalDate(2025, 12, 31).periodLabel(Period.YEAR) shouldBe "2025年"
+    }
+
+    @Test
+    fun `最近记录的新鲜度描述`() {
+        val day = LocalDate(2026, 8, 4)
+        lastRecordDescription(day, 0) shouldBe "最近记录 8月4日 · 今天"
+        lastRecordDescription(day, 1) shouldBe "最近记录 8月4日 · 昨天"
+        lastRecordDescription(day, 12) shouldBe "最近记录 8月4日 · 12 天前"
+        // 一条快照都没有 → 不显示这一行，而不是显示一句"从未记录"占地方
+        lastRecordDescription(null, null).shouldBeNull()
     }
 
     @Test
@@ -33,6 +66,13 @@ class FormattingTest {
         (-500).bpToPercent() shouldBe "-5.00%"
         1000.bpToPercent(withSign = true) shouldBe "+10.00%"
         3000.bpToPercent(decimals = 0) shouldBe "30%"
+    }
+
+    @Test
+    fun `变化量的百分比 零不带号`() {
+        1000.bpToSignedPercent() shouldBe "+10.00%"
+        (-500).bpToSignedPercent() shouldBe "-5.00%"
+        0.bpToSignedPercent() shouldBe "0.00%"
     }
 
     // ---------- 输入解析：不经过 Double ----------

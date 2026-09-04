@@ -280,6 +280,152 @@ class PortfolioSeriesCalculatorTest {
         series.growthBp.shouldBeNull()
     }
 
+    @Test
+    fun `变化额和增长率取同一对端点`() {
+        // 顶部卡片同时显示 "+¥10,000" 和 "+10%" —— 两个必须是同一段区间算出来的，
+        // 否则金额和百分比互相矛盾（一个说涨一个说跌都可能）
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 5, 10), 100_000_00),
+                manual(2, 1, LocalDate(2026, 7, 10), 110_000_00),
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 3,
+        )
+
+        series.growthAbsolute shouldBe Money(10_000_00)
+        series.growthBp shouldBe 1000
+        // 基准日期必须是首个取样点，UI 上写成"相比 2026年5月"
+        series.baselineDate shouldBe series.dates.first()
+    }
+
+    @Test
+    fun `只有一个取样点时没有变化额也没有基准日期`() {
+        // 期初为 0 那条测的是"增长率无意义"；这条测的是"连期初都不存在"——
+        // 第一次记完快照 + trim 之后就是这个状态，UI 要显示"只有一次记录"而不是 ¥0
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone,
+            pointCount = 3, trimBeforeFirstSnapshot = true,
+        )
+
+        series.points shouldHaveSize 1
+        series.growthAbsolute.shouldBeNull()
+        series.baselineDate.shouldBeNull()
+    }
+
+    @Test
+    fun `两端估值覆盖面不同时不给变化额也不给增长率`() {
+        // 实机复现（USD 视图）：8 月那天没有历史汇率 → 那个点的资产整个估不出值、
+        // 净值算成 0。拿它当期初，顶部卡片会写成"+$13,097.04 · 相比 2026年8月"——
+        // 读起来像"这个月从零挣出了全部身家"，纯属虚构
+        val early = NetWorthPoint(
+            asOf = LocalDate(2026, 8, 31).endOfDayIn(zone),
+            baseCurrency = "USD",
+            totalAssets = Money.ZERO,
+            totalLiabilities = Money.ZERO,
+            unpricedAssetIds = listOf(1L),
+        )
+        val late = NetWorthPoint(
+            asOf = LocalDate(2026, 9, 4).endOfDayIn(zone),
+            baseCurrency = "USD",
+            totalAssets = Money(14_883_00),
+            totalLiabilities = Money(1_785_96),
+        )
+        val series = NetWorthSeries(
+            period = Period.MONTH,
+            baseCurrency = "USD",
+            dates = listOf(LocalDate(2026, 8, 31), LocalDate(2026, 9, 4)),
+            points = listOf(early, late),
+        )
+
+        series.hasBaseline shouldBe true   // 点是有两个的，不是"只记过一次"
+        series.growthAbsolute.shouldBeNull()
+        series.growthBp.shouldBeNull()
+    }
+
+    @Test
+    fun `两端都估不出同一项资产时给变化额但不给百分比`() {
+        // 行情接口挂掉那种情况：房子两端都估不出，剩下部分的变化额是真实的
+        // （比较的是同一个子集），但百分比的分母是个已知低估的净值 —— 会把涨幅放大
+        fun point(day: LocalDate, assets: Long) = NetWorthPoint(
+            asOf = day.endOfDayIn(zone),
+            baseCurrency = cny,
+            totalAssets = Money(assets),
+            totalLiabilities = Money.ZERO,
+            unpricedAssetIds = listOf(9L),
+        )
+        val series = NetWorthSeries(
+            period = Period.MONTH,
+            baseCurrency = cny,
+            dates = listOf(LocalDate(2026, 6, 30), LocalDate(2026, 7, 28)),
+            points = listOf(point(LocalDate(2026, 6, 30), 100_000_00), point(today, 110_000_00)),
+        )
+
+        series.growthAbsolute shouldBe Money(10_000_00)
+        series.growthBp.shouldBeNull()
+    }
+
+    // ---------- 数据新鲜度 ----------
+
+    @Test
+    fun `最近记录日期取全部资产里最新的那条快照`() {
+        val data = PortfolioData(
+            assets = listOf(asset(1), asset(2)),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 5, 10), 100_000_00),
+                manual(2, 2, LocalDate(2026, 7, 20), 20_000_00),
+                manual(3, 1, LocalDate(2026, 6, 30), 105_000_00),
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        PortfolioSeriesCalculator.lastRecordedDate(data, zone) shouldBe LocalDate(2026, 7, 20)
+    }
+
+    @Test
+    fun `已归档资产的归零快照不算最近记录`() {
+        // 归档会追加一条 0 值快照。拿它当"最近记录"会让一次归档把整个组合
+        // 伪装成刚更新过 —— 而用户其实好几个月没维护过任何估值了
+        val active = asset(1)
+        val archived = asset(2).copy(archivedAt = Instant.fromEpochMilliseconds(1))
+        val data = PortfolioData(
+            assets = listOf(active, archived),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 5, 10), 100_000_00),
+                manual(2, 2, LocalDate(2026, 7, 20), 0),   // 归档的归零快照
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        PortfolioSeriesCalculator.lastRecordedDate(data, zone) shouldBe LocalDate(2026, 5, 10)
+    }
+
+    @Test
+    fun `一条快照都没有时最近记录日期为null`() {
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = emptyList(),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        PortfolioSeriesCalculator.lastRecordedDate(data, zone).shouldBeNull()
+    }
+
     // ---------- 配置视图 ----------
 
     @Test
