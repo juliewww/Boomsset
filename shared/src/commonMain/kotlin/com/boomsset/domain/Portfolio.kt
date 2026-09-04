@@ -76,7 +76,7 @@ data class NetWorthPoint(
             // 乘法先于除法，所以数量级极端时会溢出 Long。溢出是静默回绕（不像
             // FixedPoint 会抛），所以这里主动降级成 null —— 宁可不显示，
             // 不能显示一个回绕出来的假比率。见 AGENTS.md 教训 4。
-            if (liabilities > Long.MAX_VALUE / TargetAllocation.TOTAL_BP) return null
+            if (!fitsBpMath(liabilities)) return null
             return (liabilities * TargetAllocation.TOTAL_BP / assets).toInt()
         }
 }
@@ -95,10 +95,12 @@ data class AllocationView(
      *
      * @return 净资产 ≤ 0 时返回 null —— 此时比例在数学上无意义（分母为零或负），
      *   UI 应当直说"净资产为负，配置比例无法计算"，而不是显示一个乱数。
+     *   量级过大导致基点换算会回绕时同样返回 null，见 [fitsBpMath]。
      */
     fun shareBp(assetClass: AssetClass): Int? {
         if (netWorth.minorUnits <= 0L) return null
         val exposure = exposures[assetClass]?.netExposure ?: Money.ZERO
+        if (!fitsBpMath(netWorth.minorUnits) || !fitsBpMath(exposure.minorUnits)) return null
         return (exposure.minorUnits * TargetAllocation.TOTAL_BP / netWorth.minorUnits).toInt()
     }
 
@@ -112,8 +114,58 @@ data class AllocationView(
         return current - goal
     }
 
+    /**
+     * 要让这一类回到目标比例，需要调整的金额。**正数需增加、负数需减少。**
+     *
+     * ## 口径：内部调仓，总净资产不变
+     *
+     * 这个数假设调整是在组合**内部**发生的（卖掉超配的类、把等额买进低配的类），
+     * 所以分母不变。由此得到一条可以断言的不变量：**全部大类的调整额加总为 0**
+     * （因为目标比例之和恒为 [TargetAllocation.TOTAL_BP]）—— 超配的类要卖出多少，
+     * 正好够低配的类买入。取整会让这个和有最多「大类数 − 1」分的误差，见测试。
+     *
+     * 另一个口径是"只投新钱、什么都不卖"，那时新钱同时进分母，算式是
+     * `x = (目标 × 净资产 − 净敞口) / (1 − 目标)`，数字明显更大（20%→40% 的例子里
+     * 是 33.3 万而不是 20 万）。**没有选它**：各类独立算出来的数加不起来，
+     * 拼不成一个可执行的方案，而"卖超配补低配"是再平衡的通行含义。
+     *
+     * ## 为什么不从 [deviationBp] 反算
+     *
+     * `−偏离 × 净资产` 看起来等价，实际会放大误差：[deviationBp] 是从**已经截断到
+     * 整基点**的 [shareBp] 减出来的，1 基点乘上净资产就是真金白银 ——
+     * 每 100 万净资产误差 ¥100，随机对照跑到过 ¥99,876（净资产约 10 亿那档）。
+     * 这里 `目标额 − 净敞口` 只截断一次，误差 < 1 分。
+     *
+     * @return null 的条件和 [deviationBp] **完全一致**（净资产 ≤ 0、没有生效目标、
+     *   量级过大）。不一致会让 UI 出现"比例说算不出来、金额却给了个数"。
+     */
+    fun rebalanceAmount(assetClass: AssetClass): Money? {
+        if (netWorth.minorUnits <= 0L) return null
+        val goal = targetBp(assetClass) ?: return null
+        val exposure = exposures[assetClass]?.netExposure ?: Money.ZERO
+        if (!fitsBpMath(netWorth.minorUnits) || !fitsBpMath(exposure.minorUnits)) return null
+        val goalAmount = Money(goal * netWorth.minorUnits / TargetAllocation.TOTAL_BP)
+        return goalAmount - exposure
+    }
+
     /** 有任何大类净敞口为负 —— 饼图画不出负数，UI 要显式标注。 */
     val hasNegativeExposure: Boolean get() = exposures.values.any { it.isNegative }
+}
+
+/**
+ * 这个金额乘上 [TargetAllocation.TOTAL_BP] 会不会溢出 Long。
+ * 三处基点换算共用它：[NetWorthPoint.liabilityRatioBp]、[AllocationView.shareBp]、
+ * [AllocationView.rebalanceAmount]。
+ *
+ * 基点换算全都是「先乘 10000 再除」，而 **Long 溢出不抛异常，会安静地回绕**成一个
+ * 荒谬的数 —— 那正是这个项目最不能接受的失败方式（AGENTS.md：金额宁可显示不出来，
+ * 也不能静默算错）。阈值约 9.2 万亿元，现实里到不了，但闸门只要一行。
+ *
+ * 不写成 `abs(this) <= ...`：`abs(Long.MIN_VALUE)` 本身就是负数，比较会给出错的答案。
+ */
+private fun fitsBpMath(minorUnits: Long): Boolean {
+    val limit = Long.MAX_VALUE / TargetAllocation.TOTAL_BP
+    return minorUnits in -limit..limit
 }
 
 /**

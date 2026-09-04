@@ -37,6 +37,9 @@ class FormattingTest {
         Money(-56_400).formatSigned("CNY") shouldBe "-¥564.00"
         // "+¥0.00" 读起来像"涨了 0"，而事实是没有变化
         Money.ZERO.formatSigned("CNY") shouldBe "¥0.00"
+        // 配置页「距目标」的调整额是规划用的量级，两位小数是假精度
+        Money(-31_250_000).formatSigned("CNY", showDecimals = false) shouldBe "-¥312,500"
+        Money(25_000_000).formatSigned("USD", showDecimals = false) shouldBe "+$250,000"
     }
 
     @Test
