@@ -30,6 +30,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.data.SUPPORTED_CURRENCIES
@@ -539,6 +541,14 @@ private fun ChartControls(
  */
 private val CONTROL_HEIGHT = 40.dp
 
+/**
+ * 带文字标签的开关。
+ *
+ * `Switch` 上要显式给 [contentDescription]：标签是**相邻的兄弟节点**，不会并进开关自己的
+ * 无障碍节点里 —— 不给的话读屏用户听到的只是"开关，已开启"，而这一页有三个开关
+ * （按大类 / 趋势图 / 应用锁），根本分不出是哪一个。顺带也让 XCUITest 能按名字定位到它，
+ * 和输入框那几个 `field-*` 是同一套办法（见 [com.boomsset.ui.FIELD_NAME] 的注释）。
+ */
 @Composable
 private fun LabeledSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
@@ -547,7 +557,11 @@ private fun LabeledSwitch(label: String, checked: Boolean, onCheckedChange: (Boo
         modifier = Modifier.height(CONTROL_HEIGHT),
     ) {
         Text(label, style = MaterialTheme.typography.labelMedium)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.semantics { contentDescription = label },
+        )
     }
 }
 

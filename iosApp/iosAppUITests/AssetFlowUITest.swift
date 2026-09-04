@@ -306,6 +306,110 @@ final class AssetFlowUITest: XCTestCase {
         }
     }
 
+    // MARK: - 净值页图表的三个控件
+
+    /// 周期是**下拉**，不是一排常驻 chip；三个都能选，当前项在菜单里有勾。
+    ///
+    /// 顺带守住 AGENTS.md 教训 14 那次真实闪退：**从按月切到按季/按年会崩**。
+    /// 原因是图表模型和 UI 状态必然差一帧 —— 切换的那一帧 composition 已经拿到点数更少的
+    /// 新序列，Vico 手里还是旧模型，formatter 被问到越界的 x 就返回空串，
+    /// 而 Vico 对每个轴标签都 `check(isNotBlank())`。**只有切到更粗的粒度才会崩**
+    /// （点数变少才取得到 null），所以这里必须按「月 → 季 → 年」这个方向走一遍。
+    func testChartPeriodIsADropdown() throws {
+        try addCashAsset(value: "100000", cost: nil)
+        app.buttons["净值"].tap()
+
+        // 常驻的三个 chip 应该已经不在了 —— 收进下拉正是为了把那一行还给图表
+        waitFor(periodButton("按月"), "周期下拉按钮")
+        XCTAssertFalse(
+            app.buttons["按季"].exists,
+            "周期应收进下拉，不该有常驻的「按季」chip，实际树：\n\(app.debugDescription)"
+        )
+
+        // 按月 → 按季 → 按年，逐级变粗，每一步都不能崩
+        for next in ["按季", "按年"] {
+            let previous = currentPeriodLabel()
+            let current = periodButton(previous)
+            waitFor(current, "周期下拉按钮")
+            current.tap()
+
+            // 菜单会盖住按钮自己，所以当前项必须在菜单里另有标记（打勾）——
+            // 只靠"按钮上写着按月"是不够的，那块正被菜单盖着
+            XCTAssertTrue(
+                app.staticTexts["✓"].waitForExistence(timeout: 5),
+                "菜单里应给当前的「\(previous)」打勾，实际树：\n\(app.debugDescription)"
+            )
+
+            guard let item = menuItem(next) else {
+                XCTFail("下拉里找不到「\(next)」，实际树：\n\(app.debugDescription)")
+                return
+            }
+            item.tap()
+
+            XCTAssertTrue(
+                periodButton(next).waitForExistence(timeout: 5),
+                "选完「\(next)」按钮文字应跟着变，实际树：\n\(app.debugDescription)"
+            )
+            // 切粗粒度是那次闪退的方向，确认 App 还活着
+            XCTAssertEqual(app.state, .runningForeground, "切到「\(next)」后 App 不该退出")
+        }
+    }
+
+    /// 两个开关（按大类 / 趋势图）四种组合都切得动，且每种都给出**可见的**内容。
+    ///
+    /// "可见的内容"是这条测试的重点，不是"没崩"。AGENTS.md 教训 10 就是这么来的：
+    /// 只有一个取样点时折线画不出线段，图表区域里只剩坐标轴 —— 数据全对、单测全绿、
+    /// 用户看到一片空白。这里刚加完一笔资产**正好只有一个点**，所以趋势图必须
+    /// 显式说明"点不够"，而不是给一张空图。
+    func testChartModeAndStyleSwitchesStayUsable() throws {
+        try addCashAsset(value: "100000", cost: nil)
+        app.buttons["净值"].tap()
+        waitFor(periodButton("按月"), "周期下拉按钮")
+
+        // ① 总资产 + 柱状图（默认）：一个点也要画得出柱子（幽灵系列，教训 13）。
+        //    图表是 Skia 画的、进不了无障碍树，所以这里只能反过来断言
+        //    "没有走到那两条说明分支"，也就是图确实画了。
+        XCTAssertFalse(trendTooShortNote.exists, "默认是柱状图，不该提示点数不够")
+
+        // ② 按大类 + 柱状图：图例出现，五个大类都有名字
+        //    （浅色模式下几类颜色低于 3:1，名字是补偿手段，不能只有色块）
+        toggle("按大类")
+        for name in ["流动资金", "固定收益", "权益类", "另类实物", "保障类"] {
+            XCTAssertTrue(
+                app.staticTexts[name].waitForExistence(timeout: 5),
+                "按大类时图例应列出「\(name)」，实际树：\n\(app.debugDescription)"
+            )
+        }
+        XCTAssertTrue(
+            app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "净敞口")
+            ).firstMatch.exists,
+            "按大类时必须说明这张图的口径是净敞口，否则合计和上面的净值对不上会被当成算错"
+        )
+
+        // ③ 按大类 + 趋势图：只有一个点，必须**明说**画不了，而不是给一张空图
+        toggle("趋势图")
+        XCTAssertTrue(
+            trendTooShortNote.waitForExistence(timeout: 5),
+            "只有一个取样点时趋势图应说明原因，实际树：\n\(app.debugDescription)"
+        )
+
+        // ④ 总资产 + 趋势图：同样只有一个点，说明照旧
+        toggle("按大类")
+        XCTAssertTrue(
+            trendTooShortNote.waitForExistence(timeout: 5),
+            "总资产趋势图在一个点时也该说明原因，实际树：\n\(app.debugDescription)"
+        )
+
+        // 切回柱状图，说明收起、图重新画出来
+        toggle("趋势图")
+        XCTAssertFalse(
+            trendTooShortNote.waitForExistence(timeout: 2),
+            "切回柱状图后不该还留着「点数不够」的说明"
+        )
+        XCTAssertEqual(app.state, .runningForeground, "四种组合切完 App 不该退出")
+    }
+
     /// 应用锁在 iOS 上的能力判断 —— 模拟器默认没录入生物识别
     func testAppLockReportsCapabilityHonestly() throws {
         waitFor(app.staticTexts["应用锁"], "应用锁开关")
@@ -396,6 +500,70 @@ final class AssetFlowUITest: XCTestCase {
         chip.tap()
         // 选完进入详情表单，标志是那张"已选品种"卡片上的「换一个」
         waitFor(app.buttons["换一个"], "详情表单")
+    }
+
+    // MARK: - 图表控件的辅助
+
+    /// 只有一个取样点时趋势图给出的说明。见 [testChartModeAndStyleSwitchesStayUsable]。
+    private var trendTooShortNote: XCUIElement {
+        app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", "两个以上的取样点")
+        ).firstMatch
+    }
+
+    /// 周期下拉的按钮。
+    ///
+    /// **必须前缀匹配**：按钮上写的是「按月 ▾」（带那个下拉三角），
+    /// `app.buttons["按月"]` 精确匹配一个都找不到。而下拉**菜单项**没有三角，
+    /// 所以精确匹配那几个名字命中的一定是菜单项、不会误伤按钮 ——
+    /// `testChartPeriodIsADropdown` 里"不该有常驻 chip"那条断言正是靠这个区分。
+    private func periodButton(_ label: String) -> XCUIElement {
+        app.buttons
+            .matching(NSPredicate(format: "label BEGINSWITH %@", label))
+            .firstMatch
+    }
+
+    /// 等下拉菜单里的某一项出现。
+    ///
+    /// **菜单项的元素类型探不准**（`DropdownMenuItem` 里就是一个 `Text`，可能落成
+    /// button 也可能落成 staticText），所以两种都等一等再判断 —— 不能像
+    /// `app.buttons[x].exists ? ... : ...` 那样立刻取值：菜单是弹出来的，
+    /// 判断的那一刻它可能还没画上去，于是必然落到另一个分支上去空等。
+    private func menuItem(_ name: String, timeout: TimeInterval = 5) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for candidate in [app.buttons[name], app.staticTexts[name]] where candidate.exists {
+                return candidate
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < deadline
+        return nil
+    }
+
+    private func currentPeriodLabel() -> String {
+        for label in ["按月", "按季", "按年"] where periodButton(label).exists {
+            return label
+        }
+        return "按月"
+    }
+
+    /// 点一个带文字标签的开关（「按大类」/「趋势图」）。
+    ///
+    /// 共享层给这两个 `Switch` 加了显式 `contentDescription`（标签是相邻的兄弟节点，
+    /// 不会并进开关自己的无障碍节点）。**元素类型是探不准的** —— Compose 的开关在
+    /// iOS 无障碍树里可能落成 switch / button / other，取决于 toggleable 语义怎么映射，
+    /// 所以这里逐个类型试，和 [scrollUntilVisible] 同一个思路。
+    private func toggle(_ name: String) {
+        let predicate = NSPredicate(format: "label BEGINSWITH %@", name)
+        for query in [app.switches, app.buttons, app.otherElements] {
+            let element = query.matching(predicate).firstMatch
+            guard element.exists else { continue }
+            element.tap()
+            return
+        }
+        print("=== 找不到开关「\(name)」，当前无障碍树 ===")
+        print(app.debugDescription)
+        XCTFail("找不到开关「\(name)」")
     }
 
     private func addCashAsset(value: String, cost: String?) throws {
