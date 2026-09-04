@@ -151,10 +151,22 @@ cyan/purple 彩度不足。在 2520 种组合里搜出 588 组通过，取离原
 - 添加资产第二步表单（按份额取行情时的「持有份额」「总投入成本」）键盘弹出会挡住字段，
   补了 `Modifier.imePadding()` —— 见下方教训 12
 
+**净值页的「查看币种」改成下拉（Android 模拟器 API 34 验证）：** 原来是 9 个 `FilterChip`
+排开，加上标签和一行说明，在手机上占三四行（反馈："位置占比太大"）。现在收成一行：
+标签 + `OutlinedButton`("CNY ▾") + `DropdownMenu`，说明收进 (i) tooltip。默认仍是 CNY
+（`DEFAULT_BASE_CURRENCY`，本来就是）。
+**没用 `ExposedDropdownMenuBox`** —— 那套是给文本输入框用的，会带进一个 56dp 高的
+`OutlinedTextField`，正好和"省空间"相反；添加资产页的 `CurrencyDropdown` 用它是对的
+（那里本来就是表单）。菜单展开会**盖住按钮自己**，所以当前币种在菜单里用 `trailingIcon` 打勾
+标出来（不是只换颜色 —— 颜色单独承载状态对色弱用户不成立）。
+配置页的 `InfoTooltip` 提到了 [InfoTooltip.kt](shared/src/commonMain/kotlin/com/boomsset/ui/InfoTooltip.kt)
+两页共用，同时改成 `isPersistent = true` —— 见下方教训 15。
+实测切 USD 折算正确（¥100,000 → $14,883，Frankfurter 实时汇率）、切回 CNY 原值不变。
+
 **还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）；
 iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会自动派生）。
 
-**教训（十四次都是实跑才发现、编译和单测全绿）：**
+**教训（十五次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
 2. 预填用带千分位的 `formatAmount()`，而解析器拒绝逗号 → **≥¥1000 的资产无法更新**
 3. 汇率刷新只在 ViewModel `init` 跑一次，那时还没有资产、需要的币种是空集 →
@@ -303,6 +315,25 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
     「UI 状态」和「图表模型」是两个独立的时间线，任何跨越它们的隐式依赖都会在切换的那一帧炸。
     单测测不到 Vico 画什么，但能锁住"喂进去的值永远合法"：见 `NetWorthChartAxisTest`
     （标签永不为空白串、spacing>0、offset>=0、最后一个点一定被标到）。
+
+15. **M3 的 tooltip 气泡默认 1.5 秒就自己消失 —— 把说明文字收进 (i) 之前得先知道这件事。**
+    净值页的币种说明收进 `InfoTooltip` 后，装到模拟器上**连拍才发现**气泡只活了一瞬：
+    `rememberTooltipState()` 默认 `isPersistent = false`，到点自动收（`TooltipDuration` 1500ms）。
+    装的是三四行中文，读完要好几秒 —— 等于把文字藏进了一个来不及看的地方。
+    改成 `rememberTooltipState(isPersistent = true)`（点别处才收）。
+    配置页那几个 tooltip 一直有同样的问题，共用组件之后一起修了。
+    ⚠️ **验证方法本身也是个坑**：`adb shell input tap` 之后回主机 `sleep` 再 `exec-out screencap`，
+    一次往返就够 1.5 秒了，抓到的永远是气泡消失后的画面 —— 我因此**先误判成"tooltip 根本不显示"**。
+    正确做法是把点击和连拍放进**同一条设备端命令**里：
+    `adb shell 'input tap X Y; for i in 1 2 3 4; do screencap -p /sdcard/tt_$i.png; done'`，
+    第一张（约 0.3s）就抓到了。**通则：验证「短暂出现」的 UI 不能用主机端 tap→sleep→screencap，
+    往返延迟比被测现象还长；要么在设备端连拍，要么先让它别自动消失。**
+    另外这次踩到一个环境问题：API 35 的 `google_apis_playstore` 模拟器上 `install` 报 Success、
+    `dumpsys package` 里 resolver table 明明有 MainActivity，但 `am start` 一直报
+    `Activity class does not exist`（重装、重启模拟器都没用）；换 `google_apis`（无 Play 商店）
+    的 AVD 就正常。按教训 9 那条：**换设备绕工具问题之前先确认新设备没绕掉被测条件** ——
+    这次测的是布局，和 SDK 等级无关，所以换到 API 34 可以；但如果测的是系统栏/edge-to-edge，
+    就必须留在 SDK ≥ 35。
 
 **另一条通则（第 1、5、8 条都是它）：空状态不能走一条不包含入口的渲染分支。**
 **不要只盯着提前 `return`** —— `when`/`if` 分支、早退的 `LazyColumn` item，任何

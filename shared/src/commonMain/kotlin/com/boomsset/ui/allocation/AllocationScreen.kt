@@ -20,24 +20,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TooltipAnchorPosition
-import androidx.compose.material3.TooltipBox
-import androidx.compose.material3.TooltipDefaults
-import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,10 +39,10 @@ import com.boomsset.domain.AllocationView
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.Money
 import com.boomsset.domain.TargetAllocation
+import com.boomsset.ui.InfoTooltip
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.label
 import com.boomsset.ui.formatWithCurrency
-import kotlinx.coroutines.launch
 
 @Composable
 fun AllocationScreen(
@@ -234,35 +226,6 @@ private fun AllocationPicker(
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
-        }
-    }
-}
-
-/**
- * (i) 图标 + 点按弹出的说明气泡。
- *
- * 用来把配置页里那些一次性看不懂但**不需要常驻**的解释文字收起来 ——
- * 之前"对比哪套目标""内置预设是行业常见的起点……"这类句子常驻显示，
- * 占地方还啰嗦（实机反馈）。`TooltipBox` 默认是长按/悬停触发，这里手动在
- * `onClick` 里调 `state.show()`，因为触屏上点一下比长按更符合"点 (i) 看说明"的直觉，
- * 而且这一页已经把"长按"用在了 [AllocationPicker] 的目标 chip 上 ——
- * 同一屏里不该有两种手势各自绑着不同含义。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun InfoTooltip(text: String) {
-    val tooltipState = rememberTooltipState()
-    val scope = rememberCoroutineScope()
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
-        tooltip = { PlainTooltip { Text(text) } },
-        state = tooltipState,
-    ) {
-        IconButton(
-            onClick = { scope.launch { tooltipState.show() } },
-            modifier = Modifier.size(28.dp),
-        ) {
-            Text("ⓘ", style = MaterialTheme.typography.labelMedium)
         }
     }
 }

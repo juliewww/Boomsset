@@ -1,8 +1,9 @@
 package com.boomsset.ui.networth
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,11 +12,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +33,7 @@ import com.boomsset.security.AppLockUiState
 import com.boomsset.security.AuthCapability
 import com.boomsset.domain.Money
 import com.boomsset.domain.Period
+import com.boomsset.ui.InfoTooltip
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.fallColor
 import com.boomsset.ui.formatWithCurrency
@@ -176,22 +185,63 @@ private fun AppLockToggle(lockState: AppLockUiState, onToggle: (Boolean) -> Unit
     }
 }
 
+/**
+ * 基准币种（以哪种币种看净值）。
+ *
+ * 原来是一排 9 个 `FilterChip` + 标签 + 一行说明，在手机上占掉三四行 ——
+ * 实机反馈"位置占比太大"。这一页是只读的趋势概览，最值钱的是概览卡片和图表；
+ * 而基准币种默认 CNY、**几乎从不改**，不该占这么大一块。
+ * 添加资产页早就因为同样的理由把币种换成了下拉（见 `CurrencyDropdown`），这里跟上。
+ *
+ * 说明文字收进 (i) —— "切换不会改写数据"是**用户切之前**才需要的一次性保证，
+ * 常驻显示只是噪音。
+ */
 @Composable
 private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("以哪种币种查看", style = MaterialTheme.typography.labelMedium)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SUPPORTED_CURRENCIES.forEach { code ->
-                FilterChip(
-                    selected = code == selected,
-                    onClick = { onSelect(code) },
-                    label = { Text(code) },
-                )
+    var expanded by remember { mutableStateOf(false) }
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("查看币种", style = MaterialTheme.typography.labelMedium)
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                // 箭头直接写字形，和项目里"＋""ⓘ"的用法一致（没有引图标依赖）
+                Text("$selected ▾", style = MaterialTheme.typography.labelLarge)
+            }
+            // 菜单锚在按钮这个 Box 上 —— DropdownMenu 自己会算位置，
+            // 不需要 ExposedDropdownMenuBox 那套（那是给文本输入框用的，
+            // 在这里会带进一个 56dp 高的输入框，正好和"省空间"相反）
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+            ) {
+                SUPPORTED_CURRENCIES.forEach { code ->
+                    DropdownMenuItem(
+                        text = { Text(code) },
+                        // 菜单展开时会盖住按钮本身（实机确认），所以当前币种必须在菜单里
+                        // 也标出来 —— 否则展开后就看不出现在是哪一种了。
+                        // 用勾而不是只换颜色：颜色单独承载状态对色弱用户不成立。
+                        trailingIcon = if (code == selected) {
+                            { Text("✓") }
+                        } else {
+                            null
+                        },
+                        onClick = {
+                            onSelect(code)
+                            expanded = false
+                        },
+                    )
+                }
             }
         }
-        Text(
-            "只改变展示口径。已记录的金额和币种一个都不会被改写。",
-            style = MaterialTheme.typography.labelSmall,
+        InfoTooltip(
+            "只改变展示口径：已记录的金额和币种一条都不会被改写，" +
+                "历史净值按当时的汇率折算。取不到汇率的资产会显示「无法估值」，不按 1:1 算。",
         )
     }
 }
