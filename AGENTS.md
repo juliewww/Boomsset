@@ -154,7 +154,7 @@ cyan/purple 彩度不足。在 2520 种组合里搜出 588 组通过，取离原
 **还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）；
 iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会自动派生）。
 
-**教训（十三次都是实跑才发现、编译和单测全绿）：**
+**教训（十四次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
 2. 预填用带千分位的 `formatAmount()`，而解析器拒绝逗号 → **≥¥1000 的资产无法更新**
 3. 汇率刷新只在 ViewModel `init` 跑一次，那时还没有资产、需要的币种是空集 →
@@ -282,6 +282,27 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
     正中间（5 个系列取中间下标 2），柱子的水平中心才会跟标签的水平中心对齐。
     **教训：`MergeMode.Grouped` 子柱的排列顺序完全由 `series()` 的调用顺序决定，
     "占位系列放哪"不是无所谓的细节，会直接决定真实柱子在这个位置里偏左还是居中。**
+
+14. **净值页从「按月」切到「按季/按年」直接闪退**（实机反馈，模拟器上已复现原始崩溃：
+    `IllegalStateException: CartesianValueFormatter.format returned a blank string`，
+    栈顶是 `HorizontalAxis.getMaxLabelWidth`）。原因是**图表模型和 UI 状态之间必然差一帧**：
+    `CartesianChartModelProducer` 是 `remember {}` 出来的、跨 period 切换一直活着，
+    而模型更新是 `LaunchedEffect` 里的 **suspend transaction**（还带过渡动画）。
+    切换的那一帧，composition 已经拿到新的 `series`（按季 3 个点），Vico 手里还是旧模型
+    （按月 7 个点）—— 原来的 `valueFormatter` 直接闭包捕获 `series.dates`，被问到 x=3..6 时
+    `getOrNull` 返回 null、formatter 返回 `""`，而 **Vico 对每个轴标签都 `check(isNotBlank())`**。
+    反过来（按季切按月）点数变多、取不到 null，所以**只有切到粗粒度才崩** —— 正好是反馈的现象，
+    这个方向性本身就是定位线索。
+    `ItemPlacer` 的 spacing/offset 是同一个坑的另一半：`getFirstLabelValue()` 用
+    `minX + offset * xStep` 去问 formatter，**这个 x 不做范围裁剪**，旧模型点少、
+    新算出的 offset 偏大时一样会问到越界的 x。
+    修法是把标签表放进 `ExtraStore`、和数据点在**同一个 transaction** 里落地，
+    formatter 从 `context.model.extraStore` 读，spacing/offset 也从 Vico 传进来的
+    `model.extraStore` 算（那两个 lambda 的参数就是它）。
+    **通则：凡是 formatter / ItemPlacer 需要的东西都必须跟着 model 走，不能从 composition 捕获** ——
+    「UI 状态」和「图表模型」是两个独立的时间线，任何跨越它们的隐式依赖都会在切换的那一帧炸。
+    单测测不到 Vico 画什么，但能锁住"喂进去的值永远合法"：见 `NetWorthChartAxisTest`
+    （标签永不为空白串、spacing>0、offset>=0、最后一个点一定被标到）。
 
 **另一条通则（第 1、5、8 条都是它）：空状态不能走一条不包含入口的渲染分支。**
 **不要只盯着提前 `return`** —— `when`/`if` 分支、早退的 `LazyColumn` item，任何
