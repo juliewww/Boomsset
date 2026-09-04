@@ -187,11 +187,23 @@ object PortfolioCalculator {
      *
      * @return 期初净值 ≤ 0 时返回 null（增长率在数学上无意义）
      */
-    fun netWorthGrowthBp(from: NetWorthPoint, to: NetWorthPoint): Int? {
-        val start = from.netWorth.minorUnits
-        if (start <= 0L) return null
-        val delta = to.netWorth.minorUnits - start
-        return (delta * TargetAllocation.TOTAL_BP / start).toInt()
+    fun netWorthGrowthBp(from: NetWorthPoint, to: NetWorthPoint): Int? =
+        growthBp(from.netWorth.minorUnits, to.netWorth.minorUnits)
+
+    /**
+     * 增长率，基点。参数是同一口径下的期初、期末金额（最小单位）。
+     *
+     * 整段区间的净值增长（[netWorthGrowthBp]）和图上「这根柱子相比前一根」都走这里 ——
+     * 两处各写一遍除法，「期初 ≤ 0 怎么办」这条判据迟早会写得不一样，
+     * 于是同一屏上一个显示「—」、另一个显示某个凭空算出来的百分比。
+     *
+     * @return 期初 ≤ 0 时返回 null（分母为零或为负，增长率在数学上无意义）——
+     *   **不是 0**，"没有变化"和"算不出来"对用户要做的事完全不同
+     */
+    fun growthBp(fromMinor: Long, toMinor: Long): Int? {
+        if (fromMinor <= 0L) return null
+        val delta = toMinor - fromMinor
+        return (delta * TargetAllocation.TOTAL_BP / fromMinor).toInt()
     }
 }
 

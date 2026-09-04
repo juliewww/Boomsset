@@ -159,6 +159,9 @@ private fun AppContent(
                         state = netWorthState,
                         onSelectPeriod = netWorthViewModel::selectPeriod,
                         onSelectBaseCurrency = netWorthViewModel::selectBaseCurrency,
+                        onSelectChartMode = netWorthViewModel::selectChartMode,
+                        onSelectChartStyle = netWorthViewModel::selectChartStyle,
+                        onToggleClass = netWorthViewModel::toggleClassVisible,
                         lockState = lockState,
                         onToggleLock = onToggleLock,
                     )
