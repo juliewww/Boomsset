@@ -80,9 +80,12 @@ fun Money.formatWithCurrency(currency: String, showDecimals: Boolean = true): St
  * 变化量必须一眼看出涨还是跌，不能靠"有没有减号"去反推
  * （配置页的净敞口是同一条理由，见 AllocationScreen）。
  * 零不加号：`+¥0.00` 读起来像"涨了 0"，而事实是"没有变化"。
+ *
+ * @param showDecimals 规划用的量级（配置页「距目标」的调整额）不显示分 ——
+ *   那个数是"大概该挪多少钱"，两位小数是假精度，还把整行挤长。
  */
-fun Money.formatSigned(currency: String): String =
-    signPrefix(withPlus = true) + currencySymbol(currency) + magnitude().formatAmount()
+fun Money.formatSigned(currency: String, showDecimals: Boolean = true): String =
+    signPrefix(withPlus = true) + currencySymbol(currency) + magnitude().formatAmount(showDecimals)
 
 private fun Money.signPrefix(withPlus: Boolean): String = when {
     minorUnits < 0 -> "-"

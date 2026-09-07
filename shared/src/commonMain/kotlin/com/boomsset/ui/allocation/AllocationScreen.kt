@@ -21,7 +21,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +41,7 @@ import com.boomsset.domain.TargetAllocation
 import com.boomsset.ui.InfoTooltip
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.label
+import com.boomsset.ui.formatSigned
 import com.boomsset.ui.formatWithCurrency
 
 @Composable
@@ -287,13 +287,14 @@ private fun TargetPreview(active: TargetAllocation?) {
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                LinearProgressIndicator(
-                    progress = {
-                        (targetBp.toFloat() / TargetAllocation.TOTAL_BP).coerceIn(0f, 1f)
-                    },
+                // 这里填充的**就是目标**（还没有资产，没有"当前"可画），所以不画竖线 ——
+                // 一根和填充末端重合的竖线只是重复。用同一个 [AllocationBar] 是为了
+                // 让形状和高度跟有资产时完全一致：等录了第一笔，同一个位置换成
+                // "填充=当前、竖线=目标"，用户不用重新找东西在哪。
+                AllocationBar(
+                    fillBp = targetBp,
+                    markerBp = null,
                     color = chartColors.of(assetClass),
-                    trackColor = chartColors.track,
-                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -327,25 +328,18 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
                 )
             }
 
-            // 进度条画不出负数，负敞口按 0 长度显示，真实值在下面文字里
-            LinearProgressIndicator(
-                progress = {
-                    val bp = shareBp ?: 0
-                    (bp.coerceAtLeast(0).toFloat() / TargetAllocation.TOTAL_BP).coerceIn(0f, 1f)
-                },
+            // 填充 = 当前占比（画不出负数，负敞口按 0 长度，真实值在下面文字里），
+            // 竖线 = 目标位置。两个点位放在同一根条上才比得出来。
+            AllocationBar(
+                fillBp = shareBp,
+                markerBp = targetBp,
                 color = chartColors.of(assetClass),
-                trackColor = chartColors.track,
-                modifier = Modifier.fillMaxWidth(),
             )
 
             Text(
                 buildString {
                     append("净敞口 ")
-                    // 正负号显式打出来，不能只靠 formatWithCurrency 里负数才有的那个 "-"——
-                    // 光看一串数字看不出"这一类净值是多了还是少了"，加号和减号才是一眼可辨的信号
-                    // （实机反馈）。
-                    if (exposure.netExposure.minorUnits >= 0) append("+")
-                    append(exposure.netExposure.formatWithCurrency(view.baseCurrency))
+                    append(exposure.netExposure.formatSigned(view.baseCurrency))
                     if (!exposure.liabilities.isZero) {
                         append("（资产 ${exposure.assets.formatWithCurrency(view.baseCurrency)} ")
                         append("− 负债 ${exposure.liabilities.formatWithCurrency(view.baseCurrency)}）")
@@ -361,7 +355,8 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
                     "目标 ${targetBp.bpToPercent(decimals = 0)}，" +
                         if (deviationBp == 0) "已达标"
                         else "${if (deviationBp > 0) "超配" else "低配"} " +
-                            "${kotlin.math.abs(deviationBp).bpToPercent()}",
+                            kotlin.math.abs(deviationBp).bpToPercent() +
+                            rebalanceClause(view, assetClass),
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = if (deviationBp == 0) FontWeight.Normal else FontWeight.Medium,
                     color = when {
@@ -373,6 +368,25 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
             }
         }
     }
+}
+
+/**
+ * 「· 距目标 ±¥X」—— 把偏离度换算成钱。
+ *
+ * 存在的理由：知道"超配 31%"并不等于知道该动多少钱，用户得自己拿净资产去乘
+ * （实机反馈）。口径和取整的坑都在 [AllocationView.rebalanceAmount] 的文档里。
+ *
+ * **接在偏离度那一行后面，不另起一行。** 五张卡片各多一行，这一页会明显变长，
+ * 而"废话太多"已经被反馈过两次。共用同一个颜色也是有意的：超配是红的，
+ * 跟着的调整额自然读作"该减"。
+ *
+ * 金额**不显示分**：这是个规划用的量级，分位是噪音。因此当调整额不足 ¥1 时整句省掉 ——
+ * 否则会出现"低配 0.01% · 距目标 +¥0"这种自相矛盾的显示（净资产很小时会发生）。
+ */
+private fun rebalanceClause(view: AllocationView, assetClass: AssetClass): String {
+    val amount = view.rebalanceAmount(assetClass) ?: return ""
+    if (kotlin.math.abs(amount.minorUnits) < 100L) return ""
+    return " · 距目标 ${amount.formatSigned(view.baseCurrency, showDecimals = false)}"
 }
 
 /**
@@ -435,7 +449,10 @@ private fun DenominatorNote() {
         InfoTooltip(
             "比例的分母是全部净资产（含自住房）。各大类显示的是净敞口 —— " +
                 "归属到该类的负债已经抵扣，所以比例加总为 100%。正号表示这类资产扣除对应负债后" +
-                "仍是净资产，负号表示这类的负债超过了资产。",
+                "仍是净资产，负号表示这类的负债超过了资产。\n\n" +
+                "条形上的竖线是目标位置，填充是当前占比。\n\n" +
+                "「距目标」按当前净资产折算，假设总净资产不变（减掉超配的、等额加到低配的），" +
+                "所以各类加起来正好是 0。只投新钱不卖出的话要投得更多 —— 新钱同时也进分母。",
         )
     }
 }

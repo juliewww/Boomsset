@@ -3,7 +3,7 @@
 ## 项目状态
 
 **核心循环已闭环（Android 实机验证过）。** 三个页面：净值曲线 / 资产配置 / 资产列表。
-添加资产 → 定期更新估值 → 归档，全流程可用。**222 个单元测试全绿。**
+添加资产 → 定期更新估值 → 归档，全流程可用。**233 个单元测试全绿。**
 
 实跑验证过（含直接查 SQLite 确认）：更新是**追加快照**而非改写（成本正确结转），
 归档追加 0 值快照且历史一字未改，配置比例加总 100%。
@@ -201,6 +201,26 @@ Row 先按完整宽度量没有 weight 的子项，所以**数值永远完整**�
 **顺手修掉两个字符串里的 Markdown 星号**：`Text` 不解析 `**加粗**`，
 tooltip 气泡和"无法估值"提示里的星号一直是原样显示给用户的（截图确认）。
 
+**配置页：条形上标出目标位置、偏离度折算成钱（Android 模拟器 API 34 验证，浅深两色）：**
+反馈两条 ——「进度条只画了当前占比，看不出目标在哪」、「超配 31% 并不等于知道该动多少钱」。
+`LinearProgressIndicator` 画不出第二个点位（只有 `progress` 一个入参），换成手写的
+[AllocationBar](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationBar.kt)：
+圆角轨道 + 填充（当前）+ 一根竖线（目标）。**横轴恒定 0–100%、不按行自适应** ——
+这一页的全部意义是五行互相比较；竖线带一圈表面色描边，否则压在同色填充上看不见
+（权益类 76% / 目标 40% 那根正好落在填充内部）。
+
+金额是 `AllocationView.rebalanceAmount()`，口径**内部调仓、总净资产不变**
+（卖超配买低配），由此有一条能断言的不变量：**全部大类加总为 0**。
+另一个口径「只投新钱」的算式和为什么没选它写在那个函数的 KDoc 里。
+**不要从 `deviationBp` 反算** —— 它是从已截断到整基点的 `shareBp` 减出来的，
+1 基点乘上净资产就是真金白银（随机对照跑到过 ¥99,876 的差），
+`目标额 − 净敞口` 只截断一次。基点换算的溢出闸门统一成了 `fitsBpMath()`，
+`shareBp`／`rebalanceAmount`／`liabilityRatioBp` 三处共用。
+
+⚠️ **那根竖线没有自动化覆盖**：Canvas 画的图形不产生无障碍节点，而项目里至今没有
+Compose UI 测试（`compose-ui-test` 在 libs.versions.toml 声明了但从没被引入）。
+改 `AllocationBar` 必须手动在真机/模拟器上看一眼 —— 和左滑手势那条缺口同类。
+
 **净值页图表：折线删了，加了两个开关（Android 模拟器 API 34，四种组合逐个走查）：**
 折线和柱子画的是同一份数据，折线是重复信息，删掉。现在图表形态由两个正交的开关决定：
 **总资产 / 按大类**（大类 = 各类**净敞口**，和配置页同一口径，可能为负）×
@@ -251,7 +271,7 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
 `iosSimulatorArm64Test` 和 XCUITest 都起不来，共享代码过了 `compileKotlinIosSimulatorArm64`
 但链接和真机渲染没验过（下拉菜单、`Switch`、`FlowRow` 在 iOS 上的排布尤其没看过）。
 
-**教训（十九次都是实跑才发现、编译和单测全绿）：**
+**教训（二十次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
 2. 预填用带千分位的 `formatAmount()`，而解析器拒绝逗号 → **≥¥1000 的资产无法更新**
 3. 汇率刷新只在 ViewModel `init` 跑一次，那时还没有资产、需要的币种是空集 →
@@ -475,7 +495,16 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
     如果两端都用今天的汇率，两个百分比会一模一样。**这种"两个口径应该略有差异"的对照，
     比只看数字变没变更能证明用的是当时的汇率。**
 
-19. **教训 13 的幽灵系列是 `MergeMode.Grouped` 专属的，换成 `Stacked` 完全失效；
+19. **`uiautomator dump` 不包含 popup 窗口** —— tooltip 气泡、`DropdownMenu` 这类浮层
+    在 UI 树里**根本不出现**。点开 (i) 之后 dump 里搜不到气泡文字，一度判成"气泡没弹出来"，
+    还顺着教训 15 去怀疑是不是又被自动消失吃掉了；实际 `screencap` 一截就看见了，
+    文字、换行、位置全都正常。**验浮层用截图，别用 dump。**
+    附带一个更普适的坑：`adb install -r` 在模拟器**刚从快照恢复**的那几十秒里会报
+    Success 但不生效（恢复把文件系统状态盖回去了）。装完必须
+    `pm path` 拉下来核一个只在新版本里有的字符串，
+    否则会对着旧 APK 反复调试自己刚写的代码 —— 实测在这上面绕了三轮。
+
+20. **教训 13 的幽灵系列是 `MergeMode.Grouped` 专属的，换成 `Stacked` 完全失效；
     而"柱子多宽"这件事只有装到设备上才看得出来。** 按大类的堆叠柱同样会撞上"只有 1 个取样点"
     （按年看、账号才用了几个月），但 `Stacked` 下所有系列叠进同一根柱子，
     加多少个 0 值幽灵系列都不改变这根柱子的宽度 —— 那招解决的是"一个 x 位置内部怎么分宽度"，
@@ -563,7 +592,7 @@ docs/            详细文档，按需查阅
 
 ```bash
 ./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
-./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，222 个）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，233 个）
 ./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（158 个，需要 Xcode）
 ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS 链接（需要 Xcode）
 ./gradlew :androidApp:assembleDebug                # Android 构建
@@ -583,7 +612,7 @@ Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
 所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
 
-**JVM 和 iOS 的测试数不一样（198 vs 158），这是对的**：
+**JVM 和 iOS 的测试数不一样（217 vs 158），这是对的**：
 - 数据库测试（`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`）在
   `androidHostTest`，用 JVM 的 JDBC driver
 - `iosTest/NativeDatabaseTest` 单独验 iOS 的 `NativeSqliteDriver`（**不同的 SQLite 构建**，

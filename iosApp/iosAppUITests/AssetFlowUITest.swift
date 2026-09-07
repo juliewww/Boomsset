@@ -137,6 +137,50 @@ final class AssetFlowUITest: XCTestCase {
         XCTAssertTrue(app.staticTexts["平衡"].exists || app.buttons["平衡"].exists)
     }
 
+    /// **偏离百分比要折算成钱。**
+    ///
+    /// 「超配 90%」不等于知道该动多少钱 —— 用户得自己拿净资产去乘（实机反馈）。
+    ///
+    /// 场景很干净：只有 ¥100,000 现金（品种「现金」→ 流动资金），对比内置的「平衡」
+    /// （流动 10% / 固收 35%）。流动资金 100% 超配 90% → 需减 ¥90,000；
+    /// 固定收益 0% 低配 35% → 需增 ¥35,000。口径是**总净资产不变**，所以五类的
+    /// 调整额加起来正好是 0 —— 那条不变量由 `AllocationRebalanceTest` 锁着，
+    /// 这里只验它真的显示在屏幕上、而且数字没在格式化层被搞坏。
+    ///
+    /// ⚠️ **条形上那根目标位置的竖线验不到。** 它是 `AllocationBar` 用 Canvas 画的图形，
+    /// 不产生无障碍元素，而项目里没有 Compose UI 测试（`compose-ui-test` 在
+    /// libs.versions.toml 里声明了但从没被引入过）。改 `AllocationBar` 必须手动在
+    /// 真机/模拟器上看一眼竖线的位置对不对 —— 这和左滑手势那条缺口是同一类：
+    /// 工具链验不到的地方，诚实写下来比硬凑一个测不到东西的断言更有用。
+    func testAllocationShowsMoneyNeededToReachTarget() throws {
+        try addCashAsset(value: "100000", cost: nil)
+
+        app.buttons["配置"].tap()
+        waitFor(app.staticTexts["资产配置"], "配置页")
+
+        assertAllocationRow(
+            "目标 10%，超配 90.00% · 距目标 -¥90,000",
+            "超配的类要给出「需减少多少钱」"
+        )
+        assertAllocationRow(
+            "目标 35%，低配 35.00% · 距目标 +¥35,000",
+            "低配的类要给出「需增加多少钱」"
+        )
+        // 净敞口的正号也要打出来 —— 原来只有负数才带符号，看不出方向
+        assertAllocationRow("净敞口 +¥100,000.00", "净敞口要带显式正号")
+    }
+
+    /// 断言配置页上某一行文字存在，**必要时先滚**。
+    ///
+    /// 不能只用 `exists`：无障碍树只报可见区域内的节点，第三第四个大类的卡片
+    /// 在小屏设备上落在折线以下，`exists` 会是 false，报错看起来像"文案不对"，
+    /// 其实只是没滚到（这个坑在 [scrollUntilVisible] 的注释里已经踩过一次）。
+    private func assertAllocationRow(_ text: String, _ why: String) {
+        if app.staticTexts[text].exists { return }
+        if scrollUntilVisible(text) != nil { return }
+        XCTFail("\(why)：找不到「\(text)」，实际树：\n\(app.debugDescription)")
+    }
+
     /// 回归测试：**零资产时目标配置的入口必须够得到。**
     ///
     /// 曾经够不到 —— `AllocationScreen` 在 `state.isEmpty` 分支只渲染一行
