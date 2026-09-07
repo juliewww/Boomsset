@@ -98,6 +98,54 @@ data class NetWorthSeries(
 }
 
 /**
+ * 按大类拆开的净敞口时间序列，点按时间升序。
+ *
+ * 每个点就是一个完整的 [AllocationView]，也就是说**口径和配置页一模一样**：
+ * 分子是各大类的净敞口（该类资产 − 归属到该类的负债），只算
+ * `includeInAllocation = true` 的资产。这一点很重要 —— 它意味着这条序列的合计
+ * **不等于** [NetWorthSeries] 的净值（后者包含不计入配置的资产）。
+ * 两个数并排出现时 UI 必须说明，否则用户会以为其中一个算错了。
+ *
+ * 取样日期和 [NetWorthSeries] 用的是同一批（同一个 [PortfolioSeriesCalculator] 私有助手
+ * 算出来的），所以两张图的 x 轴逐点对齐，可以直接在同一页上换着看。
+ */
+data class AllocationSeries(
+    val period: Period,
+    val baseCurrency: String,
+    val dates: List<LocalDate>,
+    val points: List<AllocationView>,
+) {
+    val latest: AllocationView? get() = points.lastOrNull()
+
+    /** 某一类在每个取样点的净敞口，顺序与 [dates] 一致。缺失按 0 —— 该类此时确实没有敞口。 */
+    fun netExposures(assetClass: AssetClass): List<Money> =
+        points.map { it.exposures[assetClass]?.netExposure ?: Money.ZERO }
+
+    /**
+     * 这几类在每个取样点的净敞口之和。
+     *
+     * 图上柱子的高度就是这个和，所以「相比前一根涨了多少」必须拿它来算 ——
+     * 用户勾掉几个大类之后，柱子变矮了，此时拿全量合计算出的增长率和眼前的柱子对不上。
+     */
+    fun totals(classes: Collection<AssetClass>): List<Money> =
+        points.map { point ->
+            classes.fold(Money.ZERO) { acc, assetClass ->
+                acc + (point.exposures[assetClass]?.netExposure ?: Money.ZERO)
+            }
+        }
+
+    /**
+     * 这几类里**任何一个取样点**出现过负敞口（该类的负债超过该类资产）。
+     *
+     * 堆叠面积图是靠「累计值 + 不透明色后画的盖前画的」拼出来的，这个做法要求每一段
+     * 都非负；出现负值时累计不再单调，画出来的分层就是错的。所以趋势图必须先问这个，
+     * 命中就退回各类独立曲线，而不是画一张看起来正常、其实分层错位的图。
+     */
+    fun hasNegativeExposure(classes: Collection<AssetClass>): Boolean =
+        classes.any { assetClass -> netExposures(assetClass).any { it.minorUnits < 0L } }
+}
+
+/**
  * 把原始数据折成时间序列。纯函数。
  */
 object PortfolioSeriesCalculator {
@@ -128,14 +176,7 @@ object PortfolioSeriesCalculator {
         pointCount: Int = 12,
         trimBeforeFirstSnapshot: Boolean = false,
     ): NetWorthSeries {
-        val allDates = periodSampleDates(today, period, pointCount)
-        val earliestSnapshot = data.snapshots.minOfOrNull { it.asOf }
-        val dates = if (trimBeforeFirstSnapshot && earliestSnapshot != null) {
-            val firstWithData = allDates.indexOfFirst { it.endOfDayIn(zone) >= earliestSnapshot }
-            if (firstWithData < 0) listOf(allDates.last()) else allDates.subList(firstWithData, allDates.size)
-        } else {
-            allDates
-        }
+        val dates = sampleDates(data, period, today, zone, pointCount, trimBeforeFirstSnapshot)
         val points = dates.map { date ->
             val at = date.endOfDayIn(zone)
             PortfolioCalculator.netWorth(
@@ -146,6 +187,62 @@ object PortfolioSeriesCalculator {
             )
         }
         return NetWorthSeries(period, baseCurrency, dates, points)
+    }
+
+    /**
+     * 按大类拆开的时间序列，用于净值页「按大类看」。参数含义与 [buildSeries] 完全一致。
+     *
+     * 每个取样点直接复用 [PortfolioCalculator.allocation] —— 净敞口、
+     * `includeInAllocation` 的取舍、分母怎么算，这些规则只能有一份实现，
+     * 否则净值页和配置页会对同一批数据给出两套百分比。
+     *
+     * `target` 传 null：目标比例是配置页的事，这条序列只关心各类**金额**随时间怎么变。
+     */
+    fun buildAllocationSeries(
+        data: PortfolioData,
+        period: Period,
+        baseCurrency: String,
+        today: LocalDate,
+        zone: TimeZone,
+        pointCount: Int = 12,
+        trimBeforeFirstSnapshot: Boolean = false,
+    ): AllocationSeries {
+        val dates = sampleDates(data, period, today, zone, pointCount, trimBeforeFirstSnapshot)
+        val points = dates.map { date ->
+            val at = date.endOfDayIn(zone)
+            PortfolioCalculator.allocation(
+                asOf = at,
+                assets = data.assets,
+                snapshots = data.latestSnapshotsAt(at),
+                context = data.valuationContextAt(date, baseCurrency),
+                target = null,
+            )
+        }
+        return AllocationSeries(period, baseCurrency, dates, points)
+    }
+
+    /**
+     * 取样日期 + 「丢掉第一条快照之前那些点」的裁剪。
+     *
+     * [buildSeries] 和 [buildAllocationSeries] **必须共用这一份** ——
+     * 两条序列会在同一页上换着看，各自算一遍取样日期的话，
+     * 只要有一处的裁剪判据写得不一样，两张图的 x 轴就会错开一格，
+     * 而这种错位在界面上看起来只是"数字有点怪"，很难联想到是取样点对不上。
+     */
+    private fun sampleDates(
+        data: PortfolioData,
+        period: Period,
+        today: LocalDate,
+        zone: TimeZone,
+        pointCount: Int,
+        trimBeforeFirstSnapshot: Boolean,
+    ): List<LocalDate> {
+        val allDates = periodSampleDates(today, period, pointCount)
+        val earliestSnapshot = data.snapshots.minOfOrNull { it.asOf }
+        if (!trimBeforeFirstSnapshot || earliestSnapshot == null) return allDates
+        val firstWithData = allDates.indexOfFirst { it.endOfDayIn(zone) >= earliestSnapshot }
+        return if (firstWithData < 0) listOf(allDates.last())
+        else allDates.subList(firstWithData, allDates.size)
     }
 
     /** 当前时点的配置视图。 */

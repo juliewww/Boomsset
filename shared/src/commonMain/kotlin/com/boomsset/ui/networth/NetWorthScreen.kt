@@ -3,18 +3,21 @@ package com.boomsset.ui.networth
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -27,11 +30,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.boomsset.data.SUPPORTED_CURRENCIES
 import com.boomsset.security.AppLockUiState
 import com.boomsset.security.AuthCapability
+import com.boomsset.domain.AssetClass
 import com.boomsset.domain.Money
 import com.boomsset.domain.Period
 import com.boomsset.ui.InfoTooltip
@@ -40,15 +46,20 @@ import com.boomsset.ui.bpToSignedPercent
 import com.boomsset.ui.fallColor
 import com.boomsset.ui.formatSigned
 import com.boomsset.ui.formatWithCurrency
+import com.boomsset.ui.label
 import com.boomsset.ui.lastRecordDescription
 import com.boomsset.ui.periodLabel
 import com.boomsset.ui.riseColor
+import com.boomsset.ui.theme.chartColors
 
 @Composable
 fun NetWorthScreen(
     state: NetWorthUiState,
     onSelectPeriod: (Period) -> Unit,
     onSelectBaseCurrency: (String) -> Unit,
+    onSelectChartMode: (ChartMode) -> Unit,
+    onSelectChartStyle: (ChartStyle) -> Unit,
+    onToggleClass: (AssetClass) -> Unit,
     lockState: AppLockUiState,
     onToggleLock: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -73,8 +84,13 @@ fun NetWorthScreen(
             else -> {
                 SummaryCard(state)
                 BaseCurrencySelector(state.baseCurrency, onSelectBaseCurrency)
-                PeriodSelector(state.period, onSelectPeriod)
-                state.series?.let { NetWorthChart(it) }
+                ChartSection(
+                    state = state,
+                    onSelectPeriod = onSelectPeriod,
+                    onSelectChartMode = onSelectChartMode,
+                    onSelectChartStyle = onSelectChartStyle,
+                    onToggleClass = onToggleClass,
+                )
                 if (state.unpricedCount > 0) UnpricedWarning(state.unpricedCount)
                 AppLockToggle(lockState, onToggleLock)
             }
@@ -435,18 +451,154 @@ private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
     }
 }
 
+/**
+ * 图表区：控件 + 图例 + 图表 + 脚注。
+ *
+ * 四种组合（总资产/按大类 × 柱状图/趋势图）共用这一块，**能不能画**的判断也集中在这里 ——
+ * 分散到各个图表里的话，"什么都没画出来"就会变成一张空图，而不是一句说明
+ * （AGENTS.md 教训 10 就是这么来的）。
+ */
+@Composable
+private fun ChartSection(
+    state: NetWorthUiState,
+    onSelectPeriod: (Period) -> Unit,
+    onSelectChartMode: (ChartMode) -> Unit,
+    onSelectChartStyle: (ChartStyle) -> Unit,
+    onToggleClass: (AssetClass) -> Unit,
+) {
+    val series = state.series
+    val allocation = state.allocationSeries
+    val chart = state.chart
+    val visible = chart.visibleClasses
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChartControls(chart, onSelectPeriod, onSelectChartMode, onSelectChartStyle)
+
+        if (chart.mode == ChartMode.ALLOCATION) {
+            ClassLegend(chart.hiddenClasses, onToggleClass)
+        }
+
+        when {
+            series == null || allocation == null -> Unit
+
+            chart.mode == ChartMode.ALLOCATION && visible.isEmpty() ->
+                ChartNote("至少勾一个大类才有东西可画。")
+
+            chart.style == ChartStyle.TREND && !canDrawTrend(series.dates.size) ->
+                ChartNote("趋势图要两个以上的取样点才连得成线。现在只有一个点，先看柱状图。")
+
+            else -> {
+                NetWorthChart(
+                    series = series,
+                    allocationSeries = allocation,
+                    mode = chart.mode,
+                    style = chart.style,
+                    visibleClasses = visible,
+                )
+                if (chart.mode == ChartMode.ALLOCATION) {
+                    AllocationChartNotes(chart.style, allocation.hasNegativeExposure(visible))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChartControls(
+    chart: ChartOptions,
+    onSelectPeriod: (Period) -> Unit,
+    onSelectChartMode: (ChartMode) -> Unit,
+    onSelectChartStyle: (ChartStyle) -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        PeriodSelector(chart.period, onSelectPeriod)
+        LabeledSwitch("按大类", chart.mode == ChartMode.ALLOCATION) { on ->
+            onSelectChartMode(if (on) ChartMode.ALLOCATION else ChartMode.TOTAL)
+        }
+        LabeledSwitch("趋势图", chart.style == ChartStyle.TREND) { on ->
+            onSelectChartStyle(if (on) ChartStyle.TREND else ChartStyle.COLUMN)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(CONTROL_HEIGHT)) {
+            // ⚠️ Text 不解析 Markdown，这里不能写 **强调**，会原样显示成四个星号
+            InfoTooltip(
+                "柱状图每根柱子上方是相对前一根的涨跌幅，四舍五入到整数 —— " +
+                    "十几根柱子并排时，带小数的百分比会被截断，截断的数字比没有更糟。" +
+                    "第一根没有可比的前一根、上一根不是正数时算不出比例，都显示「—」。" +
+                    "这是净值变化，含期间新增投入，不等于投资收益率。",
+            )
+        }
+    }
+}
+
+/**
+ * 所有控件统一 40dp 高。
+ *
+ * `FlowRow` 里的项默认按顶端对齐，而 `OutlinedButton`（40dp）和 `Switch`（32dp）
+ * 高度不一样，不统一的话下拉按钮和开关会差着几 dp 错开。
+ */
+private val CONTROL_HEIGHT = 40.dp
+
+/**
+ * 带文字标签的开关。
+ *
+ * `Switch` 上要显式给 [contentDescription]：标签是**相邻的兄弟节点**，不会并进开关自己的
+ * 无障碍节点里 —— 不给的话读屏用户听到的只是"开关，已开启"，而这一页有三个开关
+ * （按大类 / 趋势图 / 应用锁），根本分不出是哪一个。顺带也让 XCUITest 能按名字定位到它，
+ * 和输入框那几个 `field-*` 是同一套办法（见 [com.boomsset.ui.FIELD_NAME] 的注释）。
+ */
+@Composable
+private fun LabeledSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.height(CONTROL_HEIGHT),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelMedium)
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.semantics { contentDescription = label },
+        )
+    }
+}
+
+/**
+ * 周期从一排 `FilterChip` 改成下拉。
+ *
+ * 理由和币种那个一样（见 [BaseCurrencySelector]）：这一页最值钱的是概览卡片和图表，
+ * 三个常驻 chip 占一整行、而三选一的下拉只占一个按钮。省下来的横向空间正好给了
+ * 旁边两个新开关 —— 三个控件挤在一行才放得下。
+ */
 @Composable
 private fun PeriodSelector(selected: Period, onSelect: (Period) -> Unit) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Period.entries.forEach { period ->
-            FilterChip(
-                selected = period == selected,
-                onClick = { onSelect(period) },
-                label = { Text(period.label()) },
-            )
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        ) {
+            Text("${selected.label()} ▾", style = MaterialTheme.typography.labelLarge)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            Period.entries.forEach { period ->
+                DropdownMenuItem(
+                    text = { Text(period.label()) },
+                    // 菜单会盖住按钮本身，当前选中项必须在菜单里也标出来（同币种下拉）
+                    trailingIcon = if (period == selected) {
+                        { Text("✓") }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        onSelect(period)
+                        expanded = false
+                    },
+                )
+            }
         }
     }
 }
@@ -455,6 +607,71 @@ private fun Period.label(): String = when (this) {
     Period.MONTH -> "按月"
     Period.QUARTER -> "按季"
     Period.YEAR -> "按年"
+}
+
+/**
+ * 大类图例，勾选控制画哪几类。
+ *
+ * 颜色**画在复选框上**而不是另加一个色块：色块和名字之间隔着一个复选框会让
+ * "这个颜色是这一类"变得不那么直接，而且五项各多 16dp 在手机宽度上就是多折一行。
+ * 未勾选时方框是空心的、边框仍是该类的颜色，所以颜色和名称的对应关系不会因为
+ * 取消勾选就消失（浅色模式下几个大类色低于 3:1，**必须靠"色块旁边永远有名字"补偿**，
+ * 见 AGENTS.md 的配色约束）。
+ */
+@Composable
+private fun ClassLegend(hidden: Set<AssetClass>, onToggle: (AssetClass) -> Unit) {
+    val palette = chartColors
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        AssetClass.displayOrder.forEach { assetClass ->
+            val color = palette.of(assetClass)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = assetClass !in hidden,
+                    onCheckedChange = { onToggle(assetClass) },
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = color,
+                        uncheckedColor = color,
+                        checkmarkColor = MaterialTheme.colorScheme.surface,
+                    ),
+                )
+                Text(assetClass.label(), style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
+/**
+ * 按大类看时的口径说明。
+ *
+ * 第一句是必须的：这张图的合计**不等于**上面那个净值 —— 分类看的是净敞口、
+ * 且只算"计入配置"的资产。不说清楚，用户会以为哪里算错了。
+ */
+@Composable
+private fun AllocationChartNotes(style: ChartStyle, hasNegative: Boolean) {
+    ChartNote(
+        "每一段是该类的净敞口（这类资产 − 归属这类的负债），和「配置」页同一个口径；" +
+            "标了「不计入配置」的资产不在里面，所以各段合计可能和上面的净值对不上。",
+    )
+    if (hasNegative) {
+        ChartNote(
+            when (style) {
+                // Vico 的堆叠柱原生支持负值，负的那段画在零线下方，是真实情况，不遮掩
+                ChartStyle.COLUMN -> "有大类的净敞口是负的（负债超过了这类资产），画在零线下方。"
+                // 堆叠面积靠"累计值单调递增"才成立，有负段就会分层错位 —— 宁可换一种画法
+                ChartStyle.TREND -> "有大类的净敞口是负的，堆叠面积在这种情况下会分层错位，" +
+                    "所以改成各类各画一条线（不填充）。"
+            },
+        )
+    }
+}
+
+@Composable
+private fun ChartNote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

@@ -451,4 +451,145 @@ class PortfolioSeriesCalculatorTest {
         view.shareBp(AssetClass.ALTERNATIVE) shouldBe 5000
         view.shareBp(AssetClass.LIQUID) shouldBe 5000
     }
+
+    // ---------- 按大类的时间序列 ----------
+
+    /**
+     * 两条序列在同一页上换着看（一个开关切换），x 轴**必须逐点对齐**。
+     *
+     * 各算一遍取样日期是行不通的：只要有一处裁剪判据写得不一样，两张图就会错开一格，
+     * 而这种错位在界面上只表现为"数字有点怪"，很难联想到是取样点对不上。
+     */
+    @Test
+    fun `按大类序列的取样日期和净值序列完全一致`() {
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 6, 10), 50_000_00)),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        Period.entries.forEach { period ->
+            listOf(false, true).forEach { trim ->
+                val net = PortfolioSeriesCalculator.buildSeries(
+                    data, period, cny, today, zone, pointCount = 5, trimBeforeFirstSnapshot = trim,
+                )
+                val byClass = PortfolioSeriesCalculator.buildAllocationSeries(
+                    data, period, cny, today, zone, pointCount = 5, trimBeforeFirstSnapshot = trim,
+                )
+                byClass.dates shouldBe net.dates
+                byClass.points shouldHaveSize net.points.size
+            }
+        }
+    }
+
+    /** 结转语义对分类序列同样成立：没记新快照的月份沿用上次估值，不是 0。 */
+    @Test
+    fun `按大类序列同样结转上次估值`() {
+        val data = PortfolioData(
+            assets = listOf(asset(1, AssetClass.EQUITY)),
+            snapshots = listOf(manual(1, 1, LocalDate(2026, 5, 20), 80_000_00)),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildAllocationSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 3,
+        )
+
+        series.netExposures(AssetClass.EQUITY) shouldBe listOf(
+            Money(80_000_00),
+            Money(80_000_00),
+            Money(80_000_00),
+        )
+        // 没有敞口的大类给 0，不是缺项 —— 图上那一段就是 0 高度
+        series.netExposures(AssetClass.PROTECTION) shouldBe listOf(Money.ZERO, Money.ZERO, Money.ZERO)
+    }
+
+    /**
+     * 各段合计必须等于该点 `AllocationView.netWorth`。
+     *
+     * 柱子的高度是各段相加出来的，而顶部的增长率标签是拿合计算的 —— 两者只要有一处
+     * 用了不同口径（比如合计漏掉负债），柱子和它头上的百分比就会互相矛盾。
+     */
+    @Test
+    fun `各类合计等于该点的配置口径净值`() {
+        val house = asset(1, AssetClass.ALTERNATIVE)
+        val mortgage = asset(2, AssetClass.ALTERNATIVE, liability = true)
+        val cash = asset(3, AssetClass.LIQUID)
+        val data = PortfolioData(
+            assets = listOf(house, mortgage, cash),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 6, 1), 3_000_000_00),
+                manual(2, 2, LocalDate(2026, 6, 1), 2_000_000_00),
+                manual(3, 3, LocalDate(2026, 6, 1), 1_000_000_00),
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildAllocationSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 2,
+        )
+
+        series.totals(AssetClass.displayOrder) shouldBe series.points.map { it.netWorth }
+        series.totals(AssetClass.displayOrder).last() shouldBe Money(2_000_000_00)
+    }
+
+    /** 不计入配置的资产在净值里、不在这条序列里。UI 必须说明这个差额，所以先在这里锁住它。 */
+    @Test
+    fun `不计入配置的资产不在按大类序列里`() {
+        val ownHome = asset(1, AssetClass.ALTERNATIVE).copy(includeInAllocation = false)
+        val cash = asset(2, AssetClass.LIQUID)
+        val data = PortfolioData(
+            assets = listOf(ownHome, cash),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 6, 1), 5_000_000_00),
+                manual(2, 2, LocalDate(2026, 6, 1), 100_000_00),
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val byClass = PortfolioSeriesCalculator.buildAllocationSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 2,
+        )
+        val net = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 2,
+        )
+
+        byClass.netExposures(AssetClass.ALTERNATIVE).last() shouldBe Money.ZERO
+        byClass.totals(AssetClass.displayOrder).last() shouldBe Money(100_000_00)
+        net.points.last().netWorth shouldBe Money(5_100_000_00)
+    }
+
+    /**
+     * 负敞口要能被检出来。
+     *
+     * 堆叠面积图靠"累计值单调递增"才成立，有负段就会分层错位；趋势图必须先问这个开关，
+     * 命中就退回各类独立曲线。检不出来的后果是一张看着正常、其实画错的图。
+     */
+    @Test
+    fun `车贷超过车值时检出负敞口`() {
+        val car = asset(1, AssetClass.ALTERNATIVE)
+        val loan = asset(2, AssetClass.ALTERNATIVE, liability = true)
+        val data = PortfolioData(
+            assets = listOf(car, loan),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 6, 1), 100_000_00),
+                manual(2, 2, LocalDate(2026, 6, 1), 150_000_00),
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildAllocationSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 2,
+        )
+
+        series.netExposures(AssetClass.ALTERNATIVE).last() shouldBe Money(-50_000_00)
+        series.hasNegativeExposure(AssetClass.displayOrder) shouldBe true
+        // 只看没有负敞口的那几类时，堆叠面积仍然是安全的 —— 判据必须跟着"可见的类"走
+        series.hasNegativeExposure(listOf(AssetClass.LIQUID, AssetClass.EQUITY)) shouldBe false
+    }
 }
