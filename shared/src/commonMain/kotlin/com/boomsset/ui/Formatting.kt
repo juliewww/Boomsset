@@ -138,6 +138,26 @@ fun Quantity.formatForInput(): String {
     return "$whole.$fracText"
 }
 
+/**
+ * 份额展示。规则和 [Quantity.formatForInput] 完全一样，只是叫法不同 ——
+ * 份额没有千分位，也不补固定小数位，「预填给输入框」和「显示给人看」在这里恰好同一个格式。
+ *
+ * 单独起个名字是为了让展示代码不出现 `formatForInput()` 这种读起来像写错了的调用；
+ * 真要分叉（比如展示侧加千分位）时改这一个函数就行，不会连带破坏输入框那条
+ * 「预填必须能被自己的解析器读回原值」的不变量。
+ */
+fun Quantity.formatDisplay(): String = formatForInput()
+
+/**
+ * 更新记录里的日期。同年只写月日，跨年补上年份。
+ *
+ * 这个列表会一路翻到几年前，全都写「9月7日」分不出是哪一年；但每行都带上年份又太啰嗦
+ * （绝大多数记录都是今年的）。和 [periodLabel] 那条"年份不能省"不冲突 ——
+ * 那里最多只有 12 个标签、跨年是常态，这里是一条按时间倒序、绝大部分集中在近期的流水。
+ */
+fun LocalDate.historyDateLabel(today: LocalDate): String =
+    if (year == today.year) monthDayLabel() else "${year}年${monthDayLabel()}"
+
 /** 单价预填到输入框：scale-8 定点 → 不带多余 0 的小数串。 */
 fun UnitPrice.formatForInput(): String {
     val whole = scaled / UnitPrice.ONE

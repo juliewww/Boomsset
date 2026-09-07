@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,6 +76,10 @@ fun AssetListScreen(
     var archiving by remember { mutableStateOf<AssetValuation?>(null) }
     var editing by remember { mutableStateOf<AssetValuation?>(null) }
     var showArchived by remember { mutableStateOf(false) }
+    // 默认折叠：资产页的主体是「我现在有什么」，更新记录是回顾用的，
+    // 展开着会让主列表一直往下拖。
+    var showHistory by remember { mutableStateOf(false) }
+    var historyShown by remember { mutableIntStateOf(HISTORY_PAGE_SIZE) }
 
     if (state.loading) {
         Text("加载中…", modifier = modifier.padding(16.dp))
@@ -152,6 +157,17 @@ fun AssetListScreen(
                 }
             }
         }
+
+        // 挂在列表末尾、**不在上面任何一个分支里** —— 全部资产归档后 `state.isEmpty`
+        // 为真，而归档记录恰恰都在这一栏。见 updateHistorySection 的注释。
+        updateHistorySection(
+            history = state.history,
+            today = state.today,
+            expanded = showHistory,
+            shownCount = historyShown,
+            onToggleExpanded = { showHistory = !showHistory },
+            onLoadMore = { historyShown += HISTORY_PAGE_SIZE },
+        )
     }
 
     updating?.let { valuation ->
