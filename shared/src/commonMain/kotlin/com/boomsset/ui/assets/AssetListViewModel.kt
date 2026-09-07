@@ -12,12 +12,15 @@ import com.boomsset.domain.PortfolioSeriesCalculator
 import com.boomsset.domain.Quantity
 import com.boomsset.domain.Quote
 import com.boomsset.domain.UnitPrice
+import com.boomsset.domain.UpdateHistory
+import com.boomsset.domain.UpdateRecord
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
@@ -31,6 +34,19 @@ data class AssetListUiState(
     /** 已归档的资产，供「取消归档」用。 */
     val archived: List<AssetValuation> = emptyList(),
     val subtypes: List<AssetSubtype> = emptyList(),
+    /**
+     * 全部更新记录，最新在前。**不做保留期截断** —— 分页只在 UI 侧做，理由见
+     * [com.boomsset.domain.UpdateHistory]。
+     */
+    val history: List<UpdateRecord> = emptyList(),
+    /**
+     * 今天。只被更新记录那一栏用来决定日期要不要带年份。
+     *
+     * 加载完成前这个值取不到（还没订上 clock），但那时 [history] 也是空的、没有行会用它，
+     * 所以给个明显是占位的默认值即可 —— 真被用到了会显示成「1970年…」，一眼能看出是 bug，
+     * 不会静默地少写一个年份。
+     */
+    val today: LocalDate = LocalDate(1970, 1, 1),
 ) {
     val isEmpty: Boolean get() = !loading && grouped.values.all { it.isEmpty() }
     val unpricedCount: Int get() = grouped.values.sumOf { list -> list.count { it.isUnpriced } }
@@ -75,6 +91,8 @@ class AssetListViewModel(
             archivedCount = data.assets.count { it.isArchived },
             archived = withArchived.filter { it.asset.isArchived }.sortedBy { it.asset.name },
             subtypes = subtypes,
+            history = UpdateHistory.build(data, zone),
+            today = today,
         )
     }.stateIn(
         scope = viewModelScope,
