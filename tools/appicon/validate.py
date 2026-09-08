@@ -8,6 +8,9 @@
 **配色**（判据见 generate.py 的 RING 注释）
   1. 环的亮度单调递增 —— 小尺寸可读性靠它，色相读不出来时还有明暗
   2. 相邻段色盲分离度 ΔE ≥ 8（OKLab ×100，Machado 2009 protan/deutan 模拟）
+  2b. 柱与任一环段的 ΔE ≥ 10 —— 中间虽有底色间隙，色值太接近仍会读成
+      "柱子是环的一部分"。这条**曾经只写在注释里没有实现**，而它正是
+      把「权益类」按到最暗位的原因，漏掉就会在下次改色时静默失效
   3. 每段对底 ≥ 1.8:1，否则那段会读成环上的缺口
   4. 图标底色和 Theme.kt 的品牌色**同一个色相角**；和 colors.xml 的背景层**同一个色值**
 
@@ -29,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import generate as G  # noqa: E402
 
 CVD_TARGET = 8.0        # OKLab ΔE×100，相邻段，min(protan, deutan)
+BAR_RING_MIN = 10.0     # 柱与任一环段的 ΔE 下限（见 generate.py 的判据 2b）
 FIELD_MIN = 1.80        # 每段对底的对比度下限
 # 色相角允许的误差（度）。**不能取太紧**：两个色都是从 BRAND_HUE 解出来的，
 # 但 8-bit 量化会把色相角推 ±1.5°（实测 Theme.kt 的 #918163 落在 83.0°、
@@ -135,6 +139,11 @@ check(min(ctr) >= FIELD_MIN, "每段对底的对比度",
 
 barc = [contrast(c, G.FIELD) for c in G.BARS]
 print(f"  [INFO] 柱对底的对比度        {min(barc):.2f}~{max(barc):.2f}:1")
+
+pairs = [(delta_e(b, r), bi, ri) for bi, b in enumerate(G.BARS) for ri, r in enumerate(ring)]
+worst, bi, ri = min(pairs)
+check(worst >= BAR_RING_MIN, "柱与环段的分离度",
+      f"最小 ΔE {worst:.1f}（门槛 {BAR_RING_MIN}）· 最接近的一对：柱{bi + 1} ↔ 环{ri + 1}")
 
 # 图标底色和 Theme.kt 的品牌色必须同一个色相角
 theme = os.path.join(ROOT, "shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt")
