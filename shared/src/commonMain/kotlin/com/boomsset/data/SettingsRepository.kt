@@ -21,6 +21,16 @@ interface SettingsRepository {
     /** 应用锁是否开启。默认关闭 —— 不替用户做安全决策。 */
     fun observeAppLockEnabled(): Flow<Boolean>
     suspend fun setAppLockEnabled(enabled: Boolean)
+
+    /**
+     * 净值页的金额是否藏起来（眼睛图标的状态）。默认显示。
+     *
+     * **必须持久化。** 这个开关的用途是"旁边有人"，如果每次重启都回到显示状态，
+     * 用户就得在每次打开 App 时抢在别人看见之前再点一次 —— 那等于没有这个功能。
+     * 它只影响展示，一条快照都不改写，所以和基准币种一样放在 settings 表里。
+     */
+    fun observeAmountsHidden(): Flow<Boolean>
+    suspend fun setAmountsHidden(hidden: Boolean)
 }
 
 class SqlDelightSettingsRepository(
@@ -46,9 +56,19 @@ class SqlDelightSettingsRepository(
         db.settingsQueries.upsert(KEY_APP_LOCK, enabled.toString())
     }
 
+    override fun observeAmountsHidden(): Flow<Boolean> =
+        db.settingsQueries.selectAll().asFlow().mapToList(dispatcher).map { rows ->
+            rows.firstOrNull { it.key == KEY_AMOUNTS_HIDDEN }?.value_ == "true"
+        }
+
+    override suspend fun setAmountsHidden(hidden: Boolean): Unit = withContext(dispatcher) {
+        db.settingsQueries.upsert(KEY_AMOUNTS_HIDDEN, hidden.toString())
+    }
+
     companion object {
         const val KEY_BASE_CURRENCY = "base_currency"
         const val KEY_APP_LOCK = "app_lock_enabled"
+        const val KEY_AMOUNTS_HIDDEN = "amounts_hidden"
         const val DEFAULT_BASE_CURRENCY = "CNY"
     }
 }

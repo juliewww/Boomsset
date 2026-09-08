@@ -86,6 +86,8 @@ private val CHART_HEIGHT = 220.dp
  *
  * @param visibleClasses 按大类看时要画哪几类，**必须按 [AssetClass.displayOrder] 排好** ——
  *   堆叠顺序和颜色顺序都依赖它，乱序会让同一类在柱状图和趋势图里换位置。
+ * @param hideAmounts 眼睛图标藏起金额时为 true —— **纵轴刻度整条不画**。
+ *   柱子/曲线的形状和顶上的增长率都留着：那些是相对量，藏了反而把这一页变成一张白图。
  */
 @Composable
 fun NetWorthChart(
@@ -94,19 +96,20 @@ fun NetWorthChart(
     mode: ChartMode,
     style: ChartStyle,
     visibleClasses: List<AssetClass>,
+    hideAmounts: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     key(mode, style) {
         when {
             style == ChartStyle.COLUMN && mode == ChartMode.TOTAL ->
-                TotalColumnChart(series, modifier)
+                TotalColumnChart(series, hideAmounts, modifier)
 
             style == ChartStyle.COLUMN ->
-                AllocationColumnChart(allocationSeries, visibleClasses, modifier)
+                AllocationColumnChart(allocationSeries, visibleClasses, hideAmounts, modifier)
 
-            mode == ChartMode.TOTAL -> TotalTrendChart(series, modifier)
+            mode == ChartMode.TOTAL -> TotalTrendChart(series, hideAmounts, modifier)
 
-            else -> AllocationTrendChart(allocationSeries, visibleClasses, modifier)
+            else -> AllocationTrendChart(allocationSeries, visibleClasses, hideAmounts, modifier)
         }
     }
 }
@@ -139,7 +142,7 @@ fun canDrawTrend(pointCount: Int): Boolean = pointCount >= 2
  * 中心画的，看起来就是"柱子对错了日期"（实机反馈过一次）。
  */
 @Composable
-private fun TotalColumnChart(series: NetWorthSeries, modifier: Modifier) {
+private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modifier: Modifier) {
     val modelProducer = remember { CartesianChartModelProducer() }
     val values = remember(series) { series.points.map { it.netWorth.toYuan() } }
     val labels = remember(series) { axisLabels(series.period, series.dates) }
@@ -194,7 +197,7 @@ private fun TotalColumnChart(series: NetWorthSeries, modifier: Modifier) {
                 columnProvider = columnProvider,
                 mergeMode = { ColumnCartesianLayer.MergeMode.Grouped(columnSpacing = 0.dp) },
             ),
-            startAxis = rememberAmountAxis(),
+            startAxis = rememberAmountAxis(hideAmounts),
             topAxis = rememberGrowthAxis(),
             bottomAxis = rememberPeriodAxis(),
         ),
@@ -239,6 +242,7 @@ private fun rememberFittingZoomState(zoom: Zoom) =
 private fun AllocationColumnChart(
     series: AllocationSeries,
     classes: List<AssetClass>,
+    hideAmounts: Boolean,
     modifier: Modifier,
 ) {
     val modelProducer = remember { CartesianChartModelProducer() }
@@ -283,7 +287,7 @@ private fun AllocationColumnChart(
                 columnProvider = columnProvider,
                 mergeMode = { ColumnCartesianLayer.MergeMode.Stacked },
             ),
-            startAxis = rememberAmountAxis(),
+            startAxis = rememberAmountAxis(hideAmounts),
             topAxis = rememberGrowthAxis(),
             bottomAxis = rememberPeriodAxis(),
         ),
@@ -297,7 +301,7 @@ private fun AllocationColumnChart(
 
 /** 总资产趋势：一条线 + 线下的淡填充。单序列用品牌色，不占用大类的分类色。 */
 @Composable
-private fun TotalTrendChart(series: NetWorthSeries, modifier: Modifier) {
+private fun TotalTrendChart(series: NetWorthSeries, hideAmounts: Boolean, modifier: Modifier) {
     val modelProducer = remember { CartesianChartModelProducer() }
     val values = remember(series) { series.points.map { it.netWorth.toYuan() } }
 
@@ -324,7 +328,7 @@ private fun TotalTrendChart(series: NetWorthSeries, modifier: Modifier) {
                         ),
                     ),
                 ),
-                startAxis = rememberAmountAxis(),
+                startAxis = rememberAmountAxis(hideAmounts),
             ),
             modelProducer = modelProducer,
             modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
@@ -393,6 +397,7 @@ private fun TrendDateLabel(text: String?) {
 private fun AllocationTrendChart(
     series: AllocationSeries,
     classes: List<AssetClass>,
+    hideAmounts: Boolean,
     modifier: Modifier,
 ) {
     val modelProducer = remember { CartesianChartModelProducer() }
@@ -432,7 +437,7 @@ private fun AllocationTrendChart(
                 rememberLineCartesianLayer(
                     lineProvider = LineCartesianLayer.LineProvider.series(lines),
                 ),
-                startAxis = rememberAmountAxis(),
+                startAxis = rememberAmountAxis(hideAmounts),
             ),
             modelProducer = modelProducer,
             modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
@@ -507,14 +512,45 @@ private fun rememberPeriodAxis(): HorizontalAxis<Axis.Position.Horizontal.Bottom
         },
     )
 
-/** 纵轴金额，缩写成「万/亿」—— 完整数字（600900.36）会占掉三四十 dp 的绘图宽度。 */
+/**
+ * 纵轴金额，缩写成「万/亿」—— 完整数字（600900.36）会占掉三四十 dp 的绘图宽度。
+ *
+ * [hideAmounts] 时把 `label` 整个给 null（Vico 的 `rememberStart` 允许，
+ * 画标签那一步是 `label ?: return@forEach`），**刻度线和网格线留着** ——
+ * 没有它们柱子就悬在空处，读不出高低。
+ *
+ * 不走"formatter 返回占位符"那条路：Vico 会在每一个刻度上都画一遍那个占位符，
+ * 变成纵向一列重复的 `••••••`，比不画更吵。（顺带避开了 `check(isNotBlank())`。）
+ *
+ * ⚠️ **`label = null` 必须连 `itemPlacer` 一起换掉**（模拟器截图才看出来的）。
+ * 两个 placer 在 `maxLabelHeight == 0`（= 没有标签）时的行为都是**特例分支**：
+ * - `step()`（默认）跳过防重叠那一步，直接用 `10^(floor(log10(maxY))-1)` 当步长 ——
+ *   净值 238 万时步长就是 10 万，**23 条横向网格线**，柱子被条纹糊掉。
+ * - `count()` 有一句短路：标签高度为 0 时只返回 `minY` 和 `maxY`，
+ *   于是横向网格线整个消失。**这正是想要的** —— 网格线是给标签读数用的，
+ *   标签没了它们只剩装饰。竖向的月份网格线来自底部坐标轴，不受影响。
+ *
+ * 传给 `count` 的数字在这条路径上其实用不到（短路发生在它之前），写 2 是把意图说明白：
+ * 只要两端。将来 Vico 去掉那条短路，`count(2)` 仍然是 2 条线，不会退回条纹。
+ *
+ * **通则：把某个组件设成 null 之前，先查清楚谁在拿它的尺寸算别的东西。**
+ */
 @Composable
-private fun rememberAmountAxis(): VerticalAxis<Axis.Position.Vertical.Start> =
+private fun rememberAmountAxis(hideAmounts: Boolean): VerticalAxis<Axis.Position.Vertical.Start> =
     VerticalAxis.rememberStart(
+        label = if (hideAmounts) null else rememberAxisLabelComponent(),
         valueFormatter = remember {
             CartesianValueFormatter { _, value, _ -> compactAmountLabel(value) }
         },
+        itemPlacer = if (hideAmounts) {
+            remember { VerticalAxis.ItemPlacer.count({ AXIS_ENDS_ONLY }) }
+        } else {
+            remember { VerticalAxis.ItemPlacer.step() }
+        },
     )
+
+/** 只要 y 轴两端（最小值和最大值），中间不画网格线。见 [rememberAmountAxis]。 */
+private const val AXIS_ENDS_ONLY = 2
 
 // ---------------------------------------------------------------- 纯函数
 

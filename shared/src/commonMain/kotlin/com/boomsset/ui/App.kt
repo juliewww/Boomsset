@@ -191,6 +191,7 @@ private fun AppContent(
                         onSelectChartMode = netWorthViewModel::selectChartMode,
                         onSelectChartStyle = netWorthViewModel::selectChartStyle,
                         onToggleClass = netWorthViewModel::toggleClassVisible,
+                        onToggleAmountsHidden = netWorthViewModel::setAmountsHidden,
                         lockState = lockState,
                         onToggleLock = onToggleLock,
                     )

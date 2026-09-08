@@ -73,6 +73,14 @@ data class NetWorthUiState(
      */
     val lastRecordedDate: LocalDate? = null,
     val daysSinceLastRecord: Int? = null,
+    /**
+     * 金额是否藏起来（眼睛图标）。**只影响这一页的展示**，不改写任何数据。
+     *
+     * 藏的是**绝对金额**（净值、总资产、总负债、变化额、纵轴刻度），
+     * 百分比和比率照常显示 —— 增长率、收益率、负债率单看都推不出身价，
+     * 而它们正是这一页的价值所在。全藏起来的话这个开关就等于"关掉净值页"。
+     */
+    val amountsHidden: Boolean = false,
 ) {
     /**
      * 空状态看的是**有没有资产**，不是 `series.latest == null`。
@@ -129,7 +137,8 @@ class NetWorthViewModel(
         repository.observeSubtypes(),
         chartOptions,
         baseCurrency,
-    ) { data, subtypes, chart, currency ->
+        settings.observeAmountsHidden(),
+    ) { data, subtypes, chart, currency, amountsHidden ->
         val today = clock.now().toLocalDateTime(zone).date
         val series = PortfolioSeriesCalculator.buildSeries(
             data = data,
@@ -165,6 +174,7 @@ class NetWorthViewModel(
             hasAssets = data.assets.any { !it.isArchived },
             lastRecordedDate = lastRecorded,
             daysSinceLastRecord = lastRecorded?.daysUntil(today),
+            amountsHidden = amountsHidden,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -197,6 +207,16 @@ class NetWorthViewModel(
                 hiddenClasses = if (assetClass in hidden) hidden - assetClass else hidden + assetClass,
             )
         }
+    }
+
+    /**
+     * 眼睛图标：藏起/显示金额。
+     *
+     * 落到 settings 表里而不是留在 UI 的 `remember` 里 —— 后者切个 tab 回来就复位了，
+     * 而这个开关的用途恰恰是"人还在旁边"，那期间用户很可能会去翻配置页再回来。
+     */
+    fun setAmountsHidden(hidden: Boolean) {
+        viewModelScope.launch { settings.setAmountsHidden(hidden) }
     }
 
     fun selectBaseCurrency(code: String) {
