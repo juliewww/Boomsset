@@ -18,7 +18,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
@@ -147,10 +146,14 @@ private fun AppContent(
                                 // `onPrimaryContainer` 是同一色系的深棕，12.72:1。
                                 selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                // 指示条设成透明：M3 把它画在**图标位**，而这一栏没有图标，
-                                // 所以它是一个空的圆角块；默认色 `secondaryContainer` 压在
-                                // 导航栏底上又只有 1.05:1。既没内容也看不见，不如不画。
-                                indicatorColor = Color.Transparent,
+                                // 指示条（M3 画在**图标位**，即文字上方那一块）也要承载选中态。
+                                // 默认色是 `secondaryContainer`，压在导航栏底上**只有 1.05:1**，
+                                // 等于不存在（实机反馈"选中效果太浅"，一半原因在这）。
+                                // 换成 `primary`：3.41:1，过了 UI 元件"看得见"的 3:1 门槛。
+                                // ⚠️ 这一栏 `icon = {}` 没有图标，所以这块是**实心色块**，
+                                // 它的"有/无"本身就是选中态 —— 加图标的话这里要改成
+                                // `selectedIconColor = onPrimary`，否则图标会糊在色块上。
+                                indicatorColor = MaterialTheme.colorScheme.primary,
                             ),
                         )
                     }
