@@ -18,6 +18,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -114,8 +116,9 @@ private fun AppContent(
                 if (onAddRoute) return@Scaffold
                 NavigationBar {
                     tabs.forEach { tab ->
+                        val selected = currentRoute == tab.route
                         NavigationBarItem(
-                            selected = currentRoute == tab.route,
+                            selected = selected,
                             onClick = {
                                 if (currentRoute != tab.route) {
                                     navController.navigate(tab.route) {
@@ -125,15 +128,29 @@ private fun AppContent(
                                 }
                             },
                             icon = {},
-                            label = { Text(tab.label) },
-                            // 默认样式选中态只有图标背后一个灰色指示条，文字颜色不变 ——
-                            // 没有图标时那条指示条几乎看不出来，选中和未选中几乎没区别
-                            // （实机反馈）。显式给选中文字上品牌色，让"当前在哪一页"一眼可辨。
+                            // 选中态靠**两个通道**：更深 + 更粗。只靠颜色对色弱用户不成立，
+                            // 而且这一栏只有文字（`icon = {}`），没有图标可以承载状态。
+                            label = {
+                                Text(
+                                    tab.label,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                            },
                             // label 里不用手动读 selected 再设 Text 颜色 —— NavigationBarItem
                             // 已经把这里的 colors 通过 LocalContentColor 传给 label 内容了。
                             colors = NavigationBarItemDefaults.colors(
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                // ⚠️ **不要用 `primary`。** 莫兰迪配色下它是 L 0.61 的橄榄金，
+                                // 压在导航栏底上只有 3.41:1，而未选中的 `onSurfaceVariant`
+                                // 有 5.26:1 —— 选中态反而比未选中更淡（实机反馈"选中效果太浅"）。
+                                // 旧的高彩度橙 `#BD4D03` 靠彩度撑住"有颜色=选中"，
+                                // 换成低彩度品牌色之后这个读法就塌了。
+                                // `onPrimaryContainer` 是同一色系的深棕，12.72:1。
+                                selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                // 指示条设成透明：M3 把它画在**图标位**，而这一栏没有图标，
+                                // 所以它是一个空的圆角块；默认色 `secondaryContainer` 压在
+                                // 导航栏底上又只有 1.05:1。既没内容也看不见，不如不画。
+                                indicatorColor = Color.Transparent,
                             ),
                         )
                     }
