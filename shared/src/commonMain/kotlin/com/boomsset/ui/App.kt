@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import com.boomsset.ui.theme.BoomssetTheme
-import com.boomsset.ui.theme.chartColors
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -151,14 +150,14 @@ private fun AppContent(
                                 // 指示条（M3 画在**图标位**，即文字上方那一块）也要承载选中态。
                                 // 默认色是 `secondaryContainer`，压在导航栏底上**只有 1.05:1**，
                                 // 等于不存在（实机反馈"选中效果太浅"，一半原因在这）。
-                                // 换成 `chartColors.brand`：3.00:1，过了 UI 元件"看得见"的门槛。
-                                // ⚠️ **不能用 `primary`** —— 它是奶黄，对导航栏底只有 1.67:1，
-                                // 会退回"选中效果太浅"。指示条和净值柱的判据相同，所以共用
-                                // 同一个值，见 ChartColors.brand 的注释。
+                                // 换成 `primary`：8.74:1，远超 UI 元件"看得见"的 3:1 门槛。
+                                // ⚠️ 这条**和 primary 的亮度强耦合**：奶黄那一版 primary 对
+                                // 导航栏底只有 1.67:1，当时不得不给指示条单独一个深色。
+                                // 现在是深紫檀，可以回到单一品牌色。**换浅色品牌色要重量。**
                                 // ⚠️ 这一栏 `icon = {}` 没有图标，所以这块是**实心色块**，
                                 // 它的"有/无"本身就是选中态 —— 加图标的话这里要改成
                                 // `selectedIconColor = onPrimary`，否则图标会糊在色块上。
-                                indicatorColor = chartColors.brand,
+                                indicatorColor = MaterialTheme.colorScheme.primary,
                             ),
                         )
                     }
@@ -170,11 +169,7 @@ private fun AppContent(
                 if (currentRoute == ROUTE_ASSETS) {
                     // 显式给 primary，**不用 M3 的默认值**（默认是 `primaryContainer`，
                     // 比 primary 更浅，加号会更糊）。
-                    // ⚠️ FAB 是**唯一**被允许不过 3:1 的品牌色元件：primary 是奶黄，
-                    // 对页面底只有 1.78:1，它靠的是**投影 + 深色加号**（9.71:1）——
-                    // M3 的 FAB 本来就带 elevation，边界由投影给出。
-                    // 净值柱和导航指示条**没有**这个豁免（它们没有投影、也没有内部图标），
-                    // 所以那两处用 `chartColors.brand`，见它的注释。
+                    // primary 是深紫檀，对页面底 9.31:1、白加号 9.74:1，都很宽松。
                     FloatingActionButton(
                         onClick = { navController.navigate(ROUTE_ADD_ASSET) },
                         containerColor = MaterialTheme.colorScheme.primary,

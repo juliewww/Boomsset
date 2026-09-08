@@ -25,15 +25,15 @@ import androidx.compose.ui.graphics.Color
  * 主题的深浅是可以被显式传参覆盖的，各读各的会不一致。
  *
  * ⚠️ **最不利的底在深浅两个模式里不是同一个，这里踩过坑。**
- * 浅色模式下 hero 卡片（奶黄 `#F0E3BE`）比页面底**深**，所以它最不利；
- * 深色模式下 hero 卡片（`#57450C`）反而比页面底**浅**，也是最不利的那个 ——
+ * 浅色模式下 hero 卡片（淡紫 `#EAD2F6`）比页面底**深**，所以它最不利；
+ * 深色模式下 hero 卡片（`#563664`）反而比页面底**浅**，也是最不利的那个 ——
  * 但早先一版深色值只对着 `surfaceContainer` 验，
  * 结果压在深色 hero 卡片上**只有 2.50:1**，
  * 真机（小米 15 Pro / Android 16）切到深色模式才看出来。
  * **改色值时把三种底逐个验一遍，别假设哪个"最不利"。**
  *
- * 实测：浅色 涨 4.57 / 跌 4.56（对奶黄 hero 卡片，另两种底更宽松）；
- * 深色 涨 4.52 / 跌 4.59（对深色 hero 卡片），对普通卡片和页面底更宽松。
+ * 实测：浅色 涨 4.52 / 跌 4.62（对淡紫 hero 卡片，另两种底更宽松）；
+ * 深色 涨 4.57 / 跌 4.51（对深色 hero 卡片），对普通卡片和页面底更宽松。
  *
  * 只在净值/资产两页的盈亏、涨跌数字上用；不用于配置页（配置页的红蓝是"超配/低配"，
  * 是另一套语义，见 [com.boomsset.ui.theme.ChartColors]）。
@@ -46,13 +46,13 @@ data class GainLossColors(
 )
 
 private val LightGainLoss = GainLossColors(
-    rise = Color(0xFFB03E3B),
-    fall = Color(0xFF18743E),
+    rise = Color(0xFFAA3836),
+    fall = Color(0xFF0A6D37),
 )
 
 private val DarkGainLoss = GainLossColors(
-    rise = Color(0xFFFD9A92),
-    fall = Color(0xFF7EC692),
+    rise = Color(0xFFF7958D),
+    fall = Color(0xFF76BE8A),
 )
 
 val LocalGainLossColors = staticCompositionLocalOf { LightGainLoss }
