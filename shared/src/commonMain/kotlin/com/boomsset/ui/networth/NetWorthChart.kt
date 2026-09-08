@@ -165,13 +165,16 @@ private fun TotalColumnChart(series: NetWorthSeries, modifier: Modifier) {
         }
     }
 
-    val brand = MaterialTheme.colorScheme.primary
+    // 柱子用 `chartColors.brand` 而**不是** `colorScheme.primary` ——
+    // primary 是奶黄（对页面底 1.78:1），FAB 那种带投影和深色图标的元件够用，
+    // 但柱子是数据标记、必须自己就看得见。见 ChartColors.brand 的注释。
+    val brand = chartColors.brand
     // **实色，不加 alpha。** 这里原本是 `alpha = 0.5f` —— 那是柱子和折线叠画那一版的
     // 遗留（半透明才能让折线透出来），折线删掉之后它只剩"把柱子变淡"这一个效果：
     // 实测 0.5 alpha 下柱子对页面底只有 **1.95:1**，而柱子是这一页的主数据标记。
-    // 实色是 4.41:1。（顺带一提这个 alpha 一直都偏低 —— 配旧的 `#BD4D03` 是
-    // 2.08:1、配莫兰迪 `#918163` 更是 1.77:1，只是那时没人量过。）
-    // 下方趋势图的**区域填充**仍然是半透明（0.16），那个是有意的，别一起改掉。
+    // 实色是 3.20:1。（这个 alpha 一直都偏低 —— 配旧的 `#BD4D03` 是 2.08:1、
+    // 配莫兰迪 `#918163` 更是 1.77:1，只是那时没人量过。）
+    // 趋势图的区域填充也已经改成不透明，见 TotalTrendChart。
     val column = rememberLineComponent(
         fill = Fill(brand),
         thickness = 10.dp,
@@ -302,7 +305,11 @@ private fun TotalTrendChart(series: NetWorthSeries, modifier: Modifier) {
         modelProducer.runTransaction { lineModel { series(values) } }
     }
 
-    val brand = MaterialTheme.colorScheme.primary
+    val brand = chartColors.brand
+    // 区域填充用**不透明**的容器色。原来是 `brand.copy(alpha = 0.16f)` ——
+    // 16% 的金压在奶油底上几乎等于没有，实机反馈"图没有实心"。
+    // ⚠️ **按大类那版的堆叠面积一直是不透明的**，两条路径本来就该一致。
+    val area = MaterialTheme.colorScheme.primaryContainer
     TrendChartFrame(series.dates, modifier) {
         CartesianChartHost(
             chart = rememberCartesianChart(
@@ -310,9 +317,7 @@ private fun TotalTrendChart(series: NetWorthSeries, modifier: Modifier) {
                     lineProvider = LineCartesianLayer.LineProvider.series(
                         LineCartesianLayer.rememberLine(
                             fill = LineCartesianLayer.LineFill.single(Fill(brand)),
-                            areaFill = LineCartesianLayer.AreaFill.single(
-                                Fill(brand.copy(alpha = 0.16f)),
-                            ),
+                            areaFill = LineCartesianLayer.AreaFill.single(Fill(area)),
                         ),
                     ),
                 ),

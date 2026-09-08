@@ -70,21 +70,21 @@ import com.boomsset.ui.gainLossColorsFor
  *
  * 品牌色和**涨跌语义色是两件事**，后者见 [com.boomsset.ui.GainLossColors]。
  */
-private val BrandGold = Color(0xFF955E00)
+private val BrandCream = Color(0xFFD3BC7D)
 
 private val LightScheme = lightColorScheme(
-    primary = BrandGold,
+    primary = BrandCream,
     // 白色 —— 5.41:1，过正文门槛。⚠️ 这一条**和亮度强耦合**：
     // 更早那版 primary 亮到 L 0.61 时白字只有 3.86:1、不合格，只能用深棕。
     // 改 primary 的亮度必须重算这里。
-    onPrimary = Color(0xFFFFFFFF),
-    // 净值 hero 卡片底 —— **香槟金**。
+    onPrimary = Color(0xFF1D1500),
+    // 净值 hero 卡片底 —— **奶黄**。
     // 这里是整套配色里唯一能放"浅而透亮的金"的地方：大面积浅色底配深色字，
     // 不受"对页面底 ≥3:1"约束（那条只管 primary 这种要被看见的小元件）。
     // 反馈想要"高级金"而 primary 做不到，就放在这里。
-    primaryContainer = Color(0xFFF5C894),
-    onPrimaryContainer = Color(0xFF3D2400),
-    inversePrimary = Color(0xFFDAA668),
+    primaryContainer = Color(0xFFF0E3BE),
+    onPrimaryContainer = Color(0xFF352800),
+    inversePrimary = Color(0xFFC7AF6D),
 
     // 次要色走同色相的低彩中性 —— 只留一个强调色，其余全部近中性
     secondary = Color(0xFF70675E),
@@ -94,10 +94,10 @@ private val LightScheme = lightColorScheme(
 
     // 第三色刻意留在同色相内，**不用任何分类色的色相** ——
     // 否则它会和某个大类的颜色撞车，让读者以为两者有关
-    tertiary = Color(0xFF735025),
+    tertiary = Color(0xFF6B5924),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFF6D8B7),
-    onTertiaryContainer = Color(0xFF3A2100),
+    tertiaryContainer = Color(0xFFECDDB5),
+    onTertiaryContainer = Color(0xFF322600),
 
     // error 和「超配」是两回事，色值也不同（超配是 #C5453F）
     error = Color(0xFFB3261E),
@@ -111,7 +111,7 @@ private val LightScheme = lightColorScheme(
     onSurface = Color(0xFF30271D),
     surfaceVariant = Color(0xFFEBE6E2),
     onSurfaceVariant = Color(0xFF6C6359),
-    surfaceTint = BrandGold,
+    surfaceTint = BrandCream,
     inverseSurface = Color(0xFF30271D),
     inverseOnSurface = Color(0xFFF6F2ED),
 
@@ -133,21 +133,21 @@ private val LightScheme = lightColorScheme(
  * 按深底重新取亮度并单独验过（primary 对底 9.74:1，与深色大类色最小 ΔE 15.1）。
  */
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFFAAB42),
-    onPrimary = Color(0xFF2F1A00),
-    primaryContainer = Color(0xFF653E00),
-    onPrimaryContainer = Color(0xFFF6D8B7),
-    inversePrimary = BrandGold,
+    primary = Color(0xFFE0B310),
+    onPrimary = Color(0xFF281E00),
+    primaryContainer = Color(0xFF57450C),
+    onPrimaryContainer = Color(0xFFECDDB5),
+    inversePrimary = BrandCream,
 
     secondary = Color(0xFFC5BCB3),
     onSecondary = Color(0xFF312A22),
     secondaryContainer = Color(0xFF413C36),
     onSecondaryContainer = Color(0xFFE6DED6),
 
-    tertiary = Color(0xFFD3AF85),
-    onTertiary = Color(0xFF321C00),
-    tertiaryContainer = Color(0xFF5A390A),
-    onTertiaryContainer = Color(0xFFF3D5B4),
+    tertiary = Color(0xFFC7B482),
+    onTertiary = Color(0xFF2B2000),
+    tertiaryContainer = Color(0xFF503F03),
+    onTertiaryContainer = Color(0xFFE9DAB2),
 
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
@@ -160,7 +160,7 @@ private val DarkScheme = darkColorScheme(
     onSurface = Color(0xFFECE5DC),
     surfaceVariant = Color(0xFF3D3833),
     onSurfaceVariant = Color(0xFFC5BCB3),
-    surfaceTint = Color(0xFFFAAB42),
+    surfaceTint = Color(0xFFE0B310),
     inverseSurface = Color(0xFFECE5DC),
     inverseOnSurface = Color(0xFF30271D),
 

@@ -63,6 +63,19 @@ data class ChartColors(
     val under: Color,
     /** 已达标 —— 分歧配色的中性中点。 */
     val onTarget: Color,
+    /**
+     * 净值页柱状图和底部导航指示条用的**品牌强调色**。
+     *
+     * ⚠️ **它故意不等于 `colorScheme.primary`。** primary 是奶黄（L 0.80），
+     * 对页面底只有 1.78:1 —— 那对 FAB / 开关够用（它们靠投影和深色图标成立），
+     * 但**柱子是数据标记、指示条是状态**，两者都必须自己就看得见（≥3:1）。
+     * 这个值是同色相下满足 3:1 的最亮档（浅色 3.20:1 / 深色 11.90:1）。
+     *
+     * 放在 ChartColors 而不是 colorScheme：M3 没有"必须过 3:1 的品牌色"这个角色，
+     * 而本项目已有的先例正是把"数据标记的规则和界面装饰分开"（见本文件和
+     * [com.boomsset.ui.GainLossColors] 的类注释）。指示条借用它是因为**判据相同**。
+     */
+    val brand: Color,
 ) {
     /**
      * 取某个大类的颜色。
@@ -90,6 +103,7 @@ private val LightChartColors = ChartColors(
     over = Color(0xFFC5453F),
     under = Color(0xFF2F6DB0),
     onTarget = Color(0xFF5C5C5C),
+    brand = Color(0xFF9D8B5A),
 )
 
 /**
@@ -108,6 +122,7 @@ private val DarkChartColors = ChartColors(
     over = Color(0xFFE5605C),
     under = Color(0xFF8FBBE8),
     onTarget = Color(0xFFA8A8A8),
+    brand = Color(0xFFFCC800),
 )
 
 /**

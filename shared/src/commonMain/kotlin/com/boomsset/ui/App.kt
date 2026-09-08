@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import com.boomsset.ui.theme.BoomssetTheme
+import com.boomsset.ui.theme.chartColors
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -138,22 +139,26 @@ private fun AppContent(
                             // label 里不用手动读 selected 再设 Text 颜色 —— NavigationBarItem
                             // 已经把这里的 colors 通过 LocalContentColor 传给 label 内容了。
                             colors = NavigationBarItemDefaults.colors(
-                                // ⚠️ **不要用 `primary`。** 莫兰迪配色下它是 L 0.61 的橄榄金，
-                                // 压在导航栏底上只有 3.41:1，而未选中的 `onSurfaceVariant`
-                                // 有 5.26:1 —— 选中态反而比未选中更淡（实机反馈"选中效果太浅"）。
-                                // 旧的高彩度橙 `#BD4D03` 靠彩度撑住"有颜色=选中"，
-                                // 换成低彩度品牌色之后这个读法就塌了。
-                                // `onPrimaryContainer` 是同一色系的深棕，12.72:1。
+                                // ⚠️ **不要用 `primary`。** 它是奶黄 `#D3BC7D`，压在导航栏底上
+                                // 只有 1.67:1，会比未选中的 `onSurfaceVariant`（5.26:1）还淡 ——
+                                // 那正是实机反馈过的"选中效果太浅"。
+                                // 通则：**换低彩度/高亮度的品牌色时，所有"靠颜色表示状态"
+                                // 的地方都要把选中/未选中两边的对比度都算出来比大小**，
+                                // 不能只看"选中态有没有上品牌色"。
+                                // `onPrimaryContainer` 是同色系的深棕，12.9:1。
                                 selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 // 指示条（M3 画在**图标位**，即文字上方那一块）也要承载选中态。
                                 // 默认色是 `secondaryContainer`，压在导航栏底上**只有 1.05:1**，
                                 // 等于不存在（实机反馈"选中效果太浅"，一半原因在这）。
-                                // 换成 `primary`：3.41:1，过了 UI 元件"看得见"的 3:1 门槛。
+                                // 换成 `chartColors.brand`：3.00:1，过了 UI 元件"看得见"的门槛。
+                                // ⚠️ **不能用 `primary`** —— 它是奶黄，对导航栏底只有 1.67:1，
+                                // 会退回"选中效果太浅"。指示条和净值柱的判据相同，所以共用
+                                // 同一个值，见 ChartColors.brand 的注释。
                                 // ⚠️ 这一栏 `icon = {}` 没有图标，所以这块是**实心色块**，
                                 // 它的"有/无"本身就是选中态 —— 加图标的话这里要改成
                                 // `selectedIconColor = onPrimary`，否则图标会糊在色块上。
-                                indicatorColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = chartColors.brand,
                             ),
                         )
                     }
@@ -163,10 +168,13 @@ private fun AppContent(
                 // 加号放在"资产"页而不是"净值"页 —— 净值页是只读的概览（趋势、增长率），
                 // 添加资产是资产页在做的事，放在净值页会让用户在错的地方找操作入口（实机反馈）。
                 if (currentRoute == ROUTE_ASSETS) {
-                    // 显式给 primary，**不用 M3 的默认值**。默认是 `primaryContainer`，
-                    // 而莫兰迪配色下它是淡沙色 —— 压在同样是暖米白的页面底上只有 1.3:1，
-                    // 加号几乎看不见（模拟器实测）。`primary` 是 3.70:1，
-                    // 过了"UI 元件要看得见"的 3:1 门槛。
+                    // 显式给 primary，**不用 M3 的默认值**（默认是 `primaryContainer`，
+                    // 比 primary 更浅，加号会更糊）。
+                    // ⚠️ FAB 是**唯一**被允许不过 3:1 的品牌色元件：primary 是奶黄，
+                    // 对页面底只有 1.78:1，它靠的是**投影 + 深色加号**（9.71:1）——
+                    // M3 的 FAB 本来就带 elevation，边界由投影给出。
+                    // 净值柱和导航指示条**没有**这个豁免（它们没有投影、也没有内部图标），
+                    // 所以那两处用 `chartColors.brand`，见它的注释。
                     FloatingActionButton(
                         onClick = { navController.navigate(ROUTE_ADD_ASSET) },
                         containerColor = MaterialTheme.colorScheme.primary,

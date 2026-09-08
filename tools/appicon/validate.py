@@ -158,9 +158,11 @@ check(worst >= BAR_RING_MIN, "柱与环段的分离度",
 
 # 图标底色和 Theme.kt 的品牌色必须同一个色相角
 theme = os.path.join(ROOT, "shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt")
-brand = re.search(r"val BrandGold = Color\(0xFF([0-9A-Fa-f]{6})\)", open(theme).read())
+# 匹配 `val Brand<任意名>` —— 这个常量名已经改过三次（BrandAmber → BrandOlive →
+# BrandGold → BrandCream），写死名字只会让验证器在下次改色时假报警。
+brand = re.search(r"val Brand\w* = Color\(0xFF([0-9A-Fa-f]{6})\)", open(theme).read())
 if not brand:
-    check(False, "图标底与品牌色同色相", "Theme.kt 里找不到 BrandGold —— 改名了？")
+    check(False, "图标底与品牌色同色相", "Theme.kt 里找不到 `val Brand* = Color(0xFF……)`")
 else:
     bh, fh = hue(hex_to_rgb(brand.group(1))), hue(G.FIELD)
     check(abs(bh - G.BRAND_HUE) <= HUE_TOL and abs(fh - G.BRAND_HUE) <= HUE_TOL,
