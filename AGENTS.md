@@ -306,6 +306,48 @@ cyan/purple 彩度不足。在 2520 种组合里搜出 588 组通过，取离原
 - 添加资产第二步表单（按份额取行情时的「持有份额」「总投入成本」）键盘弹出会挡住字段，
   补了 `Modifier.imePadding()` —— 见下方教训 12
 
+**净值页可以藏起金额了（眼睛图标，Android 模拟器 API 34 验证，浅深两色）：**
+概览卡片右上角一个眼睛，点一下把**这一页的绝对金额**换成固定长度的 `••••••`
+（[AmountVisibility.kt](shared/src/commonMain/kotlin/com/boomsset/ui/AmountVisibility.kt)），
+**百分比和比率照常显示** —— 增长率、收益率、负债率单看都推不出身价，而它们正是这一页的价值；
+全藏起来等于把净值页关掉。日期、覆盖资产项数、柱子的形状也都留着（形状是相对量）。
+
+三个决定值得记：
+
+* **状态持久化**（settings 表，键 `amounts_hidden`），不是 UI 的 `remember`。
+  这个开关的用途是"人还在旁边"，那期间用户很可能翻去配置页再回来；
+  重启就复位的话，每次打开 App 都要抢在别人看见之前再点一次，等于没这个功能。
+* **图表纵轴刻度必须一起藏。** 只藏卡片的话纵轴上还写着"240万"，
+  顶上那个占位符就成了摆设 —— **一个只挡住一半的隐私开关比没有更糟**，用户以为已经藏好了。
+* **占位符固定长度**，不按位数生成。`"•".repeat(digits)` 会让七位数和四位数一眼分得开，
+  等于把"大概多少钱"漏出去，而那就是要藏的东西。有测试锁着
+  （[AmountVisibilityTest](shared/src/commonTest/kotlin/com/boomsset/ui/AmountVisibilityTest.kt)）。
+
+⚠️ **只做了净值页。** 资产列表和更新记录里的金额照常显示 —— 需求说的是首页。
+
+⚠️ **藏纵轴 = `label = null`，但必须连 `itemPlacer` 一起换**，见
+[NetWorthChart.kt](shared/src/commonMain/kotlin/com/boomsset/ui/networth/NetWorthChart.kt)
+的 `rememberAmountAxis`。两个 placer 在"没有标签"时都走**特例分支**：默认的 `step()`
+跳过防重叠、直接拿 `10^(floor(log10(maxY))-1)` 当步长，净值 238 万时就是 10 万一条 ——
+**23 条横向网格线，柱子被条纹糊掉**（模拟器截图才看出来，编译和单测全绿）。
+换成 `count()` 才对：它在标签高度为 0 时只返回两端，横线整个消失，而这正是想要的。
+**通则：把某个组件设成 null 之前，先查清楚谁在拿它的尺寸算别的东西。**
+
+图标是**手画的 Canvas**，没引图标依赖（项目里"＋""ⓘ""▾"都是字形，但眼睛没有能用的字形：
+👁 是彩色 emoji、吃不到主题色，"划掉的眼睛"连码点都没有）。踩到的三件事都写进了那个文件：
+1. **斜杠画错过一版，只有装到设备上放大才看出来**（实机反馈"图标显示有误"）：
+   短斜线两端正好停在眼眶曲线上、中段又和瞳孔粘成一坨，读不出"被划掉"。
+   要**贯穿到角** + 用 `BlendMode.Clear` 擦出一条缝（配 `CompositingStrategy.Offscreen`，
+   否则 Clear 会去擦卡片底色），**并且隐藏态不画瞳孔** —— 斜杠正好穿过正中间，
+   两个都画会把瞳孔擦成左右两个碎点。
+2. **`IconButton` 的无障碍语义要整个自己声明**（`clearAndSetSemantics` + `role` + `onClick`）。
+   它把 `clickable` 装在内部，所以外面挂的语义节点是可点节点的**祖先**：只挂 `contentDescription`
+   会得到两个节点（28dp 那个有名字但点不动、48dp 可点的没名字），`mergeDescendants = true`
+   能并成一个但 `clickable` 仍是 false。逐个方案都拿 `uiautomator dump` 核对过才定下来 ——
+   不核对根本看不出来。（`LabeledSwitch` 那边不受影响：`Switch` 的 `clickable` 就在它自己那层。）
+3. Canvas 画的图形**不产生无障碍节点**，也没有自动化覆盖（同 `AllocationBar` 那根竖线）——
+   改画法必须实机看一眼。
+
 **净值页的「查看币种」改成下拉（Android 模拟器 API 34 验证）：** 原来是 9 个 `FilterChip`
 排开，加上标签和一行说明，在手机上占三四行（反馈："位置占比太大"）。现在收成一行：
 标签 + `OutlinedButton`("CNY ▾") + `DropdownMenu`，说明收进 (i) tooltip。默认仍是 CNY
@@ -436,6 +478,11 @@ iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会�
 共享代码过了 `compileKotlinIosSimulatorArm64` 但链接和真机渲染没验过
 （下拉菜单、`Switch`、`FlowRow` 在 iOS 上的排布尤其没看过；更新记录那栏是纯
 `Text`/`Row`/`Column`，风险比图表低，但 iOS 上没有 XCUITest 覆盖它）。
+**眼睛图标同样只在 Android 上看过** —— 它用了 `BlendMode.Clear` + 离屏图层，
+Android 上是 Skia、iOS 上也是 Skia，理论上一致，但"擦出一条缝"这种像素级的东西
+**没实机看过就不算验过**（教训 7、13、20 都是这个形状的坑）。
+iOS 上也还没有 XCUITest 覆盖它（选择器可以用 `app.buttons["隐藏金额"]`，
+无障碍节点在 Android 上确认过是一个 named + clickable 的 Button）。
 
 **教训（二十次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现

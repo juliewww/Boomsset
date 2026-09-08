@@ -41,6 +41,7 @@ import com.boomsset.security.AuthCapability
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.Money
 import com.boomsset.domain.Period
+import com.boomsset.ui.AmountVisibilityToggle
 import com.boomsset.ui.InfoTooltip
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.bpToSignedPercent
@@ -49,6 +50,7 @@ import com.boomsset.ui.formatSigned
 import com.boomsset.ui.formatWithCurrency
 import com.boomsset.ui.label
 import com.boomsset.ui.lastRecordDescription
+import com.boomsset.ui.maskAmount
 import com.boomsset.ui.periodLabel
 import com.boomsset.ui.riseColor
 import com.boomsset.ui.theme.chartColors
@@ -61,6 +63,7 @@ fun NetWorthScreen(
     onSelectChartMode: (ChartMode) -> Unit,
     onSelectChartStyle: (ChartStyle) -> Unit,
     onToggleClass: (AssetClass) -> Unit,
+    onToggleAmountsHidden: (Boolean) -> Unit,
     lockState: AppLockUiState,
     onToggleLock: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -78,12 +81,16 @@ fun NetWorthScreen(
             state.isEmpty -> {
                 EmptyHint()
                 // 空状态下也要能开应用锁 —— 提前 return 会砍掉这个入口，
-                // 这是 AGENTS.md 里那条「空状态不要用提前 return」的教训
+                // 这是 AGENTS.md 里那条「空状态不要用提前 return」的教训。
+                // ⚠️ 眼睛图标**故意**不在这个分支里：它藏的是金额，而空状态一个金额都没有，
+                // 放一个"藏起来"的按钮没有任何东西可藏。这和上面那条教训不冲突 ——
+                // 那条针对的是"空状态下够不着的功能入口"，而这个开关本身就依附于金额，
+                // 有金额时（下面那个分支）它一定在。
                 AppLockToggle(lockState, onToggleLock)
             }
 
             else -> {
-                SummaryCard(state)
+                SummaryCard(state, onToggleAmountsHidden)
                 BaseCurrencySelector(state.baseCurrency, onSelectBaseCurrency)
                 ChartSection(
                     state = state,
@@ -120,12 +127,16 @@ fun NetWorthScreen(
  *
  * **负债那一段只在真的有负债时出现** —— 无债用户看到"总负债 ¥0.00 / 负债率 0.00%"
  * 是纯噪音，而且此时总资产恒等于净值，再写一遍也是重复。
+ *
+ * 右上角的眼睛图标把**这张卡片里的全部金额**换成占位符（图表纵轴也跟着藏，
+ * 见 [ChartSection]）。藏金额、留百分比，判据见 [NetWorthUiState.amountsHidden]。
  */
 @Composable
-private fun SummaryCard(state: NetWorthUiState) {
+private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean) -> Unit) {
     val point = state.series?.latest
     val net = point?.netWorth ?: Money.ZERO
     val currency = state.baseCurrency
+    val hidden = state.amountsHidden
     val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
 
     // 卡片用品牌色的浅色容器打底 —— 整页只有这一处用容器强调。
@@ -142,13 +153,22 @@ private fun SummaryCard(state: NetWorthUiState) {
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                // 眼睛和标签同一行、贴右边（卡片右上角）—— 它管的是整张卡片的金额，
+                // 所以放在卡片的角上，而不是挨着某一个具体数值。
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "当前净值",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = onContainer,
+                    )
+                    AmountVisibilityToggle(hidden, onToggleAmountsHidden)
+                }
                 Text(
-                    "当前净值",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = onContainer,
-                )
-                Text(
-                    net.formatWithCurrency(currency),
+                    maskAmount(hidden, net.formatWithCurrency(currency)),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = onContainer,
@@ -167,12 +187,17 @@ private fun SummaryCard(state: NetWorthUiState) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     KpiCell(
                         label = "总资产",
-                        value = point.totalAssets.formatWithCurrency(currency),
+                        value = maskAmount(hidden, point.totalAssets.formatWithCurrency(currency)),
                         modifier = Modifier.weight(1f),
                     )
                     KpiCell(
                         label = "总负债",
-                        value = point.totalLiabilities.formatWithCurrency(currency),
+                        value = maskAmount(
+                            hidden,
+                            point.totalLiabilities.formatWithCurrency(currency),
+                        ),
+                        // 负债率是**比率**，藏金额时照常显示 —— 单看它推不出欠了多少钱，
+                        // 而它是这一格最有用的那个数
                         // null = 总资产 ≤ 0，此时比率无意义。不写成 0% —— 那会被读成"没负债"
                         sub = "负债率 ${point.liabilityRatioBp?.bpToPercent() ?: "—"}",
                         modifier = Modifier.weight(1f),
@@ -191,7 +216,7 @@ private fun SummaryCard(state: NetWorthUiState) {
             // 数值先量、永远完整，宽度不够只让标签折行。
             MetricRow(
                 label = "净值增长（含新增投入）",
-                value = growthValue(state),
+                value = growthValue(state, hidden),
                 sub = growthSub(state),
                 valueColor = signedColor(state.series?.growthAbsolute?.minorUnits),
                 // 注意这里**不能**写 Markdown 的 `**加粗**`：`Text` 不解析标记，
@@ -203,7 +228,7 @@ private fun SummaryCard(state: NetWorthUiState) {
             )
             MetricRow(
                 label = "浮动盈亏（投资本身）",
-                value = pnlValue(state),
+                value = pnlValue(state, hidden),
                 sub = pnlSub(state),
                 valueColor = signedColor(state.pnl?.takeIf { it.hasCoverage }?.pnl?.absolute?.minorUnits),
             )
@@ -211,8 +236,13 @@ private fun SummaryCard(state: NetWorthUiState) {
     }
 }
 
-/** 净值增长：**含新增投入**，金额和百分比一起给。 */
-private fun growthValue(state: NetWorthUiState): String {
+/**
+ * 净值增长：**含新增投入**，金额和百分比一起给。
+ *
+ * [hidden] 只换掉金额那一半，百分比留着 —— "•••••• · +2.10%" 仍然告诉用户涨了多少，
+ * 但推不出身价。"没有变化"这句本身不含金额，藏与不藏都照原样给。
+ */
+private fun growthValue(state: NetWorthUiState, hidden: Boolean): String {
     val series = state.series
     val delta = series?.growthAbsolute
     val bp = series?.growthBp
@@ -222,8 +252,10 @@ private fun growthValue(state: NetWorthUiState): String {
         // 一直没更新估值时结转会让首尾两点完全相等，这在本 App 里很常见。
         // "¥0.00 · 0.00%" 要读两个数才知道"没动"，直说更快
         delta.isZero -> "没有变化"
-        bp == null -> delta.formatSigned(state.baseCurrency)
-        else -> "${delta.formatSigned(state.baseCurrency)} · ${bp.bpToSignedPercent()}"
+        else -> {
+            val amount = maskAmount(hidden, delta.formatSigned(state.baseCurrency))
+            if (bp == null) amount else "$amount · ${bp.bpToSignedPercent()}"
+        }
     }
 }
 
@@ -240,11 +272,11 @@ private fun growthSub(state: NetWorthUiState): String? {
     return series.baselineDate?.periodLabel(series.period)?.let { "相比 $it" }
 }
 
-/** 浮动盈亏：**剔除新增投入**。 */
-private fun pnlValue(state: NetWorthUiState): String {
+/** 浮动盈亏：**剔除新增投入**。[hidden] 的口径同 [growthValue]。 */
+private fun pnlValue(state: NetWorthUiState, hidden: Boolean): String {
     val pnl = state.pnl?.takeIf { it.hasCoverage } ?: return "—"
     val rate = pnl.pnl.returnBp
-    val absolute = pnl.pnl.absolute.formatSigned(state.baseCurrency)
+    val absolute = maskAmount(hidden, pnl.pnl.absolute.formatSigned(state.baseCurrency))
     return if (rate == null) absolute else "$absolute · ${rate.bpToSignedPercent()}"
 }
 
@@ -462,6 +494,10 @@ private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
  * 四种组合（总资产/按大类 × 柱状图/趋势图）共用这一块，**能不能画**的判断也集中在这里 ——
  * 分散到各个图表里的话，"什么都没画出来"就会变成一张空图，而不是一句说明
  * （AGENTS.md 教训 10 就是这么来的）。
+ *
+ * ⚠️ **藏金额时图表的纵轴刻度必须一起藏。** 只藏卡片的话，纵轴上还写着"13万"，
+ * 顶上那个占位符就成了摆设 —— 一个只挡住一半的隐私开关比没有更糟，
+ * 用户会以为自己已经藏好了。柱子的形状和增长率带留着：形状是相对的，推不出金额。
  */
 @Composable
 private fun ChartSection(
@@ -499,6 +535,7 @@ private fun ChartSection(
                     mode = chart.mode,
                     style = chart.style,
                     visibleClasses = visible,
+                    hideAmounts = state.amountsHidden,
                 )
                 if (chart.mode == ChartMode.ALLOCATION) {
                     AllocationChartNotes(chart.style, allocation.hasNegativeExposure(visible))

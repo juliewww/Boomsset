@@ -69,6 +69,9 @@ class AppLockViewModelTest {
         override suspend fun setBaseCurrency(code: String) {}
         override fun observeAppLockEnabled(): Flow<Boolean> = lockEnabled
         override suspend fun setAppLockEnabled(enabled: Boolean) { lockEnabled.value = enabled }
+        val amountsHidden = MutableStateFlow(false)
+        override fun observeAmountsHidden(): Flow<Boolean> = amountsHidden
+        override suspend fun setAmountsHidden(hidden: Boolean) { amountsHidden.value = hidden }
     }
 
     private class FakeAuthenticator(
