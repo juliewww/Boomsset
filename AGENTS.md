@@ -3,7 +3,7 @@
 ## 项目状态
 
 **核心循环已闭环（Android 实机验证过）。** 三个页面：净值曲线 / 资产配置 / 资产列表。
-添加资产 → 定期更新估值 → 归档，全流程可用。**233 个单元测试全绿。**
+添加资产 → 定期更新估值 → 归档，全流程可用。**247 个单元测试全绿。**
 
 实跑验证过（含直接查 SQLite 确认）：更新是**追加快照**而非改写（成本正确结转），
 归档追加 0 值快照且历史一字未改，配置比例加总 100%。
@@ -403,11 +403,39 @@ Compose UI 测试（`compose-ui-test` 在 libs.versions.toml 声明了但从没�
 这轮没能实机看到** —— 模拟器里的种子数据有 12 个月，凑不出单点，
 上面新加的两条 XCUITest 覆盖的正是这个场景（但还没跑过，见上）。
 
+**资产页底部加了「更新记录」（Android 模拟器 API 34 验证，411dp / 360dp 两种宽度）：**
+需求原话带了一句「超过半年的不保留」，**没有照做，而且不能照做** ——
+快照是净值曲线的**唯一**数据源，结转规则取「该时点前最近的一条」，
+删掉半年以外的记录后，一项半年没更新过的资产会连**今天**都取不到快照，
+从净值、配置、资产列表里整个消失（不是丢精度，是资产凭空蒸发，且不报错）。
+存储上也没有收益：一行快照约 100 字节，20 项资产按月更新存十年不到 250 KB。
+所以**数据一条不删，分页只做在 UI 侧**：默认 20 条 + 「加载更多」。
+按条数而不是按时间窗口 —— 按季度记账的人「近半年」只有两条（展开了跟坏了一样），
+每天记的人半年有上百条。取舍写进了 [docs/domain.md](docs/domain.md) 和
+[UpdateHistory.kt](shared/src/commonMain/kotlin/com/boomsset/domain/UpdateHistory.kt) 的 KDoc。
+
+**没有新表**：`snapshot` 那条不可变、只追加的链本身就是流水，
+`UpdateHistory.build(data, zone)` 把它按时间倒序摊平、每条配上「链上紧邻的前一条」，
+新增/更新/归档三种事件全部从快照本身推（判据见 domain.md 那张表）。
+**QUOTED 的行只显示份额和成本，不显示市值** —— 市值要靠当时的行情，
+而行情还没做历史回补，硬算不是「无法估值」就是拿今天的价解释三个月前那条记录。
+同理**金额用资产自己的币种，不折算**。变化量**不上色**：这一栏里资产和负债混在一起，
+房贷从 ¥100 万降到 ¥95 万被涂成「跌」的颜色读起来像坏消息，前值→新值已经说清楚了。
+
+这一段**挂在 `LazyColumn` 末尾、不在任何 `if (isEmpty)` 分支里**，
+实机把全部 4 项资产逐个归档验证过：空态文案「没有在持资产」出现的同时，
+四条「归档 ¥X → ¥0.00」记录照样在 —— 就是下面第 1/5/8 条那个坑。
+分页路径也真跑过（临时把 `HISTORY_PAGE_SIZE` 改成 5，14 条 → 「还有 9 条」→「还有 4 条」→
+「已显示全部 14 条」，之后改回 20 重新构建）。跨年的记录自动补年份
+（`2025年10月5日` vs `9月4日`），360dp 下 `更新 ¥140,000.00 → ¥100,000.00` 仍是一行。
+
 **还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）；
 iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会自动派生）；
-**上面这轮图表改造只在 Android 上跑过** —— 本机只装了 Command Line Tools、没有完整 Xcode，
-`iosSimulatorArm64Test` 和 XCUITest 都起不来，共享代码过了 `compileKotlinIosSimulatorArm64`
-但链接和真机渲染没验过（下拉菜单、`Switch`、`FlowRow` 在 iOS 上的排布尤其没看过）。
+**上面这轮图表改造和「更新记录」都只在 Android 上跑过** —— 本机只装了 Command Line Tools、
+没有完整 Xcode，`iosSimulatorArm64Test` 和 XCUITest 都起不来，
+共享代码过了 `compileKotlinIosSimulatorArm64` 但链接和真机渲染没验过
+（下拉菜单、`Switch`、`FlowRow` 在 iOS 上的排布尤其没看过；更新记录那栏是纯
+`Text`/`Row`/`Column`，风险比图表低，但 iOS 上没有 XCUITest 覆盖它）。
 
 **教训（二十次都是实跑才发现、编译和单测全绿）：**
 1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
@@ -730,7 +758,7 @@ docs/            详细文档，按需查阅
 
 ```bash
 ./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
-./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，233 个）
+./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，247 个）
 ./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（158 个，需要 Xcode）
 ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS 链接（需要 Xcode）
 ./gradlew :androidApp:assembleDebug                # Android 构建
@@ -750,7 +778,7 @@ Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
 
 所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
 
-**JVM 和 iOS 的测试数不一样（217 vs 158），这是对的**：
+**JVM 和 iOS 的测试数不一样（247 vs 158），这是对的**：
 - 数据库测试（`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`）在
   `androidHostTest`，用 JVM 的 JDBC driver
 - `iosTest/NativeDatabaseTest` 单独验 iOS 的 `NativeSqliteDriver`（**不同的 SQLite 构建**，
