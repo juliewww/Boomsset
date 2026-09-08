@@ -165,9 +165,19 @@ private fun TotalColumnChart(series: NetWorthSeries, modifier: Modifier) {
         }
     }
 
+    // 柱子直接用 `colorScheme.primary`。
+    // ⚠️ 这一条**和 primary 的亮度强耦合**：奶黄那一版 primary 对页面底只有 1.78:1，
+    // 当时不得不把柱子拆出一个单独的深色（`ChartColors.brand`）。现在 primary 是
+    // 深紫檀，对页面底 9.31:1，柱子可以回到单一品牌色。**换浅色品牌色时要重新量这条。**
     val brand = MaterialTheme.colorScheme.primary
+    // **实色，不加 alpha。** 这里原本是 `alpha = 0.5f` —— 那是柱子和折线叠画那一版的
+    // 遗留（半透明才能让折线透出来），折线删掉之后它只剩"把柱子变淡"这一个效果：
+    // 实测 0.5 alpha 下柱子对页面底只有 **1.95:1**，而柱子是这一页的主数据标记。
+    // 实色是 9.31:1。（这个 alpha 一直都偏低 —— 配旧的 `#BD4D03` 是 2.08:1、
+    // 配莫兰迪 `#918163` 更是 1.77:1，只是那时没人量过。）
+    // 趋势图的区域填充也已经改成不透明，见 TotalTrendChart。
     val column = rememberLineComponent(
-        fill = Fill(brand.copy(alpha = 0.5f)),
+        fill = Fill(brand),
         thickness = 10.dp,
         shape = RoundedCornerShape(2.dp),
     )
@@ -297,6 +307,10 @@ private fun TotalTrendChart(series: NetWorthSeries, modifier: Modifier) {
     }
 
     val brand = MaterialTheme.colorScheme.primary
+    // 区域填充用**不透明**的容器色。原来是 `brand.copy(alpha = 0.16f)` ——
+    // 16% 的金压在奶油底上几乎等于没有，实机反馈"图没有实心"。
+    // ⚠️ **按大类那版的堆叠面积一直是不透明的**，两条路径本来就该一致。
+    val area = MaterialTheme.colorScheme.primaryContainer
     TrendChartFrame(series.dates, modifier) {
         CartesianChartHost(
             chart = rememberCartesianChart(
@@ -304,9 +318,7 @@ private fun TotalTrendChart(series: NetWorthSeries, modifier: Modifier) {
                     lineProvider = LineCartesianLayer.LineProvider.series(
                         LineCartesianLayer.rememberLine(
                             fill = LineCartesianLayer.LineFill.single(Fill(brand)),
-                            areaFill = LineCartesianLayer.AreaFill.single(
-                                Fill(brand.copy(alpha = 0.16f)),
-                            ),
+                            areaFill = LineCartesianLayer.AreaFill.single(Fill(area)),
                         ),
                     ),
                 ),

@@ -52,20 +52,23 @@ class ChartColorsTest {
      * 已验证的色值。改动任何一个都要重新跑验证器 —— 见类注释。
      *
      * 实测结果（OKLab ΔE ×100）：
-     * 浅色 最差相邻对 11.5 / 正常视力 20.4；深色 10.8 / 16.6。门槛是 8 / 15。
+     * 浅色 最差相邻对 11.5 / 正常视力 20.4；深色 10.8 / 正常视力 19.4。门槛是 8 / 15。
      *
-     * 色相取自有知有行，但经过 snap-to-passing（色相角不动，挪亮度和彩度到合规）——
-     * 直接用他们的原值会在亮度区间和彩度下限上 FAIL，见 ChartColors 的类注释。
+     * 前四个色相取自有知有行，但经过 snap-to-passing（色相角不动，挪亮度和彩度到合规）。
+     *
+     * ⚠️ **第五格「保障类」是后来换掉的**：原本是紫 `#585CA2`，为了给品牌紫腾位置
+     * 挪到了金黄。换的方向不是随便挑的 —— 详见 ChartColors 的类注释。
+     * 换完之后两套配色都重跑过 dataviz 验证器，六项全过。
      */
     @Test
     fun `色值就是验证过的那组`() {
         chartColorsFor(darkTheme = false).assetClassColors shouldBe listOf(
             Color(0xFF3E86D0), Color(0xFF2EB88A), Color(0xFFE58A26),
-            Color(0xFF3FB3D1), Color(0xFF585CA2),
+            Color(0xFF3FB3D1), Color(0xFF977E00),
         )
         chartColorsFor(darkTheme = true).assetClassColors shouldBe listOf(
             Color(0xFF4186CE), Color(0xFF00AB79), Color(0xFFCF7600),
-            Color(0xFF219FBC), Color(0xFF5F63AA),
+            Color(0xFF219FBC), Color(0xFF9B8100),
         )
     }
 

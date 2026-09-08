@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Compose 自己管主题，这里只需要一个不闪白屏的宿主主题 -->
-    <style name="Theme.Boomsset" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+      Compose 自己管主题，这里只需要一个宿主主题 —— 但**开屏必须在这里配**。
+
+      Android 12+ 的系统开屏是自动的：它拿 `android:icon` 当图标、拿
+      `android:windowSplashScreenBackground` 当底（API 31+）。**不配的话**它退回
+      `windowBackground`，而 `Theme.Material.Light` 的 windowBackground 是平台的
+      浅灰 —— 既不是我们的暖底，也**不跟随深色模式**（深色模式下先闪一片浅灰，
+      再切进深色界面）。
+
+      所以两个都要给：
+      * `windowBackground` —— 覆盖 API 31 以下，也避免开屏之前那一帧闪平台色
+      * `windowSplashScreenBackground`（在 values-v31/ 里）—— API 31+ 的开屏底
+
+      颜色取 `@color/splash_bg`，和 Theme.kt 的 `surface` 同值，
+      **深浅两套在 values/ 和 values-night/ 的 colors.xml 里**，所以开屏
+      和启动后的第一屏是连续的，不会跳色。
+    -->
+    <style name="Theme.Boomsset" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/splash_bg</item>
+    </style>
 </resources>

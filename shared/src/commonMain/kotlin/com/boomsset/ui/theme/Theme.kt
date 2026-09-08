@@ -7,62 +7,77 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import com.boomsset.ui.LocalGainLossColors
+import com.boomsset.ui.gainLossColorsFor
 
 /**
- * 旺资的品牌配色 —— **中性表面 + 一个更鲜亮的暖色强调**。
+ * 旺资的品牌配色 —— **深紫檀（紫气东来）**。
  *
- * 表面和文字梯度取自**有知有行**的 design token（页面 `#FFFFFF`、区域 `#FAFAFA`、
- * 分隔 `#E0E0E0`，文字 `#262626` → `#5C5C5C` → `#808080` → `#BFBFBF`）。
+ * ## 为什么是紫，以及它比前几版顺在哪
  *
- * **为什么换掉暖米色底：**"不够高级"的主因不在色相，在底色。暖米色底本身就读作
- * "米黄/复古"，而且它让所有强调色的对比度都变差。中性白灰底 + 一个暖色强调
- * 是更稳的组合。
+ * 色值走过 `#8A5A18` → `#BD4D03` → `#918163` → `#986E00` → `#955E00` → `#D3BC7D`，
+ * 分别被否为"不够积极/不够高级/太沉闷/不好看/还是暗沉/…"。
+ * 这一版换到**紫**（H 315，L 0.40，C 0.110），结构上比前面所有版本都简单，原因是：
+ * **紫在 L 0.40 就有足够彩度**，对页面底 9.31:1、白字 9.74:1 —— 而黄/金必须在
+ * L 0.53~0.63 之间挣扎，浅了看不见、深了显沉。奶黄那一版甚至被迫把 FAB 和净值柱
+ * 拆成两个色（FAB 靠投影、柱子另给深色），紫色**不需要拆**，回到单一品牌色。
  *
- * **`BrandAmber` 从 `#8A5A18` 改成了 `#BD4D03`** —— 原色偏暗沉，反馈是"不够积极向上"。
- * 直接沿旧色相拉高亮度和彩度不可行：算出来的候选在 sRGB 里会被裁剪，
- * 裁剪本身会**偷偷改变色相角**（越裁越像纯橙），裁到最后新 primary 和图表的
- * 「权益类」橙 `#E58A26` 正常视力分离度只剩 ΔE 14.2（门槛 15，验证器会 FAIL）——
- * 两者在配置页会挨在一起（FAB 和权益类那根条），必须分得开。
- * 所以改成**在色相角上小幅偏移**（往红那一侧偏 25°）找亮度和彩度都更高的候选，
- * 新色相角 44.7°、与权益类分离度 ΔE 16.2，同时保住"积极"的观感。
+ * ## ⚠️ 代价：「保障类」从紫挪到了金黄
  *
- * 在此之前 `App()` 里只有一句裸 `MaterialTheme {}`，界面跑的是 Material 3 库自带的
- * 默认紫。那不是设计决策，只是没人配过 —— 淡紫 FAB 和紫色导航指示条都是从那来的。
+ * 品牌色和五个大类图表色必须 ΔE ≥ 15，而保障类原本就是紫 `#585CA2` ——
+ * 它占着位置，品牌紫就站不下。挪的方向是**算出来的**：先试过挪到洋红（H340），
+ * 那是错的，洋红反而堵住 H300~330 的紫、逼它把彩度提到 0.19（太艳）。
+ * 保障类必须挪到**离紫最远的一侧**，紫的彩度下限才从 0.135 掉到 0.060。
+ * 新旧两套大类配色都跑过 dataviz 验证器，六项全过。详见 ChartColors.kt。
  *
- * ⚠️ **这些色值和 `tools/appicon/generate.py` 里的常量必须一致**，图标和界面才不会脱节。
- * 改配色要两边一起改，改完跑那个脚本重新生成图标。
+ * ## 三条不能动的判据（改色值要重新验）
+ *
+ * 1. **与五个大类图表色的最小 ΔE ≥ 15**（OKLab ×100，正常视力）。实测 **24.6**，
+ *    是历版里余量最宽的一次。配置页上 FAB 和大类色块会同屏。
+ * 2. **primary 对页面底 ≥ 3:1**。实测 **9.31:1**。
+ *    ⚠️ 这条是真正卡住前几版亮度的那一条 —— 净值柱和导航指示条都用 primary，
+ *    柱子是数据标记，浅色品牌色会让它糊进背景。
+ * 3. **onPrimary 对 primary ≥ 4.5:1**。实测白字 **9.74:1**。
+ *
+ * ## 中性面**没有**跟着换色相
+ *
+ * 表面和文字仍然是暖色（H 70）—— 这是明确要求"不要改背景色"。
+ * 所以这一版是**品牌紫 + 暖中性面**两个色相，不再是"全套由一个 H 解出"。
+ * 冷紫配暖米白是成立的组合，但**改动时要记得它们是两个独立的输入**。
+ *
+ * ⚠️ **品牌色和 `tools/appicon/generate.py` 的 `BRAND_HUE` 必须一致**，
+ * 改配色两边一起改，改完跑那个脚本重新生成图标、再跑 validate.py。
  *
  * **必须逐个角色写全，不能只覆盖 primary。** `lightColorScheme()` 没传的参数会取
- * 基线默认值，而基线的 surface 家族是**带紫调**的灰（#F3EDF7 那一类）——
- * 只改 primary 的话，Card 和 BottomBar 的底色仍然是紫的，看起来像换了一半。
+ * 基线默认值，而基线的 surface 家族是带紫调的灰 —— 只改 primary 会让整体看起来像换了一半。
  *
- * 品牌色和**涨跌语义色是两件事**：中国股市红涨绿跌，将来给盈亏上色要另开一组常量，
- * 不要复用 primary/error。
- *
- * 第三色（tertiary）用**冷灰蓝**而不是 M3 从暖色种子自动推出来的绿 ——
- * 绿色在中文理财语境里读作"跌"，哪怕只是个强调色也别用。
+ * 品牌色和**涨跌语义色是两件事**，后者见 [com.boomsset.ui.GainLossColors]。
  */
-private val BrandAmber = Color(0xFFBD4D03)
+private val BrandPurple = Color(0xFF5D3270)
 
 private val LightScheme = lightColorScheme(
-    primary = BrandAmber,
+    primary = BrandPurple,
+    // 白色 —— 9.74:1。⚠️ 这一条**和亮度强耦合**：更早那版 primary 亮到 L 0.61 时
+    // 白字只有 3.86:1、不合格，只能改用深色字。改 primary 亮度必须重算这里。
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFFFDCCD),
-    onPrimaryContainer = Color(0xFF310E00),
-    inversePrimary = Color(0xFFE9A78A),
+    // 净值 hero 卡片底 —— 淡紫。对页面底只有 1.33:1，**必须靠描边勾出轮廓**，
+    // 见 NetWorthScreen 的 SummaryCard。
+    primaryContainer = Color(0xFFEAD2F6),
+    onPrimaryContainer = Color(0xFF371A43),
+    inversePrimary = Color(0xFFC7A0D9),
 
-    // 次要色走中性灰 —— 有知有行的做法：只留一个强调色，其余全部中性
-    secondary = Color(0xFF5C5C5C),
+    // 次要色走同色相的低彩中性 —— 只留一个强调色，其余全部近中性
+    secondary = Color(0xFF70675E),
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFF0F0F0),
-    onSecondaryContainer = Color(0xFF262626),
+    secondaryContainer = Color(0xFFF1ECE6),
+    onSecondaryContainer = Color(0xFF342C23),
 
-    // 第三色刻意留在琥珀色系内，**不用任何分类色的色相** ——
+    // 第三色刻意留在同色相内，**不用任何分类色的色相** ——
     // 否则它会和某个大类的颜色撞车，让读者以为两者有关
-    tertiary = Color(0xFF914F30),
+    tertiary = Color(0xFF6A4F76),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFF6D6C9),
-    onTertiaryContainer = Color(0xFF310F00),
+    tertiaryContainer = Color(0xFFEAD6F3),
+    onTertiaryContainer = Color(0xFF341B3F),
 
     // error 和「超配」是两回事，色值也不同（超配是 #C5453F）
     error = Color(0xFFB3261E),
@@ -70,76 +85,76 @@ private val LightScheme = lightColorScheme(
     errorContainer = Color(0xFFF9DEDC),
     onErrorContainer = Color(0xFF410E0B),
 
-    background = Color(0xFFFFFFFF),
-    onBackground = Color(0xFF262626),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF262626),
-    surfaceVariant = Color(0xFFF0F0F0),
-    onSurfaceVariant = Color(0xFF5C5C5C),
-    surfaceTint = BrandAmber,
-    inverseSurface = Color(0xFF262626),
-    inverseOnSurface = Color(0xFFFAFAFA),
+    background = Color(0xFFFEF9F4),
+    onBackground = Color(0xFF30271D),
+    surface = Color(0xFFFEF9F4),
+    onSurface = Color(0xFF30271D),
+    surfaceVariant = Color(0xFFEBE6E2),
+    onSurfaceVariant = Color(0xFF6C6359),
+    surfaceTint = BrandPurple,
+    inverseSurface = Color(0xFF30271D),
+    inverseOnSurface = Color(0xFFF6F2ED),
 
-    surfaceDim = Color(0xFFF0F0F0),
-    surfaceBright = Color(0xFFFFFFFF),
-    surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFFCFCFC),
-    surfaceContainer = Color(0xFFFAFAFA),
-    surfaceContainerHigh = Color(0xFFF5F5F5),
-    surfaceContainerHighest = Color(0xFFF0F0F0),
+    surfaceDim = Color(0xFFE5E1DC),
+    surfaceBright = Color(0xFFFFFCF8),
+    surfaceContainerLowest = Color(0xFFFFFEFD),
+    surfaceContainerLow = Color(0xFFFAF6F1),
+    surfaceContainer = Color(0xFFF6F2ED),
+    surfaceContainerHigh = Color(0xFFF0ECE7),
+    surfaceContainerHighest = Color(0xFFEBE6E2),
 
-    outline = Color(0xFF808080),
-    outlineVariant = Color(0xFFE0E0E0),
+    outline = Color(0xFF9A9187),
+    outlineVariant = Color(0xFFE0D8CE),
     scrim = Color(0xFF000000),
 )
 
 /**
- * 深色模式是**另选的一组中性灰**，不是浅色的自动翻转。
- * 暖色强调在深底上要提亮（`#E9A78A`），否则会糊进背景 ——
- * 这个值同样避开了深色模式下权益类图表色 `#CF7600`（ΔE 15.1）。
+ * 深色模式是**另选的一组步进**，不是浅色的自动翻转 —— 同一个色相角，
+ * 按深底重新取亮度并单独验过（primary 对底 6.46:1，与深色大类色最小 ΔE 18.9）。
+ * ⚠️ 深色的「保障类」也跟着换了（`#5F63AA` → `#9B8100`），两套都跑过验证器。
  */
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFE9A78A),
-    onPrimary = Color(0xFF3D1200),
-    primaryContainer = Color(0xFF51240E),
-    onPrimaryContainer = Color(0xFFF6D6C9),
-    inversePrimary = BrandAmber,
+    primary = Color(0xFFC778E8),
+    onPrimary = Color(0xFF2A0D36),
+    primaryContainer = Color(0xFF563664),
+    onPrimaryContainer = Color(0xFFECD4F8),
+    inversePrimary = BrandPurple,
 
-    secondary = Color(0xFFC6C6C6),
-    onSecondary = Color(0xFF2E2E2E),
-    secondaryContainer = Color(0xFF3A3A3A),
-    onSecondaryContainer = Color(0xFFEDEDED),
+    secondary = Color(0xFFC5BCB3),
+    onSecondary = Color(0xFF312A22),
+    secondaryContainer = Color(0xFF413C36),
+    onSecondaryContainer = Color(0xFFE6DED6),
 
-    tertiary = Color(0xFFE9A588),
-    onTertiary = Color(0xFF381200),
-    tertiaryContainer = Color(0xFF572914),
-    onTertiaryContainer = Color(0xFFEFD0C2),
+    tertiary = Color(0xFFC7A9D5),
+    onTertiary = Color(0xFF2E1538),
+    tertiaryContainer = Color(0xFF51335E),
+    onTertiaryContainer = Color(0xFFE8D1F2),
 
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
     errorContainer = Color(0xFF8C1D18),
     onErrorContainer = Color(0xFFF9DEDC),
 
-    background = Color(0xFF121212),
-    onBackground = Color(0xFFEDEDED),
-    surface = Color(0xFF121212),
-    onSurface = Color(0xFFEDEDED),
-    surfaceVariant = Color(0xFF3A3A3A),
-    onSurfaceVariant = Color(0xFFC6C6C6),
-    surfaceTint = Color(0xFFE9A78A),
-    inverseSurface = Color(0xFFEDEDED),
-    inverseOnSurface = Color(0xFF262626),
+    background = Color(0xFF16120D),
+    onBackground = Color(0xFFECE5DC),
+    surface = Color(0xFF16120D),
+    onSurface = Color(0xFFECE5DC),
+    surfaceVariant = Color(0xFF3D3833),
+    onSurfaceVariant = Color(0xFFC5BCB3),
+    surfaceTint = Color(0xFFC778E8),
+    inverseSurface = Color(0xFFECE5DC),
+    inverseOnSurface = Color(0xFF30271D),
 
-    surfaceDim = Color(0xFF121212),
-    surfaceBright = Color(0xFF383838),
-    surfaceContainerLowest = Color(0xFF0D0D0D),
-    surfaceContainerLow = Color(0xFF1A1A1A),
-    surfaceContainer = Color(0xFF1C1C1C),
-    surfaceContainerHigh = Color(0xFF262626),
-    surfaceContainerHighest = Color(0xFF303030),
+    surfaceDim = Color(0xFF16120D),
+    surfaceBright = Color(0xFF433D38),
+    surfaceContainerLowest = Color(0xFF100B07),
+    surfaceContainerLow = Color(0xFF1D1914),
+    surfaceContainer = Color(0xFF211C17),
+    surfaceContainerHigh = Color(0xFF2E2924),
+    surfaceContainerHighest = Color(0xFF39342F),
 
-    outline = Color(0xFF8F8F8F),
-    outlineVariant = Color(0xFF3A3A3A),
+    outline = Color(0xFF8A8279),
+    outlineVariant = Color(0xFF3F3830),
     scrim = Color(0xFF000000),
 )
 
@@ -155,8 +170,12 @@ fun BoomssetTheme(
     // 不设的话浅色主题下状态栏是白字压白底
     ApplySystemBarsAppearance(darkTheme)
 
-    // 图表配色和主题用**同一个** darkTheme —— 让图表自己去读系统深浅色会和主题不一致
-    CompositionLocalProvider(LocalChartColors provides chartColorsFor(darkTheme)) {
+    // 图表配色和涨跌色都用**同一个** darkTheme —— 让它们自己去读系统深浅色
+    // 会和主题不一致（预览和测试里尤其容易出现）
+    CompositionLocalProvider(
+        LocalChartColors provides chartColorsFor(darkTheme),
+        LocalGainLossColors provides gainLossColorsFor(darkTheme),
+    ) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkScheme else LightScheme,
             content = content,

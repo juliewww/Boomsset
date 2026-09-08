@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  自适应图标的背景层。用 shape 而不是 PNG —— 纯渐变没必要出五档密度的位图。
+  自适应图标的背景层。用 shape 而不是 PNG —— 纯色没必要出五档密度的位图。
   背景层必须铺满整个 108dp 图层：启动器会按自己的遮罩裁切，
   留白的话不同 OEM 的遮罩下会露出边。
+
+  **实色，不是渐变** —— 前景把柱子周围的间隙掏成了透明（见 generate.py），
+  露出的就是这一层。渐变的话间隙里的颜色会和满幅版（iOS 用的那张）对不上。
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <gradient
-        android:angle="270"
-        android:startColor="@color/ic_launcher_bg_top"
-        android:endColor="@color/ic_launcher_bg_bottom"
-        android:type="linear" />
+    <solid android:color="@color/ic_launcher_bg" />
 </shape>

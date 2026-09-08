@@ -1,5 +1,6 @@
 package com.boomsset.ui.networth
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -127,13 +128,17 @@ private fun SummaryCard(state: NetWorthUiState) {
     val currency = state.baseCurrency
     val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
 
-    // 卡片用品牌色的浅色容器打底 —— 反馈是净值页太灰暗；整页只有这一处用容器强调，
-    // 不会和"表面是中性白灰"的整体设计冲突（见 AGENTS.md）。
+    // 卡片用品牌色的浅色容器打底 —— 整页只有这一处用容器强调。
+    //
+    // ⚠️ **必须有描边。** 容器是奶黄 `#F0E3BE`，压在同样偏暖的页面底上只有 **1.22:1**，
+    // 不给边界的话卡片会糊进背景、读不出这是一块卡片。
+    // 描边取 `outlineVariant`，对卡片 1.46:1 —— 发丝级，够勾出轮廓又不抢眼。
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
         ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
