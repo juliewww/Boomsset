@@ -4,5 +4,5 @@
   不给这一份的话，深色模式会先闪一片浅色开屏再切进深色界面。
 -->
 <resources>
-    <color name="splash_bg">#15120D</color>
+    <color name="splash_bg">#16120D</color>
 </resources>

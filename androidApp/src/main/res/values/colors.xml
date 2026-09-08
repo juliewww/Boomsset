@@ -5,12 +5,12 @@
       自适应前景把柱子周围的间隙掏成了透明，露出的就是这一层。
       两边不一致的话，间隙里会出现一圈异色描边。validate.py 会核对。
     -->
-    <color name="ic_launcher_bg">#FBF2E3</color>
+    <color name="ic_launcher_bg">#FDF1E4</color>
 
     <!--
       系统开屏的底色。**必须和 Theme.kt 的 LightScheme.surface 同值**，
       否则开屏和启动后的第一屏之间会跳一下色。
       深色模式那一份在 values-night/colors.xml。
     -->
-    <color name="splash_bg">#FDFAF3</color>
+    <color name="splash_bg">#FEF9F4</color>
 </resources>
