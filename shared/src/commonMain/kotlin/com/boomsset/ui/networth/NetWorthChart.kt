@@ -307,10 +307,12 @@ private fun TotalTrendChart(series: NetWorthSeries, modifier: Modifier) {
     }
 
     val brand = MaterialTheme.colorScheme.primary
-    // 区域填充用**不透明**的容器色。原来是 `brand.copy(alpha = 0.16f)` ——
-    // 16% 的金压在奶油底上几乎等于没有，实机反馈"图没有实心"。
-    // ⚠️ **按大类那版的堆叠面积一直是不透明的**，两条路径本来就该一致。
-    val area = MaterialTheme.colorScheme.primaryContainer
+    // 区域填充：不透明，且**色值要有分量**。这里踩过两次 ——
+    // 先是 `brand.copy(alpha = 0.16f)`（16% 几乎等于没填），改成不透明之后
+    // 又选了 `primaryContainer`，那是 hero 卡片的底、整套里最浅的一档，
+    // 对页面底只有 1.33:1，实机上照样被反馈"不是实心的"。
+    // 现在用 `chartColors.trendArea`（2.29:1），和按大类那版的堆叠面积同一档。
+    val area = chartColors.trendArea
     TrendChartFrame(series.dates, modifier) {
         CartesianChartHost(
             chart = rememberCartesianChart(
