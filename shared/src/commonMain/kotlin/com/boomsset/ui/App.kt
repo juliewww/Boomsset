@@ -143,8 +143,14 @@ private fun AppContent(
                 // 加号放在"资产"页而不是"净值"页 —— 净值页是只读的概览（趋势、增长率），
                 // 添加资产是资产页在做的事，放在净值页会让用户在错的地方找操作入口（实机反馈）。
                 if (currentRoute == ROUTE_ASSETS) {
+                    // 显式给 primary，**不用 M3 的默认值**。默认是 `primaryContainer`，
+                    // 而莫兰迪配色下它是淡沙色 —— 压在同样是暖米白的页面底上只有 1.3:1，
+                    // 加号几乎看不见（模拟器实测）。`primary` 是 3.70:1，
+                    // 过了"UI 元件要看得见"的 3:1 门槛。
                     FloatingActionButton(
                         onClick = { navController.navigate(ROUTE_ADD_ASSET) },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
                     ) { Text("＋") }
                 }
             },

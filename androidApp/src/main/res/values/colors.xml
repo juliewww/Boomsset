@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 图标配色。改设计请改 tools/appicon/generate.py 里的同名常量，两边要一致。 -->
+<!--
+  图标背景层的颜色。**必须和 tools/appicon/generate.py 里的 FIELD 一致** ——
+  自适应前景把柱子周围的间隙掏成了透明，露出的就是这一层。
+  两边不一致的话，间隙里会出现一圈异色描边。
+-->
 <resources>
-    <color name="ic_launcher_bg_top">#FDF8EF</color>
-    <color name="ic_launcher_bg_bottom">#F0E3CB</color>
+    <color name="ic_launcher_bg">#D7B984</color>
 </resources>

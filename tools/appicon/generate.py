@@ -16,75 +16,123 @@ PNG 是提交进仓库的，所以 CI 和别人的机器不用装 Pillow。
 * **Android 自适应图标**的图层是 108dp，但只有中间 72dp 可见、
   且只有直径 66dp 的圆保证不被裁。启动器的遮罩形状由 OEM 决定
   （圆/方/squircle/水滴），所以图形必须缩进安全区。
-  照 iOS 那张满幅图直接拿来当前景，环会被裁掉一圈。
+  照 iOS 那张满幅图直接拿来当前景，图形会被裁掉一圈。
+
+── 设计：「破环而出」──────────────────────────────────────────────
+
+图标要同时说清三件事，而且是**同一个手势**在说：
+
+* **配置** —— 闭合的分段环，五段对应五个大类
+* **管理** —— 环把它们收拢成一个有序的整体，做柱子的底盘
+* **钱越来越多** —— 三根上升的柱，最高一根**穿出环外**
+
+上一版是「配置环 + 旺字」，只说了配置。
+"破环"这一下必须**真的穿出去**：闭合环 + 柱高小于环径时，几何上做不到，
+所以环被刻意缩小、柱子做主体。第一版试过大环小柱，柱顶还在环内，
+只是被间隙衬开，读起来像"柱子插在环里"而不是"长出来"。
 """
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import json
 import os
 
 # ── 设计常量 ──────────────────────────────────────────────────────────
-# 品牌色。⚠️ 必须和 shared/.../ui/theme/Theme.kt 里的 BrandAmber 一致 ——
-# 图标和界面脱节比图标丑更糟。改配色两边一起改。
-#
-# `#BD4D03` 是从 `#8A5A18` 提亮提彩度来的 —— 反馈是原色不够"积极向上"。
-# ⚠️ 不能简单地"沿旧色相拉高亮度彩度"：算出来的候选在 sRGB 里会被裁剪，
-# 裁剪本身会偷偷改变色相角（越裁越像纯橙），最后会撞上图表的「权益类」橙 `#E58A26`
-# （两者配置页上会挨在一起）。所以改成往红这一侧偏了约 25° 色相角，
-# 用 dataviz 验证器的正常视力分离度确认过 ΔE 16.2（门槛 15），细节见 Theme.kt。
-#
-# 底色刻意做暖（不是灰白）：上一版墨蓝配近乎灰白的底，实机上显得寡淡，
-# 在一屏彩色图标里没有存在感。暖底 + 明度跨度更大的环能补这个。
-BRAND      = (189, 77, 3)      # #BD4D03，= Theme.kt 的 BrandAmber，也是「旺」字色
-BG_TOP     = (253, 248, 239)    # 暖米白，竖向渐变
-BG_BOT     = (240, 227, 203)
+# 品牌色相角。⚠️ 必须和 shared/.../ui/theme/Theme.kt 里的 BrandOlive (#918163) 一致 ——
+# 那套配色也是从这个 H 解出来的。图标和界面脱节比图标丑更糟。
+BRAND_HUE = 82                  # 橄榄金
 
-# 四段配置环走**同一色相的明度梯度**，不是四个色相。
-# 四个互不相干的色相（试过红/橙/金/紫）在这个尺寸上互相打架，很难看；
-# 单色相梯度是配置类图表的通行做法，也更容易读出"这是一个整体被分成了几份"。
+# 底色：暖麦金。**刻意不是近白** —— 上一版墨蓝配近乎灰白的底，实机上显得寡淡，
+# 在一屏彩色图标里没有存在感。图标不受任何碰撞约束（永远不和图表同屏），
+# 所以彩度给到 0.078，比 UI 的 0.047 高 —— 阳光感主要来自这里。
+# 亮度从 0.761 提到 0.800：环和柱**全都比底暗**，底太低会让整张图压在暗部
+# （"太沉闷"那条反馈的一半原因在这里，另一半是柱子本身，见下方 BARS）。
+FIELD = (215, 185, 132)         # #D7B984，= OKLCH(0.800, 0.078, 82)
+
+# 五段配置环。**这一版是五个色相，不是单色相明度梯度。**
 #
-# 四阶按「相对 BRAND 的亮度差 / 彩度比例」算，不是脱离 BRAND 单独调 ——
-# 换 BRAND 时这四阶跟着重新算一遍即可，不用重新调数字。
-# 最浅那一段仍要有足够彩度：太浅会在浅色底上消失，40px 下整个环看着像断了一块
-# （原本按亮度差套用会把彩度冲到 0.10 以下，把最浅一阶的亮度目标压低到 0.78 保住彩度）。
-SEGMENTS = [
-    (0.34, (94, 38, 7)),        # 最深，近乎深褐
-    (0.26, BRAND),
-    (0.22, (244, 115, 48)),
-    (0.18, (254, 154, 109)),    # 最浅——但不能再浅了
+# 上一版的注释写着"四个互不相干的色相在这个尺寸上互相打架"—— 那是真的，
+# 但原因不是"多色相"，是**没有控制亮度**。修法和图表配色是同一套纪律：
+# 色相可以各走各的，**亮度必须单调递增**，这样 48px 下即使色相读不出来，
+# 段与段仍然靠明暗分开。
+#
+# 五个色相取自本 App 的五个大类色（流动/固收/权益/另类/保障），
+# 亮度重新铺成 L 0.360 → 0.622 的单调梯度。
+#
+# 两条判据（改色值要重跑 tools/appicon/validate.py）：
+# 1. **亮度单调递增** —— 这是小尺寸可读性的保证
+# 2. **相邻段色盲分离度 ΔE ≥ 8**（OKLab ×100，protan/deutan 模拟）
+#    实测 8.7。段序**不是**大类展示顺序，是在 120 种排列里搜出的 ——
+#    按大类顺序排只有 6.1，蓝/青和绿/橙在色盲下会并到一起。
+#    图标不是图例，段序不承载语义，可以为可读性让路。
+#
+# 2b. **柱与任一环段的 ΔE ≥ 10**（实测 11.1）。柱和环之间虽然有底色间隙隔开，
+#    但色值太接近时会读成"柱子是环的一部分"。第一版提亮柱子后，最短那根
+#    （L 0.52 暖褐）和「权益类」那段（L 0.517 橙）只差 ΔE 3.9 —— 段序是搜出来的，
+#    所以把这条也加进搜索条件一起解，不是事后手调。
+#
+# 3. **每段对底 ≥ 1.8:1**，否则那一段会读成环上的缺口。
+#    这条限制了梯度上端：底色是 L 0.800，**梯度不能跨过它** ——
+#    越接近底色对比度越塌，压深到合规又会破坏单调性（试过，断言抓到了）。
+#    所以整条梯度压在底色之下，上端止于 L 0.622。
+RING = [
+    (0.26, (0, 62, 113)),       # #003E71  流动资金 251°    L 0.360  对底 5.79:1
+    (0.22, (0, 88, 107)),       # #00586B  另类实物 219°    L 0.426  对底 4.34:1
+    (0.20, (0, 115, 82)),       # #007352  固定收益 165°    L 0.491  对底 3.24:1
+    (0.17, (103, 108, 173)),    # #676CAD  保障类   279°    L 0.557  对底 2.44:1
+    (0.15, (184, 117, 53)),     # #B87535  权益类    62°    L 0.622  对底 1.98:1
 ]
-GAP_DEG = 0.9               # 段间留白，让"分段"读得出来
+GAP_DEG = 1.6                   # 段间留白，让"分段"读得出来
 
-# 环的粗细由 INNER/OUTER 之比决定，**不是**由 OUTER 决定 ——
-# 自适应前景的缩放公式里 OUTER 被除掉了，环最终一定是 66dp。
+# 三根上升柱走品牌色相的明度梯度 —— 环已经是五个色相了，柱子再多色会吵。
+# 最高那根最深（穿出环外，是整个图标的落点）。
 #
-# 笔画刻意做粗（内外径比 0.72）：Pixel Launcher 会对自适应图标**再缩一次**
-# （Launcher3 的图标归一化，不在 AdaptiveIconDrawable 规范里，本地合成看不出来），
-# 实机上环比按 72dp 视口算出来的更小。顶着安全区放大环会在别的 OEM 遮罩下被削，
-# 所以改为加粗笔画来补视觉重量。
-# 内径和字号都**相对环外径**给，不是相对画布 ——
-# 这样改 RING_OUTER（满幅版留白）不会牵动笔画粗细和字号。
-# 之前写成相对画布，把留白从 0.80 调到 0.72 会顺带把笔画改细 20%，很难看出来。
-RING_OUTER  = 0.72          # 环外径 / 画布宽。**只影响满幅版的留白** ——
-                            # 自适应版的缩放公式里它被除掉了，环恒为 66dp
-INNER_RATIO = 0.72          # 内径 / 外径。越小环越粗
-GLYPH_RATIO = 0.48          # 「旺」字号 / 环外径 —— 必须塞进中心洞
+# ⚠️ **不要再往深里调。** 第一版是 L 0.50/0.43/0.265，反馈是"太沉闷" ——
+# 根因是**八个元素全都比底色暗**，而最高那根柱（近乎黑的 #322200）是最大的
+# 单块暗部，整张图的重量都压在它上面。现在提到 L 0.52/0.46/0.385，
+# 底色也从 L 0.761 提到 0.800 给出空间，最暗元素从 L 0.265 抬到 0.360。
+BARS = [(133, 98, 20), (112, 80, 0), (89, 63, 0)]   # #856214 #705000 #593F00
 
-# 黑体而不是宋体：宋体的细横在 40px 上直接糊掉，实测对比过。
-# PingFang 受系统保护、PIL 读不了，Hiragino Sans GB W6 是可用的最接近选择。
-FONT = ("/System/Library/Fonts/Hiragino Sans GB.ttc", 2)
+# ── 几何 ──────────────────────────────────────────────────────────────
+# 全部相对画布宽给。环刻意做小、柱子做主体，否则"穿出"做不到（见文件头）。
+RING_R      = 0.268             # 环外半径 / 画布宽
+RING_W      = 0.100             # 环笔画宽。笔画刻意粗：Pixel Launcher 会对自适应
+                                # 图标**再缩一次**（Launcher3 的图标归一化，不在
+                                # AdaptiveIconDrawable 规范里，本地合成看不出来）
+RING_CY     = 0.048             # 环心相对画布中心下移 —— 给上方的柱子让位
+BAR_W       = 0.084
+BAR_GAP     = 0.028
+BAR_HALO    = 0.021             # 柱子周围的底色描边。**没有它，柱子和环的深色段
+                                # 会黏成一块**，"穿出"读不出来（第一版就是这样）
+BAR_TOPS    = (0.028, -0.082, -0.335)   # 相对环心 / 相对画布中心（最高那根）
+# 柱底相对环内半径。**不能取太大**：三根柱加间隙的横向跨度（0.350）比环的内孔直径
+# （0.336）还宽，柱子必然压在环上 —— 那是"穿过"的一部分，但柱底伸太低会把环的
+# 整个下沿连成一片啃掉，看起来像环缺了一块（启动画面那种大尺寸下尤其明显，
+# 48px 的联络表上反而看不出来）。0.60 让环的下沿在中间保持连续。
+BAR_BASE    = 0.60
 
-SS = 4                      # 超采样倍数 —— PIL 的 draw 没有抗锯齿
+# 图形的最大半径（相对画布宽）。自适应前景的缩放靠它算。
+#
+# ⚠️ **最远的点是最右那根柱的右上角，不是柱顶正上方** ——
+#   sqrt(((3*BAR_W + 2*BAR_GAP) / 2)² + |BAR_TOPS[2]|²) = sqrt(0.154² + 0.335²)
+# 第一版按柱顶算成 0.345，自适应前景实际超出安全圆 27%，
+# 装到圆形/水滴遮罩的启动器上会把穿出去那根柱削掉 —— 而这**本地合成看不出来**。
+# 改任何几何常量都要重跑 tools/appicon/validate.py，它是**逐像素读生成物**验的，
+# 不看这个常量。
+CONTENT_R   = 0.369
+
+SS = 4                          # 超采样倍数 —— PIL 的 draw 没有抗锯齿
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _vgrad(size, top, bot):
-    col = Image.new("RGB", (1, size))
-    d = ImageDraw.Draw(col)
-    for y in range(size):
-        t = y / (size - 1)
-        d.point((0, y), tuple(round(top[i] + (bot[i] - top[i]) * t) for i in range(3)))
-    return col.resize((size, size), Image.NEAREST)
+def _radius(want, height):
+    """把圆角夹到这个高度画得下的范围内。
+
+    PIL 的 `rounded_rectangle` 内部要画一条 `[y0 + r + 1, y1 - r - 1]` 的竖条，
+    所以要求**高度 ≥ 2r + 2**，只满足 2r 还会抛 "y1 must be greater than or equal to y0"。
+    最短那根柱在 mdpi（48px）下只差 1.1px 就崩 —— 而这只在最小的那档密度上发作，
+    大尺寸全都正常，很容易漏。
+    """
+    return max(1.0, min(want, height / 2 - 1.5))
 
 
 def _draw(canvas, content_scale, transparent):
@@ -94,36 +142,65 @@ def _draw(canvas, content_scale, transparent):
     Android 自适应前景要缩进安全区所以小于 1。
     """
     n = canvas * SS
-    if transparent:
-        img = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-    else:
-        img = _vgrad(n, BG_TOP, BG_BOT).convert("RGBA")
+    s = content_scale
+    img = Image.new("RGBA", (n, n), (0, 0, 0, 0) if transparent else FIELD + (255,))
     d = ImageDraw.Draw(img)
 
-    outer = n * RING_OUTER * content_scale
-    inner = outer * INNER_RATIO
-    box = [(n - outer) / 2, (n - outer) / 2, (n + outer) / 2, (n + outer) / 2]
+    cx, cy = n / 2, n / 2 + n * RING_CY * s
+    R, w = n * RING_R * s, n * RING_W * s
 
-    angle = -90                      # 从 12 点开始，段间空隙落在正上方
-    for frac, color in SEGMENTS:
+    # ── 配置环（底盘）──
+    box = [cx - R, cy - R, cx + R, cy + R]
+    angle = -90                                  # 从 12 点开始
+    for frac, color in RING:
         sweep = frac * 360
         d.pieslice(box, angle + GAP_DEG, angle + sweep - GAP_DEG, fill=color)
         angle += sweep
 
-    # 掏空中心。透明前景要真的掏成透明（自适应背景层在下面），
-    # 满幅版则把渐变底贴回去。
-    hole = [(n - inner) / 2, (n - inner) / 2, (n + inner) / 2, (n + inner) / 2]
-    mask = Image.new("L", (n, n), 0)
-    ImageDraw.Draw(mask).ellipse(hole, fill=255)
+    # 掏空中心。透明前景要真的掏成透明（自适应背景层在下面），满幅版贴回底色。
+    hole = R - w
+    ring_hole = [cx - hole, cy - hole, cx + hole, cy + hole]
     if transparent:
+        mask = Image.new("L", (n, n), 0)
+        ImageDraw.Draw(mask).ellipse(ring_hole, fill=255)
         img.paste((0, 0, 0, 0), (0, 0), mask)
     else:
-        img.paste(_vgrad(n, BG_TOP, BG_BOT).convert("RGBA"), (0, 0), mask)
+        d.ellipse(ring_hole, fill=FIELD)
+
+    # ── 上升柱 ──
+    # 每根柱周围先留一圈间隙再画柱子本身，否则柱子会和环的深色段黏成一块。
+    #
+    # ⚠️ **透明前景上这圈间隙要真的掏成透明**，不能填成底色。
+    # Android 13+ 的主题图标（monochrome）**只取这张图的 alpha 通道**当剪影 ——
+    # 填成底色的话间隙会被算进剪影，柱子和环重新粘成一块，"破环"在主题图标下就没了。
+    # 掏成透明在视觉上没有区别：自适应背景层就是同一个 FIELD 实色（见
+    # androidApp/.../drawable/ic_launcher_background.xml，改一边要改另一边）。
+    bw, gap = n * BAR_W * s, n * BAR_GAP * s
+    x0 = cx - (3 * bw + 2 * gap) / 2
+    base_y = cy + hole * BAR_BASE
+    tops = (cy + n * BAR_TOPS[0] * s,
+            cy + n * BAR_TOPS[1] * s,
+            n / 2 + n * BAR_TOPS[2] * s)
+    halo = n * BAR_HALO * s
+    boxes = [[x0 + i * (bw + gap) - halo, top - halo,
+              x0 + i * (bw + gap) + bw + halo, base_y + halo]
+             for i, top in enumerate(tops)]
+    if transparent:
+        mask = Image.new("L", (n, n), 0)
+        md = ImageDraw.Draw(mask)
+        for b in boxes:
+            md.rounded_rectangle(b, radius=_radius(bw * 0.55, b[3] - b[1]), fill=255)
+        img.paste((0, 0, 0, 0), (0, 0), mask)
+    else:
+        d = ImageDraw.Draw(img)
+        for b in boxes:
+            d.rounded_rectangle(b, radius=_radius(bw * 0.55, b[3] - b[1]), fill=FIELD)
 
     d = ImageDraw.Draw(img)
-    font = ImageFont.truetype(FONT[0], int(outer * GLYPH_RATIO), index=FONT[1])
-    b = d.textbbox((0, 0), "旺", font=font)
-    d.text(((n - (b[2] + b[0])) / 2, (n - (b[3] + b[1])) / 2), "旺", font=font, fill=BRAND)
+    for i, (top, color) in enumerate(zip(tops, BARS)):
+        x = x0 + i * (bw + gap)
+        d.rounded_rectangle([x, top, x + bw, base_y],
+                            radius=_radius(bw * 0.40, base_y - top), fill=color)
 
     return img.resize((canvas, canvas), Image.LANCZOS)
 
@@ -136,10 +213,10 @@ def full_bleed(size):
 def adaptive_foreground(size):
     """Android 自适应前景：透明底 + 缩进安全区。
 
-    图形缩到直径 66/108 的保证可见圆内 —— 除以 RING_OUTER 是因为
-    content_scale 缩的是整个图形，而环外径本来就只占 RING_OUTER。
+    图形缩到直径 66/108 的保证可见圆内。除以 CONTENT_R 是因为 content_scale
+    缩的是整个图形，而图形的最大半径本来就只占 CONTENT_R。
     """
-    return _draw(size, content_scale=(66 / 108) / RING_OUTER, transparent=True)
+    return _draw(size, content_scale=(66 / 108) / 2 / CONTENT_R, transparent=True)
 
 
 def main():
