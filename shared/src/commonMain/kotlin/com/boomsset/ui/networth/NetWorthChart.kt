@@ -166,8 +166,14 @@ private fun TotalColumnChart(series: NetWorthSeries, modifier: Modifier) {
     }
 
     val brand = MaterialTheme.colorScheme.primary
+    // **实色，不加 alpha。** 这里原本是 `alpha = 0.5f` —— 那是柱子和折线叠画那一版的
+    // 遗留（半透明才能让折线透出来），折线删掉之后它只剩"把柱子变淡"这一个效果：
+    // 实测 0.5 alpha 下柱子对页面底只有 **1.95:1**，而柱子是这一页的主数据标记。
+    // 实色是 4.41:1。（顺带一提这个 alpha 一直都偏低 —— 配旧的 `#BD4D03` 是
+    // 2.08:1、配莫兰迪 `#918163` 更是 1.77:1，只是那时没人量过。）
+    // 下方趋势图的**区域填充**仍然是半透明（0.16），那个是有意的，别一起改掉。
     val column = rememberLineComponent(
-        fill = Fill(brand.copy(alpha = 0.5f)),
+        fill = Fill(brand),
         thickness = 10.dp,
         shape = RoundedCornerShape(2.dp),
     )

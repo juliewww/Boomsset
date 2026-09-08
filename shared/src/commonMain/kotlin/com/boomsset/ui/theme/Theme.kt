@@ -11,32 +11,37 @@ import com.boomsset.ui.LocalGainLossColors
 import com.boomsset.ui.gainLossColorsFor
 
 /**
- * 旺资的品牌配色 —— **莫兰迪暖色：中明度、低彩度、灰调**。
+ * 旺资的品牌配色 —— **暖金：中明度、饱和的琥珀金**。
  *
- * 全部色值由 OKLCH 三元组解出，**唯一的输入是色相角 H = 82°（橄榄金）**。
+ * 全部色值由 OKLCH 三元组解出，**唯一的输入是色相角 H = 82°**。
  * 表面、容器、文字、图标共用这一个 H，所以换品牌色时整套跟着走。
  *
- * ## 为什么从 `#BD4D03` 改成 `#918163`
+ * ## 色值的两次改版（当前是 `#986E00`）
  *
- * 反馈是"不够高级"。问题不在色相，在**角色分配**：`#BD4D03` 的 OKLCH 彩度是
- * **0.160**，而它坐在 `primary` 上 —— FAB、导航指示、开关、净值柱全归它。
- * 高彩度橙做大面积填充，在中文 App 语境里就是电商那一档的读感。
- * 现在彩度降到 **0.047**（低了三倍多），彩色全部让给数据本身。
+ * `#BD4D03`（彩度 0.160）反馈"不够高级" —— 问题不在色相，在**角色分配**：
+ * 高彩度橙坐在 `primary` 上做大面积填充，在中文 App 语境里就是电商那一档的读感。
+ * 于是压到莫兰迪区间 `#918163`（彩度 **0.047**）。
+ *
+ * 但那一版反馈"太沉闷"。**低彩度换来的克制，代价是所有靠颜色表示状态的地方都变弱**
+ * （底部导航的选中态就因此比未选中还淡，见 App.kt）。现在取中间路线：
+ * **彩度回到 0.120，但亮度压到 L 0.565** —— 关键在于**往深走反而能放更多彩度**，
+ * 因为「权益类」橙坐在 L 0.715，离得远了 ΔE 自然拉开（实测 16.0，旧的莫兰迪版只有 15.2）。
+ * 结果是比莫兰迪版更鲜明、比电商橙更克制，而且**白字终于合格**（4.60:1）——
+ * 莫兰迪版亮到 L 0.61，白字只有 3.86:1，只能用深棕。
  *
  * 中间试过"深墨锚定"（primary L 0.33、深色 hero 卡片），反馈是**太暗**；
  * 又试过冷色，但冷色区被四个大类色在亮度轴上占满了（保障类紫 L.48、
  * 流动资金蓝 L.60、固定收益绿和另类实物青 L.70），冷色 primary 最亮只能到
- * **L 0.42**，必然比暖色深一档。橄榄金能做到 **L 0.61**，这是选暖色的实际理由。
+ * **L 0.42**，必然比暖色深一档 —— 这是选暖色的实际理由，不是审美偏好。
  *
  * ## 三条不能动的判据（改色值要重新验）
  *
- * 1. **与五个大类图表色的最小 ΔE ≥ 15**（OKLab ×100，正常视力）。
- *    实测 15.2；旧的 `#BD4D03` 对「权益类」橙只有 16.2，一直贴着门槛。
+ * 1. **与五个大类图表色的最小 ΔE ≥ 15**（OKLab ×100，正常视力）。实测 **16.0**。
  *    配置页上 FAB 和权益类那根条会挨在一起，必须分得开。
- * 2. **primary 对页面底 ≥ 3:1** —— 低于它 FAB 会糊进背景。实测 3.70:1。
- * 3. **onPrimary 对 primary ≥ 4.5:1**。`primary` 亮到 L 0.61 之后
- *    **白字只有 3.86:1、不合格**，所以 `onPrimary` 是深棕不是白 ——
- *    莫兰迪体系普遍如此：亮到有阳光感的颜色压不住白字。
+ *    ⚠️ **这条是彩度的上限来源**：想更金就得更深，`#AC8137`（图标柱子那个金，
+ *    L 0.63）对权益类只有 ΔE 10.3，直接不合格。
+ * 2. **primary 对页面底 ≥ 3:1** —— 低于它 FAB 会糊进背景。实测 4.41:1。
+ * 3. **onPrimary 对 primary ≥ 4.5:1**。实测白字 4.60:1。
  *
  * ## 中性面不是纯灰
  *
@@ -54,17 +59,18 @@ import com.boomsset.ui.gainLossColorsFor
  *
  * 品牌色和**涨跌语义色是两件事**，后者见 [com.boomsset.ui.GainLossColors]。
  */
-private val BrandOlive = Color(0xFF918163)
+private val BrandGold = Color(0xFF986E00)
 
 private val LightScheme = lightColorScheme(
-    primary = BrandOlive,
-    // 不是白色 —— 白字在 L 0.61 的 primary 上只有 3.86:1，不到正文门槛。
-    // 深棕给到 5.03:1。
-    onPrimary = Color(0xFF160E02),
-    // 净值 hero 卡片底。柔和暖沙，不是上一版的深墨实底（那个"太暗"）
-    primaryContainer = Color(0xFFE6D7BC),
-    onPrimaryContainer = Color(0xFF392805),
-    inversePrimary = Color(0xFFBFAF93),
+    primary = BrandGold,
+    // 白色 —— 4.60:1，过正文门槛。⚠️ 这一条**和亮度强耦合**：
+    // 上一版 primary 亮到 L 0.61 时白字只有 3.86:1、不合格，只能用深棕。
+    // 改 primary 的亮度必须重算这里。
+    onPrimary = Color(0xFFFFFFFF),
+    // 净值 hero 卡片底。柔和暖沙 —— 试过深墨实底，反馈"太暗"
+    primaryContainer = Color(0xFFE8D7B8),
+    onPrimaryContainer = Color(0xFF3A2800),
+    inversePrimary = Color(0xFFD6B26F),
 
     // 次要色走同色相的低彩中性 —— 只留一个强调色，其余全部近中性
     secondary = Color(0xFF6E685D),
@@ -74,10 +80,10 @@ private val LightScheme = lightColorScheme(
 
     // 第三色刻意留在同色相内，**不用任何分类色的色相** ——
     // 否则它会和某个大类的颜色撞车，让读者以为两者有关
-    tertiary = Color(0xFF68593E),
+    tertiary = Color(0xFF705624),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFEADEC8),
-    onTertiaryContainer = Color(0xFF352607),
+    tertiaryContainer = Color(0xFFECDEC4),
+    onTertiaryContainer = Color(0xFF372500),
 
     // error 和「超配」是两回事，色值也不同（超配是 #C5453F）
     error = Color(0xFFB3261E),
@@ -91,7 +97,7 @@ private val LightScheme = lightColorScheme(
     onSurface = Color(0xFF2E281C),
     surfaceVariant = Color(0xFFEAE7E0),
     onSurfaceVariant = Color(0xFF6A6458),
-    surfaceTint = BrandOlive,
+    surfaceTint = BrandGold,
     inverseSurface = Color(0xFF2E281C),
     inverseOnSurface = Color(0xFFF6F2EB),
 
@@ -110,24 +116,24 @@ private val LightScheme = lightColorScheme(
 
 /**
  * 深色模式是**另选的一组步进**，不是浅色的自动翻转 —— 同一个色相角，
- * 按深底重新取亮度并单独验过（primary 对底 9.6:1，与深色大类色最小 ΔE 17.4）。
+ * 按深底重新取亮度并单独验过（primary 对底 9.68:1，与深色大类色最小 ΔE 15.3）。
  */
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFCBB897),
-    onPrimary = Color(0xFF2A1D03),
-    primaryContainer = Color(0xFF524225),
-    onPrimaryContainer = Color(0xFFEBDABB),
-    inversePrimary = BrandOlive,
+    primary = Color(0xFFE8B245),
+    onPrimary = Color(0xFF2E1F00),
+    primaryContainer = Color(0xFF5E4200),
+    onPrimaryContainer = Color(0xFFEDDCBD),
+    inversePrimary = BrandGold,
 
     secondary = Color(0xFFC3BDB2),
     onSecondary = Color(0xFF302B21),
     secondaryContainer = Color(0xFF403D36),
     onSecondaryContainer = Color(0xFFE4DFD5),
 
-    tertiary = Color(0xFFC3B294),
-    onTertiary = Color(0xFF2C1F05),
-    tertiaryContainer = Color(0xFF4C3D23),
-    onTertiaryContainer = Color(0xFFE6D7BC),
+    tertiary = Color(0xFFCFB17A),
+    onTertiary = Color(0xFF2E1F00),
+    tertiaryContainer = Color(0xFF553C00),
+    onTertiaryContainer = Color(0xFFE7D8BD),
 
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
@@ -140,7 +146,7 @@ private val DarkScheme = darkColorScheme(
     onSurface = Color(0xFFEBE5DC),
     surfaceVariant = Color(0xFF3C3932),
     onSurfaceVariant = Color(0xFFC3BDB2),
-    surfaceTint = Color(0xFFCBB897),
+    surfaceTint = Color(0xFFE8B245),
     inverseSurface = Color(0xFFEBE5DC),
     inverseOnSurface = Color(0xFF2E281C),
 

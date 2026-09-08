@@ -6,7 +6,11 @@
 分两部分：
 
 **配色**（判据见 generate.py 的 RING 注释）
-  1. 环的亮度单调递增 —— 小尺寸可读性靠它，色相读不出来时还有明暗
+  1. 环的五段 = ChartColors.kt 里的五个大类色，**逐个核对色值**。
+     图标上的环就是配置页上那五个色块，品牌一致性靠这条锁住。
+     ⚠️ 早先几版是拿这五个**色相**重新铺一条亮度梯度，那时这里验的是
+     "亮度单调递增"；改用原色之后那条**不再成立也不再检查**——
+     最亮的三个几乎持平，兜底的是下面的色盲分离度
   2. 相邻段色盲分离度 ΔE ≥ 8（OKLab ×100，Machado 2009 protan/deutan 模拟）
   2b. 柱与任一环段的 ΔE ≥ 10 —— 中间虽有底色间隙，色值太接近仍会读成
       "柱子是环的一部分"。这条**曾经只写在注释里没有实现**，而它正是
@@ -124,10 +128,17 @@ def check(ok, label, detail):
 ring = [c for _, c in G.RING]
 
 print("配色")
-Ls = [lightness(c) for c in ring]
-mono = all(b > a for a, b in zip(Ls, Ls[1:]))
-check(mono, "环的亮度单调递增",
-      " → ".join(f"{L:.3f}" for L in Ls))
+
+# 环必须逐色等于 App 的大类色 —— 这是"图标环 = 配置页色块"这条品牌规则的锁
+chart_src = os.path.join(ROOT, "shared/src/commonMain/kotlin/com/boomsset/ui/theme/ChartColors.kt")
+body = open(chart_src).read()
+light = body[body.index("private val LightChartColors"):]
+chart = [hex_to_rgb(m) for m in re.findall(r"Color\(0xFF([0-9A-Fa-f]{6})\)", light)[:5]]
+check(sorted(ring) == sorted(chart), "环 = App 的五个大类色",
+      f"图标 {[('#%02X%02X%02X' % c) for c in ring]} · "
+      f"ChartColors {[('#%02X%02X%02X' % c) for c in chart]}")
+print(f"  [INFO] 环的亮度               {' → '.join(f'{lightness(c):.3f}' for c in ring)}"
+      f"（最亮三个几乎持平，故不验单调性）")
 
 cvds = [cvd_delta_e(a, b) for a, b in zip(ring, ring[1:])]
 check(min(cvds) >= CVD_TARGET, "相邻段色盲分离度",
@@ -147,9 +158,9 @@ check(worst >= BAR_RING_MIN, "柱与环段的分离度",
 
 # 图标底色和 Theme.kt 的品牌色必须同一个色相角
 theme = os.path.join(ROOT, "shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt")
-brand = re.search(r"val BrandOlive = Color\(0xFF([0-9A-Fa-f]{6})\)", open(theme).read())
+brand = re.search(r"val BrandGold = Color\(0xFF([0-9A-Fa-f]{6})\)", open(theme).read())
 if not brand:
-    check(False, "图标底与品牌色同色相", "Theme.kt 里找不到 BrandOlive —— 改名了？")
+    check(False, "图标底与品牌色同色相", "Theme.kt 里找不到 BrandGold —— 改名了？")
 else:
     bh, fh = hue(hex_to_rgb(brand.group(1))), hue(G.FIELD)
     check(abs(bh - G.BRAND_HUE) <= HUE_TOL and abs(fh - G.BRAND_HUE) <= HUE_TOL,
