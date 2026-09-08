@@ -16,16 +16,24 @@ import androidx.compose.ui.graphics.Color
  *
  * ## 为什么必须分深浅两组（旧版只有一组固定值）
  *
- * 这两个色是**正文文字**，判据是对**它实际压在的那块底**有 ≥ 4.5:1。
- * 最不利的底是净值页的 hero 卡片（`primaryContainer`）—— 它比页面底更深。
- * 旧值 `#C5453F` 压在新的暖沙卡片 `#E6D7BC` 上只有 **3.34:1**，不合格；
- * 深色模式下压在 `#201D17` 上又太暗。所以按模式各取一组，
+ * 这两个色是**正文文字**，判据是对**它实际压在的每一块底**都有 ≥ 4.5:1，
+ * 而它们出现在三种底上：页面底、普通卡片（`surfaceContainer`）、
+ * 以及净值页的 hero 卡片（`primaryContainer`）。
+ * 旧值 `#C5453F` 压在暖沙 hero 卡片上只有 **3.34:1**，所以按模式各取一组，
  * 由 [com.boomsset.ui.theme.BoomssetTheme] 通过 [LocalGainLossColors] 提供 ——
  * 和 `LocalChartColors` 同一套做法，**不要在这里自己调 `isSystemInDarkTheme()`**：
  * 主题的深浅是可以被显式传参覆盖的，各读各的会不一致。
  *
- * 实测：浅色 涨 4.57:1 / 跌 4.55:1（对 hero 卡片），对页面底更宽松；
- * 深色 涨 4.51:1 / 跌 4.51:1（对 `surfaceContainer`）。
+ * ⚠️ **最不利的底在深浅两个模式里不是同一个，这里踩过坑。**
+ * 浅色模式下 hero 卡片（`#E8D7B8`）比页面底**深**，所以它最不利；
+ * 深色模式下 hero 卡片（`#5E4200`）反而比页面底**浅**，也是最不利的那个 ——
+ * 但我第一版深色值只对着 `surfaceContainer`（`#201D17`）验，
+ * 结果 `#CC6660`/`#43945D` 压在深色 hero 卡片上**只有 2.50:1**，
+ * 真机（小米 15 Pro / Android 16）切到深色模式才看出来。
+ * **改色值时把三种底逐个验一遍，别假设哪个"最不利"。**
+ *
+ * 实测：浅色 涨 4.58 / 跌 4.56（对 hero 卡片，另两种底更宽松）；
+ * 深色 涨 4.53 / 跌 4.50（对 hero 卡片），对普通卡片 8.1、对页面底 9.0。
  *
  * 只在净值/资产两页的盈亏、涨跌数字上用；不用于配置页（配置页的红蓝是"超配/低配"，
  * 是另一套语义，见 [com.boomsset.ui.theme.ChartColors]）。
@@ -43,8 +51,8 @@ private val LightGainLoss = GainLossColors(
 )
 
 private val DarkGainLoss = GainLossColors(
-    rise = Color(0xFFCC6660),
-    fall = Color(0xFF43945D),
+    rise = Color(0xFFFD9A92),
+    fall = Color(0xFF7CC490),
 )
 
 val LocalGainLossColors = staticCompositionLocalOf { LightGainLoss }
