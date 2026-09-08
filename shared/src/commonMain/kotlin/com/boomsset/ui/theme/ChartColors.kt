@@ -73,6 +73,22 @@ data class ChartColors(
     val under: Color,
     /** 已达标 —— 分歧配色的中性中点。 */
     val onTarget: Color,
+    /**
+     * 净值页**趋势图（总资产）**的区域填充。
+     *
+     * ⚠️ **不要用 `primaryContainer`。** 那是 hero 卡片的底色、整套里最浅的一档 ——
+     * 压在页面底上浅色只有 **1.33:1**、深色 1.87:1，填了跟没填一样。
+     * 实机反馈过"趋势图不是实心的"，而代码里其实早就没有 alpha 了 ——
+     * **"实心"不只是没有透明度，还要色值本身够看得见。**
+     *
+     * 取值对齐**按大类那版堆叠面积**的量级（浅色 2.20~3.57:1）：
+     * 浅色 2.29:1、深色 2.29:1，两条趋势图路径因此在同一档上。
+     *
+     * 还有第二个约束：**折线（`primary`）要在填充上看得见** ——
+     * 浅色 4.07:1、深色 2.82:1。深色那边两个要求是反向的（填充越亮越显眼、
+     * 折线就越糊），L 0.44 是平衡点，往任一边都会牺牲另一头。
+     */
+    val trendArea: Color,
 ) {
     /**
      * 取某个大类的颜色。
@@ -100,6 +116,7 @@ private val LightChartColors = ChartColors(
     over = Color(0xFFC5453F),
     under = Color(0xFF2F6DB0),
     onTarget = Color(0xFF5C5C5C),
+    trendArea = Color(0xFFC398D6),
 )
 
 /**
@@ -118,6 +135,7 @@ private val DarkChartColors = ChartColors(
     over = Color(0xFFE5605C),
     under = Color(0xFF8FBBE8),
     onTarget = Color(0xFFA8A8A8),
+    trendArea = Color(0xFF664176),
 )
 
 /**
