@@ -14,11 +14,18 @@ import kotlin.test.Test
  * 这里的作用是**防止有人顺手改掉已验证过的色值而没有重新验证**：
  * 色值一变这些断言就挂，挂了就得回去重跑验证器。
  *
- * 重跑方式（两个模式都要，底色用**图形实际渲染的那一层**，即 surfaceContainer）：
+ * 重跑方式（两个模式都要，底色用**图形实际渲染的那一层**）：
  * ```
- * node scripts/validate_palette.js "<五个浅色 hex>" --mode light --surface "#FFFFFF"
- * node scripts/validate_palette.js "<五个深色 hex>" --mode dark  --surface "#1C1C1C"
+ * node scripts/validate_palette.js "<五个浅色 hex>" --mode light --surface "#FEF9F4"
+ * node scripts/validate_palette.js "<五个深色 hex>" --mode dark  --surface "#211C17"
  * ```
+ * ⚠️ **必须跑 `--mode dark` 那一条，不能只跑浅色那条然后套用。**
+ * 验证器给两个模式的**亮度带是不同的**：浅色 [0.43, 0.77]，**深色只有 [0.48, 0.67]**。
+ * 拿浅色的带去判深色，会放行一组实际越界的值（真踩过）。
+ *
+ * ⚠️ 验证器还会报一个 **tritan（蓝黄色盲）分离度**，它是**报告项、不是门槛**，
+ * 因此很容易被忽略——但它是真实退化。本项目里**蓝↔绿的 tritan 区分完全靠两者的亮度差**，
+ * 所以任何"把五个色拉到同一亮度"的想法都会让它崩掉（实测 9.6 → 3.3）。
  */
 class ChartColorsTest {
 
@@ -62,9 +69,15 @@ class ChartColorsTest {
      */
     @Test
     fun `色值就是验证过的那组`() {
+        // 浅色是「整体上移 0.05、梯度略收窄、彩度不动」的调亮版（反馈"颜色不要那么深"）；
+        // 深色**放不下**（验证器给深色的亮度带只有 [0.48,0.67]，现值已经贴顶），保持原值。
+        // ⚠️ 两套都跑过**官方验证器**（不是我写的镜像 —— 镜像漏算 tritan、又把浅色的
+        // 亮度带错套到深色上，两次都差点放行错误的值）：
+        //   node scripts/validate_palette.js "<五个浅色 hex>" --mode light --surface "#FEF9F4"
+        //   node scripts/validate_palette.js "<五个深色 hex>" --mode dark  --surface "#211C17"
         chartColorsFor(darkTheme = false).assetClassColors shouldBe listOf(
-            Color(0xFF3E86D0), Color(0xFF2EB88A), Color(0xFFE58A26),
-            Color(0xFF3FB3D1), Color(0xFF977E00),
+            Color(0xFF4D95E0), Color(0xFF40C596), Color(0xFFF29637),
+            Color(0xFF4EBFDE), Color(0xFFA68D21),
         )
         chartColorsFor(darkTheme = true).assetClassColors shouldBe listOf(
             Color(0xFF4186CE), Color(0xFF00AB79), Color(0xFFCF7600),

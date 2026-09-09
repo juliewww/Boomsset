@@ -118,7 +118,7 @@ class AndroidAppLockAuthenticator(private val context: Context) : AppLockAuthent
                 )
 
                 val info = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("旺资")
+                    .setTitle("猪满仓")
                     .setSubtitle(reason)
                     .setAllowedAuthenticators(allowed)
                     .build()

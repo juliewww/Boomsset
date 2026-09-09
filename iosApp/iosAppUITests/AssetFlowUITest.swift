@@ -461,7 +461,7 @@ final class AssetFlowUITest: XCTestCase {
         // 模拟器上没录 Face ID 也没设密码 → 应当告诉用户去系统设置加，
         // 而不是含糊地说"不可用"
         let notEnrolled = app.staticTexts["这台设备还没设锁屏密码或生物识别 —— 去系统设置里加上就能用了。"]
-        let available = app.staticTexts["开启后每次打开旺资都需要验证身份。开启时会先验一次。"]
+        let available = app.staticTexts["开启后每次打开猪满仓都需要验证身份。开启时会先验一次。"]
         XCTAssertTrue(
             notEnrolled.exists || available.exists,
             "应用锁必须给出明确的状态说明，而不是空白"

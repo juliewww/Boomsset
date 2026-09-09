@@ -22,7 +22,7 @@ targets:
     info:
       path: iosApp/Info.plist
       properties:
-        CFBundleDisplayName: 旺资
+        CFBundleDisplayName: 猪满仓
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         LSRequiresIPhoneOS: true
@@ -31,7 +31,7 @@ targets:
           - UIInterfaceOrientationPortrait
         # ⚠️ 必须有，否则首次调用 Face ID 直接崩溃（AGENTS.md 约束 7）。
         # 应用锁还没做，但这行现在就放好。
-        NSFaceIDUsageDescription: 使用面容 ID 解锁旺资，保护你的资产数据
+        NSFaceIDUsageDescription: 使用面容 ID 解锁猪满仓，保护你的资产数据
         # ⚠️⚠️ Compose Multiplatform **强制要求**这一项，否则 App 一启动就崩：
         # `ComposeUIViewController` 里的 PlistSanityCheck 会抛 IllegalStateException。
         # 它的意思是没有这个键，ProMotion 机型上会被限制在 60Hz。

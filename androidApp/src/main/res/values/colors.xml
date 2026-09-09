@@ -5,7 +5,7 @@
       自适应前景把柱子周围的间隙掏成了透明，露出的就是这一层。
       两边不一致的话，间隙里会出现一圈异色描边。validate.py 会核对。
     -->
-    <color name="ic_launcher_bg">#F9F0FD</color>
+    <color name="ic_launcher_bg">#FFEFF4</color>
 
     <!--
       系统开屏的底色。**必须和 Theme.kt 的 LightScheme.surface 同值**，

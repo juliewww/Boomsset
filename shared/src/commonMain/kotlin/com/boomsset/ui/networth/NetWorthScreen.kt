@@ -1,6 +1,5 @@
 package com.boomsset.ui.networth
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -141,15 +140,21 @@ private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean)
 
     // 卡片用品牌色的浅色容器打底 —— 整页只有这一处用容器强调。
     //
-    // ⚠️ **必须有描边。** 容器是奶黄 `#F0E3BE`，压在同样偏暖的页面底上只有 **1.22:1**，
-    // 不给边界的话卡片会糊进背景、读不出这是一块卡片。
-    // 描边取 `outlineVariant`，对卡片 1.46:1 —— 发丝级，够勾出轮廓又不抢眼。
+    // ⚠️ **不描边**（这条和奶黄/深紫檀两版的结论相反，见下面为什么）。容器是淡玫瑰
+    // `#FBCEDF`，压在暖调页面底上 WCAG 对比度只有 **1.34:1**——纯按亮度算，
+    // 两版旧品牌色也踩过这个数量级（奶黄 1.22:1、深紫檀 1.33:1），当时都靠一圈细描边
+    // 才勾得出轮廓。**这次量出同样的低对比度，但装到真机上一看，卡片其实很清楚**——
+    // 差别在于奶黄/深紫檀那两版容器和页面底**色相也很接近**（都是暖色调），
+    // 亮玫瑰容器和暖米页面底**色相离得远**（粉 vs 米黄），WCAG 对比度只看亮度、
+    // 看不出色相差异，但人眼看色相，肉眼上这张卡片边界很清楚，加边框反而多余
+    // （实机反馈"是不是不要边框比较好"，截图核对过确实不需要）。
+    // **通则：WCAG 对比度数字低不等于人眼看不清——色相差异大的时候，
+    // 光看这一个数字会误判，改完一定要装到真机上确认，不能只信计算器。**
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer,
         ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -409,7 +414,7 @@ private fun AppLockToggle(lockState: AppLockUiState, onToggle: (Boolean) -> Unit
             Text(
                 when (lockState.capability) {
                     AuthCapability.AVAILABLE ->
-                        "开启后每次打开旺资都需要验证身份。开启时会先验一次。"
+                        "开启后每次打开猪满仓都需要验证身份。开启时会先验一次。"
                     AuthCapability.NOT_ENROLLED ->
                         "这台设备还没设锁屏密码或生物识别 —— 去系统设置里加上就能用了。"
                     AuthCapability.NO_HARDWARE ->
@@ -752,7 +757,7 @@ private fun EmptyHint() {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("还没有资产", style = MaterialTheme.typography.titleMedium)
             Text(
-                "旺资不记流水，记的是快照 —— 你不用逐笔录收支，只要定期更新每项资产现在值多少。",
+                "猪满仓不记流水，记的是快照 —— 你不用逐笔录收支，只要定期更新每项资产现在值多少。",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Step("1", "去「资产」页点右下角加号，添加一项资产（存款、基金、股票、房产都行）")

@@ -11,60 +11,72 @@ import com.boomsset.ui.LocalGainLossColors
 import com.boomsset.ui.gainLossColorsFor
 
 /**
- * 旺资的品牌配色 —— **深紫檀（紫气东来）**。
+ * 旺资的品牌配色 —— **中玫瑰**（源自「会飞的猪」吉祥物图标的猪身粉，H 354）。
  *
- * ## 为什么是紫，以及它比前几版顺在哪
+ * ## 这版是怎么来的：从吉祥物色反推主题色
  *
- * 色值走过 `#8A5A18` → `#BD4D03` → `#918163` → `#986E00` → `#955E00` → `#D3BC7D`，
- * 分别被否为"不够积极/不够高级/太沉闷/不好看/还是暗沉/…"。
- * 这一版换到**紫**（H 315，L 0.40，C 0.110），结构上比前面所有版本都简单，原因是：
- * **紫在 L 0.40 就有足够彩度**，对页面底 9.31:1、白字 9.74:1 —— 而黄/金必须在
- * L 0.53~0.63 之间挣扎，浅了看不见、深了显沉。奶黄那一版甚至被迫把 FAB 和净值柱
- * 拆成两个色（FAB 靠投影、柱子另给深色），紫色**不需要拆**，回到单一品牌色。
+ * app icon 换成了「破环而出」的抽象环 → 一只会飞的粉色小猪之后，
+ * 顺手问了一句"猪身粉能不能直接当主题色"——**不能，但同色相能**。
+ * 猪身原色 `#EFA8C4`（L 0.807，给吉祥物用的浅粉）对页面底只有 **1.81:1**，
+ * FAB、导航指示条这些要跳出页面的元素会糊进背景。同一个色相 H 354 往下压出三档候选
+ * （亮玫瑰 L 0.68 / 中玫瑰 L 0.59 / 深莓紫红 L 0.43），套进真实界面预览逐个看过。
  *
- * ## ⚠️ 代价：「保障类」从紫挪到了金黄
+ * ## ⚠️ 先上过亮玫瑰，实机反馈"和其他颜色割裂"，才换到中玫瑰
  *
- * 品牌色和五个大类图表色必须 ΔE ≥ 15，而保障类原本就是紫 `#585CA2` ——
- * 它占着位置，品牌紫就站不下。挪的方向是**算出来的**：先试过挪到洋红（H340），
- * 那是错的，洋红反而堵住 H300~330 的紫、逼它把彩度提到 0.19（太艳）。
- * 保障类必须挪到**离紫最远的一侧**，紫的彩度下限才从 0.135 掉到 0.060。
- * 新旧两套大类配色都跑过 dataviz 验证器，六项全过。详见 ChartColors.kt。
+ * 亮玫瑰 `#E961A0` 的问题**不在色相，在响度**：它的彩度 **0.180 比五个大类色都高**
+ * （大类色 0.110~0.152），亮度 0.68 又**正好落在大类色的区间中间**（0.60~0.72）——
+ * 等于它在视觉上"报名参加了大类色那一组"，还是最吵的一个。实机上的表现就是
+ * 净值页六个高彩度色互相抢戏、配置页反而看不到品牌色、资产页（几乎没有大类填色）最和谐。
+ * 中玫瑰把亮度压到 **0.590，低于全部五个大类色**，于是退回"框架色"那一层：
+ * 数据归数据色，品牌归品牌色，层级重新分开。**这是旧深紫檀（L 0.40）从来不打架的同一个机制。**
  *
- * ## 三条不能动的判据（改色值要重新验）
+ * 顺带解决了两处别扭：**白字终于合格（4.54:1）**，所以 `onPrimary` 回到白色、
+ * 开关滑块也不用再手动指定（M3 默认就吃 `onPrimary`）；
+ * 导航栏选中态也能直接用 `primary`（对导航栏底 4.07:1），
+ * 不用再单独解一个"够亮的玫瑰"（亮玫瑰那版只有 2.82:1，被迫另开一个常量）。
  *
- * 1. **与五个大类图表色的最小 ΔE ≥ 15**（OKLab ×100，正常视力）。实测 **24.6**，
- *    是历版里余量最宽的一次。配置页上 FAB 和大类色块会同屏。
- * 2. **primary 对页面底 ≥ 3:1**。实测 **9.31:1**。
- *    ⚠️ 这条是真正卡住前几版亮度的那一条 —— 净值柱和导航指示条都用 primary，
- *    柱子是数据标记，浅色品牌色会让它糊进背景。
- * 3. **onPrimary 对 primary ≥ 4.5:1**。实测白字 **9.74:1**。
+ * ## 「保障类」不用再挪
  *
- * ## 中性面**没有**跟着换色相
+ * 上一版（深紫檀 H 315）把「保障类」从紫挪去了金黄，因为紫占住了那个色相位。
+ * 玫瑰 H 354 离五个大类色更远（最小 ΔE 21.4），**不需要再挪**——
+ * ChartColors.kt 保持金黄不变，这条只是记录"这次没有连带影响"，不是新决定。
  *
- * 表面和文字仍然是暖色（H 70）—— 这是明确要求"不要改背景色"。
- * 所以这一版是**品牌紫 + 暖中性面**两个色相，不再是"全套由一个 H 解出"。
- * 冷紫配暖米白是成立的组合，但**改动时要记得它们是两个独立的输入**。
+ * ## 三条不能动的判据（改色值要重新验，方法见 ChartColorsTest 注释里那套验证器）
  *
- * ⚠️ **品牌色和 `tools/appicon/generate.py` 的 `BRAND_HUE` 必须一致**，
- * 改配色两边一起改，改完跑那个脚本重新生成图标、再跑 validate.py。
+ * 1. **与五个大类图表色的最小 ΔE ≥ 15**（OKLab ×100，正常视力）。实测 **21.4**（浅）/ **20.7**（深）。
+ * 2. **primary 对页面底 / 深色底 ≥ 3:1**。实测 **4.34:1**（浅）/ **6.26:1**（深）。
+ *    亮玫瑰那版只有 3.00:1（压线），换到中玫瑰之后余量回到舒服的水平。
+ * 3. **onPrimary 对 primary ≥ 4.5:1**。实测白字 **4.54:1**（浅，压线但合格）。
+ *    ⚠️ 深色模式的 primary 更亮更艳，白字只有 2.98:1、**不合格**，所以深色那边
+ *    `onPrimary` 仍然是近黑酒红。**深浅两套的 onPrimary 不是同一个色，这是有意的。**
+ *
+ * ## 中性面仍然**没有**跟着换色相
+ *
+ * 表面和文字仍然是暖色（H 70）——"不要改背景色"这条约束在换主题色这轮依然成立。
+ * 冷暖两个色相独立这件事本身没变，变的只是品牌色那一路从 H 315 换成了 H 354。
+ *
+ * ⚠️ **`tools/appicon/generate.py` 的 `BRAND_HUE` 暂时没有跟着改**——
+ * 那套「破环而出」的抽象图标正在被「会飞的猪」取代，图标改版是独立任务，
+ * 定下来之前先不动 generate.py，避免图标和主题色两条线互相打断。
+ * 图标改版落地时记得回来同步这个常量。
  *
  * **必须逐个角色写全，不能只覆盖 primary。** `lightColorScheme()` 没传的参数会取
  * 基线默认值，而基线的 surface 家族是带紫调的灰 —— 只改 primary 会让整体看起来像换了一半。
  *
  * 品牌色和**涨跌语义色是两件事**，后者见 [com.boomsset.ui.GainLossColors]。
  */
-private val BrandPurple = Color(0xFF5D3270)
+private val BrandRose = Color(0xFFC94385)
 
 private val LightScheme = lightColorScheme(
-    primary = BrandPurple,
-    // 白色 —— 9.74:1。⚠️ 这一条**和亮度强耦合**：更早那版 primary 亮到 L 0.61 时
-    // 白字只有 3.86:1、不合格，只能改用深色字。改 primary 亮度必须重算这里。
+    primary = BrandRose,
+    // 白色 —— 4.54:1，压线但合格。亮玫瑰那版只有 3.14:1，当时被迫用深酒红字；
+    // 压暗到中玫瑰之后白字回来了，M3 的默认组件（开关滑块等）也就自动对了。
     onPrimary = Color(0xFFFFFFFF),
-    // 净值 hero 卡片底 —— 淡紫。对页面底只有 1.33:1，**必须靠描边勾出轮廓**，
-    // 见 NetWorthScreen 的 SummaryCard。
-    primaryContainer = Color(0xFFEAD2F6),
-    onPrimaryContainer = Color(0xFF371A43),
-    inversePrimary = Color(0xFFC7A0D9),
+    // 净值 hero 卡片底 —— 淡玫瑰。对页面底只有 1.34:1，**必须靠描边勾出轮廓**，
+    // 见 NetWorthScreen 的 SummaryCard（描边逻辑通用，换品牌色不用跟着改）。
+    primaryContainer = Color(0xFFFBCEDF),
+    onPrimaryContainer = Color(0xFF45142B),
+    inversePrimary = Color(0xFFDF99B5),
 
     // 次要色走同色相的低彩中性 —— 只留一个强调色，其余全部近中性
     secondary = Color(0xFF70675E),
@@ -74,10 +86,10 @@ private val LightScheme = lightColorScheme(
 
     // 第三色刻意留在同色相内，**不用任何分类色的色相** ——
     // 否则它会和某个大类的颜色撞车，让读者以为两者有关
-    tertiary = Color(0xFF6A4F76),
+    tertiary = Color(0xFF7A4A5E),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFEAD6F3),
-    onTertiaryContainer = Color(0xFF341B3F),
+    tertiaryContainer = Color(0xFFF7D3E0),
+    onTertiaryContainer = Color(0xFF41162A),
 
     // error 和「超配」是两回事，色值也不同（超配是 #C5453F）
     error = Color(0xFFB3261E),
@@ -91,8 +103,9 @@ private val LightScheme = lightColorScheme(
     onSurface = Color(0xFF30271D),
     surfaceVariant = Color(0xFFEBE6E2),
     onSurfaceVariant = Color(0xFF6C6359),
-    surfaceTint = BrandPurple,
+    surfaceTint = BrandRose,
     inverseSurface = Color(0xFF30271D),
+    // ↑ surfaceTint 跟着 primary 走，别写死色值
     inverseOnSurface = Color(0xFFF6F2ED),
 
     surfaceDim = Color(0xFFE5E1DC),
@@ -109,26 +122,28 @@ private val LightScheme = lightColorScheme(
 )
 
 /**
- * 深色模式是**另选的一组步进**，不是浅色的自动翻转 —— 同一个色相角，
- * 按深底重新取亮度并单独验过（primary 对底 6.46:1，与深色大类色最小 ΔE 18.9）。
- * ⚠️ 深色的「保障类」也跟着换了（`#5F63AA` → `#9B8100`），两套都跑过验证器。
+ * 深色模式是**另选的一组步进**，不是浅色的自动翻转 —— 同一个色相角（H 354），
+ * 按深底重新取亮度并单独验过（primary 对底 6.26:1，与深色大类色最小 ΔE 22.0）。
+ * ⚠️ 「保障类」这轮不用挪（见上方 LightScheme 文档的"不用再挪"一节），
+ * 深色的金黄 `#9B8100` 原样保留。
  */
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFC778E8),
-    onPrimary = Color(0xFF2A0D36),
-    primaryContainer = Color(0xFF563664),
-    onPrimaryContainer = Color(0xFFECD4F8),
-    inversePrimary = BrandPurple,
+    primary = Color(0xFFFF53A8),
+    // 同样是深酒红，不是白色 —— 深色模式的鲜艳玫瑰对白字只有 2.98:1，也不合格。
+    onPrimary = Color(0xFF1C030F),
+    primaryContainer = Color(0xFF673048),
+    onPrimaryContainer = Color(0xFFFDD0E1),
+    inversePrimary = BrandRose,
 
     secondary = Color(0xFFC5BCB3),
     onSecondary = Color(0xFF312A22),
     secondaryContainer = Color(0xFF413C36),
     onSecondaryContainer = Color(0xFFE6DED6),
 
-    tertiary = Color(0xFFC7A9D5),
-    onTertiary = Color(0xFF2E1538),
-    tertiaryContainer = Color(0xFF51335E),
-    onTertiaryContainer = Color(0xFFE8D1F2),
+    tertiary = Color(0xFFDBA4B9),
+    onTertiary = Color(0xFF3A1024),
+    tertiaryContainer = Color(0xFF612E44),
+    onTertiaryContainer = Color(0xFFF7CDDD),
 
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
@@ -141,7 +156,7 @@ private val DarkScheme = darkColorScheme(
     onSurface = Color(0xFFECE5DC),
     surfaceVariant = Color(0xFF3D3833),
     onSurfaceVariant = Color(0xFFC5BCB3),
-    surfaceTint = Color(0xFFC778E8),
+    surfaceTint = Color(0xFFFF53A8),
     inverseSurface = Color(0xFFECE5DC),
     inverseOnSurface = Color(0xFF30271D),
 

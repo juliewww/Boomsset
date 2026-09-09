@@ -170,15 +170,16 @@ private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modif
 
     // 柱子直接用 `colorScheme.primary`。
     // ⚠️ 这一条**和 primary 的亮度强耦合**：奶黄那一版 primary 对页面底只有 1.78:1，
-    // 当时不得不把柱子拆出一个单独的深色（`ChartColors.brand`）。现在 primary 是
-    // 深紫檀，对页面底 9.31:1，柱子可以回到单一品牌色。**换浅色品牌色时要重新量这条。**
+    // 当时不得不把柱子拆出一个单独的深色（`ChartColors.brand`）。
+    // 现在是中玫瑰，对页面底 **4.34:1**，柱子可以放心用单一品牌色。
+    // （中间短暂用过的亮玫瑰只有 3.00:1、压线，也是这次换成中玫瑰的原因之一。）
+    // **换品牌色时都要重新量这条，不能想当然复用上一版的判断。**
     val brand = MaterialTheme.colorScheme.primary
     // **实色，不加 alpha。** 这里原本是 `alpha = 0.5f` —— 那是柱子和折线叠画那一版的
     // 遗留（半透明才能让折线透出来），折线删掉之后它只剩"把柱子变淡"这一个效果：
-    // 实测 0.5 alpha 下柱子对页面底只有 **1.95:1**，而柱子是这一页的主数据标记。
-    // 实色是 9.31:1。（这个 alpha 一直都偏低 —— 配旧的 `#BD4D03` 是 2.08:1、
-    // 配莫兰迪 `#918163` 更是 1.77:1，只是那时没人量过。）
-    // 趋势图的区域填充也已经改成不透明，见 TotalTrendChart。
+    // 实测 0.5 alpha 下柱子对页面底只有 **1.95:1**（配旧紫），而柱子是这一页的主数据标记。
+    // （这个 alpha 一直都偏低 —— 配旧的 `#BD4D03` 是 2.08:1、配莫兰迪 `#918163`
+    // 更是 1.77:1，只是那时没人量过。）趋势图的区域填充也已经改成不透明，见 TotalTrendChart。
     val column = rememberLineComponent(
         fill = Fill(brand),
         thickness = 10.dp,
@@ -311,11 +312,11 @@ private fun TotalTrendChart(series: NetWorthSeries, hideAmounts: Boolean, modifi
     }
 
     val brand = MaterialTheme.colorScheme.primary
-    // 区域填充：不透明，且**色值要有分量**。这里踩过两次 ——
-    // 先是 `brand.copy(alpha = 0.16f)`（16% 几乎等于没填），改成不透明之后
-    // 又选了 `primaryContainer`，那是 hero 卡片的底、整套里最浅的一档，
-    // 对页面底只有 1.33:1，实机上照样被反馈"不是实心的"。
-    // 现在用 `chartColors.trendArea`（2.29:1），和按大类那版的堆叠面积同一档。
+    // 区域填充：不透明。这里踩过两次 —— 先是 `brand.copy(alpha = 0.16f)`
+    // （16% 几乎等于没填），改成不透明之后又选了 `primaryContainer`，
+    // 那是 hero 卡片的底、整套里最浅的一档，实机上照样被反馈"不是实心的"。
+    // 现在用 `chartColors.trendArea`，它的取值**跟着 primary 的亮度走**，
+    // 每次换品牌色都要重解 —— 判据和三次换值的经过写在 ChartColors 的 trendArea 文档里。
     val area = chartColors.trendArea
     TrendChartFrame(series.dates, modifier) {
         CartesianChartHost(

@@ -74,9 +74,11 @@ class RateRefresherTest {
             quoteSymbol: String?, initialValue: Money?, initialQuantity: Quantity?,
             costBasis: Money?,
         ): Long = 0
-        override suspend fun appendManualSnapshot(assetId: Long, value: Money, costBasis: Money?) {}
+        override suspend fun appendManualSnapshot(
+            assetId: Long, value: Money, costBasis: Money?, asOf: Instant?,
+        ) {}
         override suspend fun appendQuotedSnapshot(
-            assetId: Long, quantity: Quantity, quoteSymbol: String, costBasis: Money?,
+            assetId: Long, quantity: Quantity, quoteSymbol: String, costBasis: Money?, asOf: Instant?,
         ) {}
         override suspend fun archiveAsset(assetId: Long) {}
         override suspend fun unarchiveAsset(assetId: Long) {}

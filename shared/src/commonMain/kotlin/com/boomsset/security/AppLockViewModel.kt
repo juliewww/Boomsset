@@ -71,7 +71,7 @@ class AppLockViewModel(
 
     fun authenticate() {
         viewModelScope.launch {
-            when (val result = authenticator.authenticate("解锁旺资查看你的资产")) {
+            when (val result = authenticator.authenticate("解锁猪满仓查看你的资产")) {
                 AuthResult.Success -> {
                     unlocked.value = true
                     lastError.value = null
