@@ -51,7 +51,7 @@ fun AppLockGate(
                 return@Column
             }
 
-            Text("旺资已锁定", style = MaterialTheme.typography.headlineSmall)
+            Text("猪满仓已锁定", style = MaterialTheme.typography.headlineSmall)
 
             when (state.capability) {
                 AuthCapability.AVAILABLE -> {

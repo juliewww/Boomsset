@@ -1,5 +1,7 @@
 package com.boomsset.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -17,8 +19,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -100,7 +104,21 @@ private fun AppContent(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(if (onAddRoute) "添加资产" else "旺资") },
+                    title = {
+                        if (onAddRoute) {
+                            Text("添加资产")
+                        } else {
+                            // 猪只在标题旁边出现，不在"添加资产"这种子页面标题里 ——
+                            // 它是品牌标识，子页面的标题说的是"当前在做什么"，两者不是一回事。
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                PigGlyph()
+                                Text("猪满仓")
+                            }
+                        }
+                    },
                     navigationIcon = {
                         // 独立页面要有退路。放在 TopAppBar 而不是页面内容里，
                         // 这样它不受页面内分步（选品种 / 填详情）的影响
@@ -138,25 +156,19 @@ private fun AppContent(
                             // label 里不用手动读 selected 再设 Text 颜色 —— NavigationBarItem
                             // 已经把这里的 colors 通过 LocalContentColor 传给 label 内容了。
                             colors = NavigationBarItemDefaults.colors(
-                                // ⚠️ **不要用 `primary`。** 它是奶黄 `#D3BC7D`，压在导航栏底上
-                                // 只有 1.67:1，会比未选中的 `onSurfaceVariant`（5.26:1）还淡 ——
-                                // 那正是实机反馈过的"选中效果太浅"。
-                                // 通则：**换低彩度/高亮度的品牌色时，所有"靠颜色表示状态"
-                                // 的地方都要把选中/未选中两边的对比度都算出来比大小**，
-                                // 不能只看"选中态有没有上品牌色"。
-                                // `onPrimaryContainer` 是同色系的深棕，12.9:1。
-                                selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                // 选中态直接用 `primary`——中玫瑰对导航栏底(`surfaceContainer`)
+                                // **4.07:1**，清楚可辨，而且这一栏用的就是货真价实的品牌色，
+                                // 跨页面看过去和 FAB、净值柱是同一个颜色，不会有割裂感。
+                                // ⚠️ **这条和 primary 的亮度强耦合，换品牌色必须重量：**
+                                // 亮玫瑰那版对导航栏底只有 2.82:1（比未选中的 5.28:1 还淡），
+                                // 当时被迫另解一个更亮的常量；更早的奶黄只有 1.67:1。
+                                // 通则：**所有"靠颜色表示状态"的地方，都要把选中/未选中两边的
+                                // 对比度都算出来比大小**，不能只看"选中态有没有上品牌色"。
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                 // 指示条（M3 画在**图标位**，即文字上方那一块）也要承载选中态。
                                 // 默认色是 `secondaryContainer`，压在导航栏底上**只有 1.05:1**，
                                 // 等于不存在（实机反馈"选中效果太浅"，一半原因在这）。
-                                // 换成 `primary`：8.74:1，远超 UI 元件"看得见"的 3:1 门槛。
-                                // ⚠️ 这条**和 primary 的亮度强耦合**：奶黄那一版 primary 对
-                                // 导航栏底只有 1.67:1，当时不得不给指示条单独一个深色。
-                                // 现在是深紫檀，可以回到单一品牌色。**换浅色品牌色要重量。**
-                                // ⚠️ 这一栏 `icon = {}` 没有图标，所以这块是**实心色块**，
-                                // 它的"有/无"本身就是选中态 —— 加图标的话这里要改成
-                                // `selectedIconColor = onPrimary`，否则图标会糊在色块上。
                                 indicatorColor = MaterialTheme.colorScheme.primary,
                             ),
                         )
@@ -169,7 +181,7 @@ private fun AppContent(
                 if (currentRoute == ROUTE_ASSETS) {
                     // 显式给 primary，**不用 M3 的默认值**（默认是 `primaryContainer`，
                     // 比 primary 更浅，加号会更糊）。
-                    // primary 是深紫檀，对页面底 9.31:1、白加号 9.74:1，都很宽松。
+                    // primary 是中玫瑰，对页面底 4.34:1；白加号对 primary 4.54:1。
                     FloatingActionButton(
                         onClick = { navController.navigate(ROUTE_ADD_ASSET) },
                         containerColor = MaterialTheme.colorScheme.primary,

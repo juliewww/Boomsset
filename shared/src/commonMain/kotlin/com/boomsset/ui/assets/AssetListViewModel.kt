@@ -7,6 +7,7 @@ import com.boomsset.data.SettingsRepository
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.AssetSubtype
 import com.boomsset.domain.AssetValuation
+import com.boomsset.domain.endOfDayIn
 import com.boomsset.domain.Money
 import com.boomsset.domain.PortfolioSeriesCalculator
 import com.boomsset.domain.Quantity
@@ -105,10 +106,14 @@ class AssetListViewModel(
      *
      * [costBasis] 由 UI 从上一条快照预填后传进来 —— **不要让它默认为 null**，
      * 那等于把成本抹掉，收益率会凭空消失。见 docs/domain.md「实现时容易写错的地方」第 5 条。
+     *
+     * [asOf] 不给就是"现在"；给了就是**补录历史**——这条快照会落到那一天**结束时**
+     * （`endOfDayIn`，和净值曲线取样的语义一致，见 docs/domain.md「时间处理」）。
+     * `recordedAt` 不受影响，始终是真实点击"保存"的时间。
      */
-    fun updateManualValue(assetId: Long, value: Money, costBasis: Money?) {
+    fun updateManualValue(assetId: Long, value: Money, costBasis: Money?, asOf: LocalDate? = null) {
         viewModelScope.launch {
-            repository.appendManualSnapshot(assetId, value, costBasis)
+            repository.appendManualSnapshot(assetId, value, costBasis, asOf?.endOfDayIn(zone))
         }
     }
 
@@ -122,9 +127,10 @@ class AssetListViewModel(
         quantity: Quantity,
         quoteSymbol: String,
         costBasis: Money?,
+        asOf: LocalDate? = null,
     ) {
         viewModelScope.launch {
-            repository.appendQuotedSnapshot(assetId, quantity, quoteSymbol, costBasis)
+            repository.appendQuotedSnapshot(assetId, quantity, quoteSymbol, costBasis, asOf?.endOfDayIn(zone))
         }
     }
 

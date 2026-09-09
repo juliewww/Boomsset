@@ -5,6 +5,7 @@
 不要手改 —— 改了下次跑这个脚本就没了。改设计请改下面的常量。
 
     python3 tools/appicon/generate.py
+    python3 tools/appicon/validate.py     # 改完必须跑
 
 需要 Pillow（macOS 自带的 python3 通常已有）。构建本身不依赖它 ——
 PNG 是提交进仓库的，所以 CI 和别人的机器不用装 Pillow。
@@ -16,212 +17,290 @@ PNG 是提交进仓库的，所以 CI 和别人的机器不用装 Pillow。
 * **Android 自适应图标**的图层是 108dp，但只有中间 72dp 可见、
   且只有直径 66dp 的圆保证不被裁。启动器的遮罩形状由 OEM 决定
   （圆/方/squircle/水滴），所以图形必须缩进安全区。
-  照 iOS 那张满幅图直接拿来当前景，图形会被裁掉一圈。
 
-── 设计：「破环而出」──────────────────────────────────────────────
+── 设计：「驮着钱的飞猪」──────────────────────────────────────────
 
-图标要同时说清三件事，而且是**同一个手势**在说：
+上一版是「破环而出」（分段环 + 三根穿出环外的柱），抽象、和"资产配置"直连，
+但反馈是**太繁琐、颜色太多**。这一版换成一个具体的吉祥物：
 
-* **配置** —— 闭合的分段环，五段对应五个大类
-* **管理** —— 环把它们收拢成一个有序的整体，做柱子的底盘
-* **钱越来越多** —— 三根上升的柱，最高一根**穿出环外**
+* **会飞的猪** —— 猪 = 存钱罐/招财，翅膀 = 资产在增长（"会飞"）
+* **侧身三枚铜钱** —— 钱币本身，同时借存钱罐的读感
+* **前后两条腿 / 圆耳带小尖 / 眼睛高光** —— 可爱度，都是实机比过尺寸的
 
-上一版是「配置环 + 旺字」，只说了配置。
-"破环"这一下必须**真的穿出去**：闭合环 + 柱高小于环径时，几何上做不到，
-所以环被刻意缩小、柱子做主体。第一版试过大环小柱，柱顶还在环内，
-只是被间隙衬开，读起来像"柱子插在环里"而不是"长出来"。
+⚠️ **几何自适应，不再手算包围半径。** 上一版有个 `CONTENT_R` 常量是手算的，
+**算错了 27%**（最远的点是最右那根柱的右上角，不是柱顶），自适应前景因此超出
+安全圆、在圆形遮罩的启动器上会被削掉，而这**本地合成看不出来**。
+这一版改成：先把图形画在透明画布上，**逐像素扫出真实的包围半径**，
+再按目标半径缩放居中 —— 没有可以算错的常量。
 """
 from PIL import Image, ImageDraw
 import json
+import math
 import os
 
-# ── 设计常量 ──────────────────────────────────────────────────────────
-# 品牌色相角。⚠️ 必须和 shared/.../ui/theme/Theme.kt 里的 BrandPurple (#5D3270) 一致 ——
-# 那套配色也是从这个 H 解出来的。图标和界面脱节比图标丑更糟。
-BRAND_HUE = 315                 # 深紫檀
+# ── 品牌 ──────────────────────────────────────────────────────────────
+# 品牌色相角。⚠️ 必须和 shared/.../ui/theme/Theme.kt 里的 BrandRose (#C94385) 一致。
+# 图标和界面脱节比图标丑更糟。
+BRAND_HUE = 354                 # 中玫瑰
 
-# 底色：近白淡紫。
-#
-# ⚠️ **它是被 RING 逼到这个亮度的，不是选出来的。** 圆环改用 App 里五个大类的
-# **原色**之后（见下方 RING），其中最亮的三个坐在 L 0.699~0.715 —— 底色再暗一点
-# 它们就掉到 1.5:1，读成环上的缺口。要让五个原色**都**对底 ≥1.8:1，
-# 底色只有两个区间可选：**L ≤ 0.30（深底）或 L ≥ 0.95（近白）**。
-# 取近白是因为反馈方向是"别那么沉闷"。
-#
-# 之前几版底色是 L 0.761 麦金 → 0.800 暖麦金，那时环是**重新铺过亮度**的，
-# 底色可以夹在中间；换成原色就没有这个自由度了。
-# ⚠️ 色相跟着品牌色走（现在是紫），所以底色是**淡紫**而不是暖奶油 ——
-# 这和 App 的页面底（暖色 H70）**不是同一个色相**，那是刻意的：
-# 界面的中性面按要求保持暖色，图标则跟品牌色。
-FIELD = (249, 240, 253)         # #F9F0FD，= OKLCH(0.965, 0.020, 315)
+# 底色：近白淡紫粉。⚠️ 这是**图标自己的底**，和 App 的页面底（暖色 H70）不是同一个
+# 色相 —— 界面的中性面按要求保持暖色，图标跟品牌色，这是刻意的。
+# 它同时是 Android 自适应背景层的色值（colors.xml 的 ic_launcher_bg），
+# 因为前景把缝隙掏成了透明，露出来的就是它。改这里要改那边（validate.py 会核对）。
+# ⚠️ 色值是 **#F9F0FD 挪到品牌色相之后**的结果。挑底色时选的是 #F9F0FD（偏白、
+# 不那么粉的那一版），但那个值是配**旧的紫色品牌色**解出来的，色相 315.7° ——
+# 换成中玫瑰（H 354）之后就和品牌脱节了。同亮度同彩度挪到 H 354 得到 #FFEFF4，
+# 两者 **ΔE 仅 1.3**（肉眼分不出），所以既保住了挑选时的观感，也保住了色相一致。
+FIELD = (255, 239, 244)         # #FFEFF4
 
-# 五段配置环 —— **直接用 App 里五个大类的原色，一个像素都没改。**
-#
-# 这是刻意的品牌一致性：图标上的环就是配置页上那五个色块，同一个「蓝色 = 流动资金」
-# 在图标和界面里都成立。色值的唯一事实来源是
-# shared/.../ui/theme/ChartColors.kt 的 LightChartColors，改那边这里要跟着改
-# （validate.py 会逐个核对，对不上直接 FAIL）。
-#
-# ⚠️ **代价：放弃了「亮度单调递增」这条判据。** 之前几版是拿这五个**色相**
-# 重新铺一条 L 0.36→0.62 的梯度，好处是 48px 下即使色相读不出来也能靠明暗分段。
-# 原色做不到 —— 最亮的三个（固收 0.699 / 另类 0.715 / 权益 0.715）几乎持平，
-# 亮度轴上没有梯度可用。**兜底的是色盲分离度**：按亮度排序后相邻段最小 ΔE 10.2
-# （门槛 8），靠色相本身就能分开。这是一个明确的取舍，不是疏漏。
-#
-# 段序按**亮度排序**（保障 → 流动 → 固收 → 另类 → 权益），不是大类展示顺序 ——
-# 把仅有的一点亮度差用满。图标不是图例，段序不承载语义。
-#
-# 判据（改色值要重跑 tools/appicon/validate.py）：
-# 1. **环 = ChartColors 的浅色大类色**，逐个核对
-# 2. **相邻段色盲分离度 ΔE ≥ 8**（OKLab ×100，protan/deutan 模拟）。实测 10.2
-# 2b. **柱与任一环段的 ΔE ≥ 10**（实测 15.4）。柱和环之间虽然有底色间隙隔开，
-#    但色值太接近时会读成"柱子是环的一部分"。
-#    ⚠️ 这条在**金色**那几版一直贴着门槛（10.5）—— 金柱和权益类橙天生接近。
-#    换成紫柱之后余量一下宽到 15.4，因为环上已经没有紫（保障类挪到了金黄）。
-# 3. **每段对底 ≥ 1.8:1**（实测 2.20~3.57）。这条反过来决定了 FIELD，见上面
-RING = [
-    (0.26, (151, 126, 0)),      # #977E00  保障类    L 0.570  对底 3.57:1
-    (0.22, (62, 134, 208)),     # #3E86D0  流动资金  L 0.609  对底 3.29:1
-    (0.20, (46, 184, 138)),     # #2EB88A  固定收益  L 0.699  对底 2.30:1
-    (0.17, (63, 179, 209)),     # #3FB3D1  另类实物  L 0.715  对底 2.35:1
-    (0.15, (229, 138, 38)),     # #E58A26  权益类    L 0.715  对底 2.20:1
-]
-GAP_DEG = 1.6                   # 段间留白，让"分段"读得出来
+# ── 配色 ──────────────────────────────────────────────────────────────
+# 猪身和蹄子同色相（H≈354），和品牌色是一家人。
+# ⚠️ **蹄子直接用 `Theme.kt` 的 primary 色值本身**（#C94385）—— 图标和界面里
+# 的 FAB、导航选中态是同一个色，这是"图标属于这个 App"最直接的证据。
+BODY   = (246, 160, 195)        # #F6A0C3
+SNOUT  = (214, 103, 153)        # #D66799  鼻子和内耳
+HOOF   = (201,  67, 133)        # #C94385  = Theme.kt 的 primary
+WINGC  = (255, 224, 235)        # #FFE0EB  翅膀
+EYE    = ( 63,  15,  39)        # #3F0F27
 
-# 三根上升柱走**品牌紫**（色相 315°）—— 环已经是五个色相了，柱子再多色会吵。
-# **中间那根就是 Theme.kt 的 `BrandPurple`（#5D3270）**，另两根是它的明度上下阶。
-#
-# 紫色在这里也比前几版金色轻松：环上没有紫（保障类已挪到金黄），
-# 柱环分离度实测 **15.4**，远超门槛 10 —— 金色那几版一直贴着 10.5 挣扎。
-#
-BARS = [(125, 87, 142), (93, 50, 112), (64, 26, 79)]    # #7D578E #5D3270 #401A4F
+# 铜钱：亮金 + 同色系的深金描边。
+# ⚠️ **描边不能省，也不能用白色。** 金对猪身的对比度只有 **1.11:1**（两者亮度
+# 几乎一样），没有描边钱币会直接糊进身体，三枚之间也没有边界。
+# 白色描边试过，读起来像贴纸（反馈"不要有白色边缘"），所以改用**深金** ——
+# 属于钱币自己的色系，像钱币的厚度边。
+# 方孔**填猪身色**，让身体从孔里透出来，多一条形状线索。
+GOLD   = (238, 188,  74)        # #EEBC4A
+GEDGE  = (176, 126,  16)        # #B07E10
 
-# ── 几何 ──────────────────────────────────────────────────────────────
-# 全部相对画布宽给。环刻意做小、柱子做主体，否则"穿出"做不到（见文件头）。
-RING_R      = 0.268             # 环外半径 / 画布宽
-RING_W      = 0.100             # 环笔画宽。笔画刻意粗：Pixel Launcher 会对自适应
-                                # 图标**再缩一次**（Launcher3 的图标归一化，不在
-                                # AdaptiveIconDrawable 规范里，本地合成看不出来）
-RING_CY     = 0.048             # 环心相对画布中心下移 —— 给上方的柱子让位
-BAR_W       = 0.084
-BAR_GAP     = 0.028
-BAR_HALO    = 0.021             # 柱子周围的底色描边。**没有它，柱子和环的深色段
-                                # 会黏成一块**，"穿出"读不出来（第一版就是这样）
-BAR_TOPS    = (0.028, -0.082, -0.335)   # 相对环心 / 相对画布中心（最高那根）
-# 柱底相对环内半径。**不能取太大**：三根柱加间隙的横向跨度（0.350）比环的内孔直径
-# （0.336）还宽，柱子必然压在环上 —— 那是"穿过"的一部分，但柱底伸太低会把环的
-# 整个下沿连成一片啃掉，看起来像环缺了一块（启动画面那种大尺寸下尤其明显，
-# 48px 的联络表上反而看不出来）。0.60 让环的下沿在中间保持连续。
-BAR_BASE    = 0.60
+# ── 几何（全部相对画布宽）────────────────────────────────────────────
+TILT      = -14                 # 身体上仰角，读作"在飞"
+BODY_RX   = 0.245
+BODY_RY   = 0.186
+LEG_W     = 0.036
+HOOF_R    = 0.020
+EAR_R     = 0.048
+EYE_R     = 0.027
+SNOUT_R   = 0.068
 
-# 图形的最大半径（相对画布宽）。自适应前景的缩放靠它算。
-#
-# ⚠️ **最远的点是最右那根柱的右上角，不是柱顶正上方** ——
-#   sqrt(((3*BAR_W + 2*BAR_GAP) / 2)² + |BAR_TOPS[2]|²) = sqrt(0.154² + 0.335²)
-# 第一版按柱顶算成 0.345，自适应前景实际超出安全圆 27%，
-# 装到圆形/水滴遮罩的启动器上会把穿出去那根柱削掉 —— 而这**本地合成看不出来**。
-# 改任何几何常量都要重跑 tools/appicon/validate.py，它是**逐像素读生成物**验的，
-# 不看这个常量。
-CONTENT_R   = 0.369
+# 铜钱：直径 24px @250 预览 → 半径比例 0.048。
+# ⚠️ 尺寸是实机比出来的：再大会压过脸和翅膀，再小（22px）48px 下方孔就糊没了、
+# 只剩一块金斑。**这一档是"还能看出是钱币"的下限附近。**
+COIN_R    = 0.048
+COIN_POS  = (0.12, 0.02)        # 相对身体中心（x 向后为正，y 向下为正）
+COIN_LAY  = [(-0.78, 0.39), (0.78, 0.39), (0, -0.39)]   # 三枚的相对位置（单位=半径）
+COIN_HOLE = 0.34                # 方孔半宽 / 钱币半径
+COIN_EDGE = 0.025               # 描边宽 / 钱币半径。⚠️ 小尺寸下必然退化成抗锯齿的灰，
+                                # 48px 的 legacy 图标上三枚会读成一簇金点 —— 已知且接受
+
+WING_L    = 0.235
+WING_W    = 0.062
+WING_ANG  = -74
 
 SS = 4                          # 超采样倍数 —— PIL 的 draw 没有抗锯齿
+WORK = 1024                     # 画图形用的工作画布（再缩放到各目标尺寸）
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _radius(want, height):
-    """把圆角夹到这个高度画得下的范围内。
+# ── 绘图基元 ──────────────────────────────────────────────────────────
+def _bez(p0, p1, p2, n=48):
+    return [((1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t * t * p2[0],
+             (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t * t * p2[1])
+            for t in (i / n for i in range(n + 1))]
 
-    PIL 的 `rounded_rectangle` 内部要画一条 `[y0 + r + 1, y1 - r - 1]` 的竖条，
-    所以要求**高度 ≥ 2r + 2**，只满足 2r 还会抛 "y1 must be greater than or equal to y0"。
-    最短那根柱在 mdpi（48px）下只差 1.1px 就崩 —— 而这只在最小的那档密度上发作，
-    大尺寸全都正常，很容易漏。
+
+def _frame(ox, oy, ang):
+    a = math.radians(ang)
+    ca, sa = math.cos(a), math.sin(a)
+    return lambda x, y: (ox + x * ca - y * sa, oy + x * sa + y * ca)
+
+
+def _plume(d, ox, oy, L, W, ang, col, bulge=1.0):
+    """一根羽毛：根部窄、中段饱满、尖端圆。"""
+    T = _frame(ox, oy, ang)
+    up = _bez(T(0, 0), T(L * 0.42, -W * bulge), T(L, -W * 0.16))
+    tip = [T(L, -W * 0.16), T(L + W * 0.22, 0), T(L, W * 0.16)]
+    dn = _bez(T(L, W * 0.16), T(L * 0.46, W * 0.72 * bulge), T(0, 0))
+    d.polygon(up + tip + dn, fill=col)
+
+
+def _wing(d, ox, oy, L, W, ang, c, fld, shade):
+    """天使翼：外层四根主羽 + 根部三根短覆羽（略深），两层才有"天使翅膀"的堆叠感。
+
+    ⚠️ 前扫角度刻意收窄（最外侧 +20° 而不是 +32°），配合翅根后移，
+    **否则前羽会盖住耳朵** —— 48px 下耳朵会整个消失。
     """
-    return max(1.0, min(want, height / 2 - 1.5))
+    for da, l in [(-34, 0.80), (-14, 0.98), (6, 1.0), (20, 0.80)]:
+        _plume(d, ox, oy, L * l + L * 0.05, W * 1.30, ang + da, fld)
+        _plume(d, ox, oy, L * l, W, ang + da, c)
+    for da, l in [(-22, 0.44), (-4, 0.50), (12, 0.40)]:
+        _plume(d, ox, oy, L * l + L * 0.05, W * 1.34, ang + da, fld)
+        _plume(d, ox, oy, L * l, W * 0.98, ang + da, shade)
 
 
-def _draw(canvas, content_scale, transparent):
-    """画一张 canvas×canvas 的图。
+def _ear(d, cx, cy, r, col, icol):
+    """圆形 + 一个朝上的小尖尖（圆和三角求并）。
 
-    content_scale 是图形相对画布的缩放 —— 满幅版 1.0，
-    Android 自适应前景要缩进安全区所以小于 1。
+    ⚠️ 纯三角的尖耳被否过（"耳朵不要太尖"）；而圆形没有尖会读成猫耳。
     """
-    n = canvas * SS
-    s = content_scale
-    img = Image.new("RGBA", (n, n), (0, 0, 0, 0) if transparent else FIELD + (255,))
+    a = math.radians(-90)
+    tip = 0.55
+    ax, ay = cx + r * (1 + tip) * math.cos(a), cy + r * (1 + tip) * math.sin(a)
+    b1 = (cx + r * math.cos(a - math.radians(62)), cy + r * math.sin(a - math.radians(62)))
+    b2 = (cx + r * math.cos(a + math.radians(62)), cy + r * math.sin(a + math.radians(62)))
+    d.polygon([(ax, ay), b1, b2], fill=col)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=col)
+    ri = r * 0.50
+    ix, iy = cx + r * 0.10 * math.cos(a), cy + r * 0.10 * math.sin(a)
+    d.ellipse([ix - ri, iy - ri, ix + ri, iy + ri], fill=icol)
+
+
+def _coins(d, T, r, edge_w):
+    """三枚铜钱堆叠（外圆内方）。层序后→前，后面的被前面压住一角。
+
+    ⚠️ **元宝在这个位置上不成立。** 试过把元宝画在侧身，它是横向的船形，
+    贴在圆身子上小尺寸会糊成一坨（48px 完全看不出是什么）。
+    铜钱的外圆和身体的圆呼应、方孔在小尺寸下还能撑住，是被小尺寸逼出来的选择。
+    """
+    w = max(1, round(edge_w))
+    for dx, dy in COIN_LAY:
+        cx, cy = T(dx * r, dy * r)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=GOLD, outline=GEDGE, width=w)
+        h = r * COIN_HOLE
+        d.polygon([(cx - h, cy - h), (cx + h, cy - h), (cx + h, cy + h), (cx - h, cy + h)],
+                  fill=BODY, outline=GEDGE, width=w)
+
+
+def _pig(n):
+    """把猪画在 n×n 的**透明**画布上（只有图形，没有底色）。"""
+    img = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    B, S, W = BODY + (255,), SNOUT + (255,), WINGC + (255,)
+    Hf, E = HOOF + (255,), EYE + (255,)
+
+    tilt = math.radians(TILT)
+    cx, cy = n * 0.50, n * 0.52
+    ca, sa = math.cos(tilt), math.sin(tilt)
+
+    def T(x, y):
+        return (cx + x * ca - y * sa, cy + x * sa + y * ca)
+
+    RX, RY = n * BODY_RX, n * BODY_RY
+    lw, hr = n * LEG_W, n * HOOF_R
+
+    def leg(ax, bx, ay0, by1):
+        p0, p1 = T(RX * ax, RY * ay0), T(RX * bx, RY * by1)
+        d.line([*p0, *p1], fill=B, width=int(lw))
+        for p in (p0, p1):
+            d.ellipse([p[0] - lw / 2, p[1] - lw / 2, p[0] + lw / 2, p[1] + lw / 2], fill=B)
+        d.ellipse([p1[0] - hr, p1[1] - hr, p1[0] + hr, p1[1] + hr], fill=Hf)
+
+    # 尾巴（一圈渐细的螺旋，用小圆点铺出来）
+    tx, ty = T(-RX * 1.02, -RY * 0.30)
+    for i in range(70):
+        t = i / 69
+        a = math.radians(-40 + t * 430)
+        rr = n * 0.050 * (1.0 - 0.45 * t)
+        x, y = tx + rr * math.cos(a), ty + rr * math.sin(a)
+        d.ellipse([x - n * 0.0145, y - n * 0.0145, x + n * 0.0145, y + n * 0.0145], fill=B)
+
+    # 只有两条腿（前后各一）。先画一次，身体盖住上半截；身体之后再画一次露出下半截。
+    for _ in range(1):
+        leg(-0.30, -0.34, 0.90, 1.10)
+        leg(0.28, 0.25, 0.88, 1.08)
+
+    # 身体（旋转过的椭圆）
+    lay = Image.new("RGBA", (int(RX * 2) + 6, int(RY * 2) + 6), (0, 0, 0, 0))
+    ImageDraw.Draw(lay).ellipse([3, 3, RX * 2 + 3, RY * 2 + 3], fill=B)
+    lay = lay.rotate(-TILT, expand=True, resample=Image.BICUBIC)
+    img.paste(lay, (int(cx - lay.size[0] / 2), int(cy - lay.size[1] / 2)), lay)
     d = ImageDraw.Draw(img)
 
-    cx, cy = n / 2, n / 2 + n * RING_CY * s
-    R, w = n * RING_R * s, n * RING_W * s
+    leg(-0.30, -0.34, 0.90, 1.10)
+    leg(0.28, 0.25, 0.88, 1.08)
 
-    # ── 配置环（底盘）──
-    box = [cx - R, cy - R, cx + R, cy + R]
-    angle = -90                                  # 从 12 点开始
-    for frac, color in RING:
-        sweep = frac * 360
-        d.pieslice(box, angle + GAP_DEG, angle + sweep - GAP_DEG, fill=color)
-        angle += sweep
+    # 鼻子 + 两个鼻孔
+    sx, sy = T(RX * 0.92, -RY * 0.08)
+    sr = n * SNOUT_R
+    d.ellipse([sx - sr * 0.75, sy - sr * 0.80, sx + sr * 0.95, sy + sr * 0.80], fill=S)
+    for k in (-1, 1):
+        nr = n * 0.013
+        d.ellipse([sx + n * 0.010 - nr, sy + k * n * 0.023 - nr,
+                   sx + n * 0.010 + nr, sy + k * n * 0.023 + nr], fill=(168, 76, 122, 255))
 
-    # 掏空中心。透明前景要真的掏成透明（自适应背景层在下面），满幅版贴回底色。
-    hole = R - w
-    ring_hole = [cx - hole, cy - hole, cx + hole, cy + hole]
-    if transparent:
-        mask = Image.new("L", (n, n), 0)
-        ImageDraw.Draw(mask).ellipse(ring_hole, fill=255)
-        img.paste((0, 0, 0, 0), (0, 0), mask)
-    else:
-        d.ellipse(ring_hole, fill=FIELD)
+    # 耳朵
+    ex, ey = T(RX * 0.46, -RY * 0.86)
+    _ear(d, ex, ey, n * EAR_R, B, S)
 
-    # ── 上升柱 ──
-    # 每根柱周围先留一圈间隙再画柱子本身，否则柱子会和环的深色段黏成一块。
-    #
-    # ⚠️ **透明前景上这圈间隙要真的掏成透明**，不能填成底色。
-    # Android 13+ 的主题图标（monochrome）**只取这张图的 alpha 通道**当剪影 ——
-    # 填成底色的话间隙会被算进剪影，柱子和环重新粘成一块，"破环"在主题图标下就没了。
-    # 掏成透明在视觉上没有区别：自适应背景层就是同一个 FIELD 实色（见
-    # androidApp/.../drawable/ic_launcher_background.xml，改一边要改另一边）。
-    bw, gap = n * BAR_W * s, n * BAR_GAP * s
-    x0 = cx - (3 * bw + 2 * gap) / 2
-    base_y = cy + hole * BAR_BASE
-    tops = (cy + n * BAR_TOPS[0] * s,
-            cy + n * BAR_TOPS[1] * s,
-            n / 2 + n * BAR_TOPS[2] * s)
-    halo = n * BAR_HALO * s
-    boxes = [[x0 + i * (bw + gap) - halo, top - halo,
-              x0 + i * (bw + gap) + bw + halo, base_y + halo]
-             for i, top in enumerate(tops)]
-    if transparent:
-        mask = Image.new("L", (n, n), 0)
-        md = ImageDraw.Draw(mask)
-        for b in boxes:
-            md.rounded_rectangle(b, radius=_radius(bw * 0.55, b[3] - b[1]), fill=255)
-        img.paste((0, 0, 0, 0), (0, 0), mask)
-    else:
-        d = ImageDraw.Draw(img)
-        for b in boxes:
-            d.rounded_rectangle(b, radius=_radius(bw * 0.55, b[3] - b[1]), fill=FIELD)
+    # 眼睛 + 高光。⚠️ 高光在 48px 下会消失，这是正常的渐进细节，不是 bug。
+    ox, oy = T(RX * 0.52, -RY * 0.30)
+    er = n * EYE_R
+    d.ellipse([ox - er, oy - er, ox + er, oy + er], fill=E)
+    hr2 = er * 0.36
+    d.ellipse([ox - er * 0.34 - hr2, oy - er * 0.36 - hr2,
+               ox - er * 0.34 + hr2, oy - er * 0.36 + hr2], fill=(255, 255, 255, 255))
 
-    d = ImageDraw.Draw(img)
-    for i, (top, color) in enumerate(zip(tops, BARS)):
-        x = x0 + i * (bw + gap)
-        d.rounded_rectangle([x, top, x + bw, base_y],
-                            radius=_radius(bw * 0.40, base_y - top), fill=color)
+    # 翅膀。⚠️ 必须在钱币之前画：钱币在侧身、翅膀在背上，两者不重叠，
+    # 但翅根靠后，画在钱币之后会压住身体轮廓。
+    wx, wy = T(-RX * 0.30, -RY * 0.62)
+    _wing(d, wx, wy, n * WING_L, n * WING_W, WING_ANG, W, FIELD + (255,),
+          (255, 208, 224, 255))
 
-    return img.resize((canvas, canvas), Image.LANCZOS)
+    # 三枚铜钱（侧身）
+    gx, gy = T(-RX * COIN_POS[0], RY * COIN_POS[1])
+    _coins(d, _frame(gx, gy, TILT), n * COIN_R, n * COIN_R * COIN_EDGE)
+
+    return img
+
+
+def _fit(content, canvas, radius_frac):
+    """把图形缩放居中，让**真实的**包围半径正好等于 radius_frac × 画布宽。
+
+    ⚠️ **半径是逐像素扫出来的，不是算出来的。** 上一版用手算的常量，错了 27%
+    （最远的点不在想当然的地方），自适应前景因此超出安全圆而本地看不出来。
+    包围盒的角同样不能用 —— 那个角上往往根本没有像素，会低估缩放、白白缩小图形。
+    """
+    a = content.getchannel("A")
+    bbox = a.getbbox()
+    if bbox is None:
+        raise SystemExit("图形是空的")
+    cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    px = a.load()
+    far = 0.0
+    for y in range(bbox[1], bbox[3]):
+        dy2 = (y - cy) ** 2
+        for x in range(bbox[0], bbox[2]):
+            if px[x, y] > 8:                      # 8：忽略抗锯齿边缘的近透明像素
+                r2 = (x - cx) ** 2 + dy2
+                if r2 > far:
+                    far = r2
+    far = math.sqrt(far)
+
+    target = canvas * SS * radius_frac
+    scale = target / far
+    w, h = content.size
+    small = content.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+    # 缩放后内容中心的位置
+    ncx, ncy = cx * scale, cy * scale
+    out = Image.new("RGBA", (canvas * SS, canvas * SS), (0, 0, 0, 0))
+    out.paste(small, (round(canvas * SS / 2 - ncx), round(canvas * SS / 2 - ncy)), small)
+    return out
 
 
 def full_bleed(size):
-    """满幅版：iOS 用，以及 Android 的 legacy 图标。"""
-    return _draw(size, content_scale=1.0, transparent=False).convert("RGB")
+    """满幅版：iOS 用，以及 Android 的 legacy 图标。无 alpha。"""
+    content = _fit(_pig(WORK * SS), size, 0.40)
+    out = Image.new("RGBA", content.size, FIELD + (255,))
+    out.alpha_composite(content)
+    return out.resize((size, size), Image.LANCZOS).convert("RGB")
 
 
 def adaptive_foreground(size):
-    """Android 自适应前景：透明底 + 缩进安全区。
-
-    图形缩到直径 66/108 的保证可见圆内。除以 CONTENT_R 是因为 content_scale
-    缩的是整个图形，而图形的最大半径本来就只占 CONTENT_R。
-    """
-    return _draw(size, content_scale=(66 / 108) / 2 / CONTENT_R, transparent=True)
+    """Android 自适应前景：透明底 + 缩进直径 66/108 的保证可见圆。"""
+    # ⚠️ 乘 0.985 留一点余量：目标半径取成正好等于安全半径时，缩放和重采样的
+    # 舍入会把最远的像素推出去约 0.3%（validate.py 实测 100.3%，判 FAIL）。
+    content = _fit(_pig(WORK * SS), size, (66 / 108) / 2 * 0.985)
+    return content.resize((size, size), Image.LANCZOS)
 
 
 def main():
@@ -231,7 +310,7 @@ def main():
     ios_dir = os.path.join(ROOT, "iosApp/iosApp/Assets.xcassets/AppIcon.appiconset")
     os.makedirs(ios_dir, exist_ok=True)
     p = os.path.join(ios_dir, "icon-1024.png")
-    full_bleed(1024).save(p)                      # convert("RGB") 已去掉 alpha
+    full_bleed(1024).save(p)
     written.append(p)
     with open(os.path.join(ios_dir, "Contents.json"), "w") as f:
         json.dump({
@@ -242,29 +321,25 @@ def main():
         f.write("\n")
     written.append(os.path.join(ios_dir, "Contents.json"))
 
-    # Assets.xcassets 自己也要一个 Contents.json，否则 Xcode 不认这个目录
     xcassets = os.path.join(ROOT, "iosApp/iosApp/Assets.xcassets")
     with open(os.path.join(xcassets, "Contents.json"), "w") as f:
         json.dump({"info": {"author": "xcode", "version": 1}}, f, indent=2)
         f.write("\n")
 
     # ── Android：自适应前景 + legacy 满幅 ──
-    # 自适应图层固定 108dp；legacy 图标 48dp。两套都按五档密度出。
     res = os.path.join(ROOT, "androidApp/src/main/res")
     for bucket, factor in [("mdpi", 1), ("hdpi", 1.5), ("xhdpi", 2),
                            ("xxhdpi", 3), ("xxxhdpi", 4)]:
-        d = os.path.join(res, f"mipmap-{bucket}")
-        os.makedirs(d, exist_ok=True)
+        dd = os.path.join(res, f"mipmap-{bucket}")
+        os.makedirs(dd, exist_ok=True)
 
-        p = os.path.join(d, "ic_launcher_foreground.png")
+        p = os.path.join(dd, "ic_launcher_foreground.png")
         adaptive_foreground(round(108 * factor)).save(p)
         written.append(p)
 
-        # legacy：Android 8.0 起自适应会接管，但 android:icon 仍要能解析出位图，
-        # 而且部分启动器/系统界面还会去取这一份。
         legacy = full_bleed(round(48 * factor))
         for name in ("ic_launcher.png", "ic_launcher_round.png"):
-            p = os.path.join(d, name)
+            p = os.path.join(dd, name)
             legacy.save(p)
             written.append(p)
 

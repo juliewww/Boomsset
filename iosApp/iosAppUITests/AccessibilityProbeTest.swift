@@ -26,9 +26,9 @@ final class AccessibilityProbeTest: XCTestCase {
         print("otherElements: \(app.otherElements.count)")
 
         // 找我们自己的文案
-        let title = app.staticTexts["旺资"]
+        let title = app.staticTexts["猪满仓"]
         let emptyHint = app.staticTexts["还没有资产"]
-        print("找到「旺资」: \(title.exists)")
+        print("找到「猪满仓」: \(title.exists)")
         print("找到「还没有资产」: \(emptyHint.exists)")
     }
 }

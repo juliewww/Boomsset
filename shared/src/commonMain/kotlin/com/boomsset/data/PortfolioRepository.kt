@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 interface PortfolioRepository {
     /** 全量数据流。任何写入都会让它重新发射。 */
@@ -49,14 +50,25 @@ interface PortfolioRepository {
      *
      * 调用方要把成本一并传进来（从上一条结转），别留空 ——
      * 留空等于把成本抹掉，收益率会凭空消失。
+     *
+     * [asOf] 是这个市值**属于哪个时点**，null 表示"现在"。给了它就是**补录历史**：
+     * `asOf` 落到指定时点，而 `recordedAt` 始终是真实的录入时间 —— 两者本来就分开
+     * （见 docs/domain.md），净值曲线按 `asOf` 排，更新记录按 `recordedAt` 排，
+     * 所以补录一条上个月的数据不会把它显示成"今天刚记的"。
      */
-    suspend fun appendManualSnapshot(assetId: Long, value: Money, costBasis: Money?)
+    suspend fun appendManualSnapshot(
+        assetId: Long,
+        value: Money,
+        costBasis: Money?,
+        asOf: Instant? = null,
+    )
 
     suspend fun appendQuotedSnapshot(
         assetId: Long,
         quantity: Quantity,
         quoteSymbol: String,
         costBasis: Money?,
+        asOf: Instant? = null,
     )
 
     suspend fun archiveAsset(assetId: Long)
@@ -241,14 +253,15 @@ class SqlDelightPortfolioRepository(
         assetId: Long,
         value: Money,
         costBasis: Money?,
+        asOf: Instant?,
     ): Unit = withContext(dispatcher) {
         val now = clock.now().toEpochMilliseconds()
         db.snapshotQueries.insertManual(
             asset_id = assetId,
-            as_of = now,
+            as_of = asOf?.toEpochMilliseconds() ?: now,
             value_minor = value.minorUnits,
             cost_basis_minor = costBasis?.minorUnits,
-            recorded_at = now,
+            recorded_at = now,   // 补录时 recordedAt 仍是真实录入时间，不是 asOf
         )
     }
 
@@ -257,11 +270,12 @@ class SqlDelightPortfolioRepository(
         quantity: Quantity,
         quoteSymbol: String,
         costBasis: Money?,
+        asOf: Instant?,
     ): Unit = withContext(dispatcher) {
         val now = clock.now().toEpochMilliseconds()
         db.snapshotQueries.insertQuoted(
             asset_id = assetId,
-            as_of = now,
+            as_of = asOf?.toEpochMilliseconds() ?: now,
             quantity_scaled = quantity.scaled,
             quote_symbol = quoteSymbol,
             cost_basis_minor = costBasis?.minorUnits,

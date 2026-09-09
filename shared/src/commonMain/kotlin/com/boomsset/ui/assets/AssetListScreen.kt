@@ -58,13 +58,16 @@ import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.priceDescription
 import com.boomsset.ui.formatWithCurrency
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalDate
 import kotlin.math.roundToInt
 
 @Composable
 fun AssetListScreen(
     state: AssetListUiState,
-    onUpdateManual: (assetId: Long, value: Money, costBasis: Money?) -> Unit,
-    onUpdateQuoted: (assetId: Long, quantity: Quantity, symbol: String, costBasis: Money?) -> Unit,
+    onUpdateManual: (assetId: Long, value: Money, costBasis: Money?, asOf: LocalDate?) -> Unit,
+    onUpdateQuoted: (
+        assetId: Long, quantity: Quantity, symbol: String, costBasis: Money?, asOf: LocalDate?,
+    ) -> Unit,
     onArchive: (assetId: Long) -> Unit,
     onUnarchive: (assetId: Long) -> Unit,
     onEditMeta: (AssetValuation, AssetMetaEdit) -> Unit,
@@ -174,12 +177,12 @@ fun AssetListScreen(
         UpdateValueDialog(
             valuation = valuation,
             onDismiss = { updating = null },
-            onConfirmManual = { value, cost ->
-                onUpdateManual(valuation.asset.id, value, cost)
+            onConfirmManual = { value, cost, asOf ->
+                onUpdateManual(valuation.asset.id, value, cost, asOf)
                 updating = null
             },
-            onConfirmQuoted = { quantity, symbol, cost ->
-                onUpdateQuoted(valuation.asset.id, quantity, symbol, cost)
+            onConfirmQuoted = { quantity, symbol, cost, asOf ->
+                onUpdateQuoted(valuation.asset.id, quantity, symbol, cost, asOf)
                 updating = null
             },
             onSetManualPrice = onSetManualPrice,
