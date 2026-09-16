@@ -8,7 +8,7 @@ import kotlin.test.Test
 class PercentInputTest {
 
     @Test
-    fun `百分比字符串转基点`() {
+    fun `percent string to basis points`() {
         parsePercentToBp("30") shouldBe 3000
         parsePercentToBp("12.5") shouldBe 1250
         parsePercentToBp("0") shouldBe 0
@@ -17,22 +17,22 @@ class PercentInputTest {
     }
 
     @Test
-    fun `超出零到一百的范围判非法`() {
-        // 单个大类不可能超过 100%，也不可能是负数
+    fun `out of the zero-to-one-hundred range is judged invalid`() {
+        // A single asset class can never exceed 100%, nor be negative
         parsePercentToBp("101").shouldBeNull()
         parsePercentToBp("-5").shouldBeNull()
     }
 
     @Test
-    fun `非法输入返回null`() {
+    fun `invalid input returns null`() {
         parsePercentToBp("").shouldBeNull()
         parsePercentToBp("abc").shouldBeNull()
-        parsePercentToBp("30%").shouldBeNull()   // 带 % 号要用户去掉，不猜
-        parsePercentToBp("12.345").shouldBeNull()  // 超过两位小数
+        parsePercentToBp("30%").shouldBeNull()   // the % sign must be removed by the user, not guessed
+        parsePercentToBp("12.345").shouldBeNull()  // more than two decimal places
     }
 
     @Test
-    fun `基点预填格式不带百分号和多余的零`() {
+    fun `basis-point prefill format carries no percent sign or extra zeros`() {
         3000.bpToInputPercent() shouldBe "30"
         1250.bpToInputPercent() shouldBe "12.5"
         0.bpToInputPercent() shouldBe "0"
@@ -41,29 +41,30 @@ class PercentInputTest {
     }
 
     /**
-     * 往返不变量。和金额/份额那两处同一类 ——
-     * **预填的字符串必须能被自己的解析器读回原值**，否则「保存」会莫名禁用。
+     * Round-trip invariant. Same category as the amount/quantity ones —
+     * **the prefilled string must be readable back to the original value by its own
+     * parser**, otherwise "Save" ends up mysteriously disabled.
      */
     @Test
-    fun `预填的百分比能被解析回原值`() {
+    fun `prefilled percent can be parsed back to the original value`() {
         val cases = listOf(0, 1, 50, 500, 1250, 3000, 3500, 6500, 10_000)
         cases.forEach { bp ->
             val text = bp.bpToInputPercent()
             val parsed = parsePercentToBp(text)
             if (parsed != bp) {
-                throw AssertionError("基点 $bp 预填成 \"$text\"，解析回 $parsed，往返失败")
+                throw AssertionError("basis points $bp prefilled as \"$text\", parsed back as $parsed, round trip failed")
             }
         }
     }
 
     @Test
-    fun `内置预设的每个值都能往返`() {
-        // 直接拿真实预设值验，避免"测试用的数刚好能过"
+    fun `every value in the built-in presets round-trips`() {
+        // Verify directly against the real preset values, to avoid "the test numbers just happen to pass"
         com.boomsset.data.BUILT_IN_PRESETS.forEach { preset ->
             preset.targetsBp.forEach { (assetClass, bp) ->
                 val text = bp.bpToInputPercent()
                 if (parsePercentToBp(text) != bp) {
-                    throw AssertionError("预设「${preset.name}」的 $assetClass = $bp 往返失败（\"$text\"）")
+                    throw AssertionError("preset \"${preset.name}\" $assetClass = $bp round trip failed (\"$text\")")
                 }
             }
         }

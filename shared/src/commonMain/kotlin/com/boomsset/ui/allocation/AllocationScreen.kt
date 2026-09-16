@@ -69,14 +69,17 @@ fun AllocationScreen(
 
         Header(view)
 
-        // ⚠️ 这一块**必须在任何空状态分支之外**。
+        // ⚠️ This block **must sit outside any empty-state branch**.
         //
-        // 它曾经写在 `else` 分支里，于是零资产时整块被跳过 —— 而它是切换/编辑/新建
-        // 目标配置的**唯一**入口，结果新用户根本够不到目标配置。而目标配置恰恰是
-        // 录第一笔资产**之前**就想设的东西（"我想先看看该怎么配"）。
+        // It used to live inside the `else` branch, so the whole block was skipped at zero
+        // assets — yet it's the **only** entry point for switching/editing/creating target
+        // allocations, which meant new users could never reach target allocation configuration
+        // at all. And configuring a target allocation is exactly the kind of thing a user wants
+        // to do *before* recording their first asset ("let me see how I want to allocate first").
         //
-        // 这是 AGENTS.md 那条通则的第三次犯：空状态不能走一条不含入口的分支。
-        // 注意它不限于提前 `return` —— 这次是 `when` 的分支，形式不同、后果一样。
+        // This is the third time the general rule from AGENTS.md has been violated: an empty
+        // state must not take a branch that omits the entry point. Note it isn't limited to an
+        // early `return` — this time it was a `when` branch, different shape, same consequence.
         if (state.allocations.isNotEmpty()) {
             AllocationPicker(
                 allocations = state.allocations,
@@ -96,12 +99,12 @@ fun AllocationScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
 
-            // 还没有资产时显示**目标比例本身**，而不是一行"去添加资产"。
-            // 这一页在没有数据时也该是有用的：它回答"我打算怎么配"，
-            // 这个问题不依赖任何持仓。
+            // With no assets yet, show **the target ratios themselves** rather than a line
+            // saying "go add an asset". This page should still be useful with no data: it
+            // answers "how do I intend to allocate", a question that doesn't depend on holdings.
             state.isEmpty -> TargetPreview(active)
 
-            // 净资产 ≤ 0 时比例在数学上无意义，直说而不是显示乱数
+            // When net worth <= 0 the ratios are mathematically meaningless; say so plainly rather than showing garbage numbers
             view.netWorth.minorUnits <= 0L -> NegativeNetWorthNotice()
 
             else -> {
@@ -143,13 +146,16 @@ fun AllocationScreen(
 }
 
 /**
- * 目标配置的切换与管理。
+ * Switching and managing target allocations.
  *
- * 多套并存可对比是 domain.md 定的产品决策 —— 这里让它真正可用。
+ * Having multiple sets coexist for comparison is a product decision defined in domain.md —
+ * this makes it actually usable.
  *
- * **编辑/恢复默认/删除不再常驻显示** —— 之前是两个 [TextButton] 常驻在 chip 行下面，
- * 占用了一整行空间（实机反馈）。现在长按当前目标才展开，chip 行本身已经用
- * `selected` 状态标出"当前对比哪一套"，不需要额外的常驻按钮或说明文字。
+ * **Edit/restore-default/delete are no longer always on screen** — they used to be two
+ * [TextButton]s permanently shown below the chip row, taking up a whole line's worth of space
+ * (real-device feedback). Now they only expand on a long press of the current target; the chip
+ * row itself already marks "which one is being compared right now" via its `selected` state, so
+ * no extra persistent buttons or explanatory text are needed.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -170,10 +176,11 @@ private fun AllocationPicker(
         ) {
             allocations.forEach { allocation ->
                 if (allocation.isActive) {
-                    // 当前目标换成手写的可长按 chip，而不是 FilterChip ——
-                    // FilterChip 自带的 clickable 和外层长按手势叠在一起容易互相吞掉手势，
-                    // 干脆只给这一个 chip 换成 combinedClickable，短按不做事（本来就已经选中）、
-                    // 长按才展开编辑/恢复默认/删除。
+                    // The current target is a hand-rolled long-pressable chip instead of a
+                    // FilterChip — FilterChip's built-in clickable tends to fight with an outer
+                    // long-press gesture layered on top, swallowing each other's events. So just
+                    // this one chip is switched to combinedClickable: a short press does nothing
+                    // (it's already selected), a long press expands edit/restore-default/delete.
                     Surface(
                         color = MaterialTheme.colorScheme.secondaryContainer,
                         shape = RoundedCornerShape(50),
@@ -219,7 +226,8 @@ private fun AllocationPicker(
                 }
                 TextButton(onClick = { actionsForId = null }) { Text("收起") }
             }
-            // 内置预设不是权威处方 —— domain.md 要求 UI 不能呈现为针对用户的推荐
+            // Built-in presets aren't an authoritative prescription — domain.md requires the UI
+            // to avoid presenting them as personalized recommendations
             if (actionsTarget.isBuiltIn) {
                 Text(
                     "内置预设是行业常见的起点，不是针对你情况的建议。按自己的目标改。",
@@ -231,11 +239,12 @@ private fun AllocationPicker(
 }
 
 /**
- * 标题区。**`view` 可空** —— 加载中和零资产时也要显示标题，
- * 否则这一页在最需要解释自己的时候反而什么都不说。
+ * The header area. **`view` is nullable** — the title must still show while loading and at zero
+ * assets, otherwise this page says nothing exactly when it most needs to explain itself.
  *
- * 当前对比的是哪一套目标，**不在这里重复显示** —— [AllocationPicker] 的
- * chip 行已经用 `selected` 状态标出来了，两处都写一遍是纯粹的重复信息。
+ * Which target is currently being compared **is not repeated here** — [AllocationPicker]'s chip
+ * row already marks it via the `selected` state, and writing it in both places would be pure
+ * redundant information.
  */
 @Composable
 private fun Header(view: AllocationView?) {
@@ -251,10 +260,11 @@ private fun Header(view: AllocationView?) {
 }
 
 /**
- * 零资产时显示目标比例。
+ * Show the target ratios when there are zero assets.
  *
- * 刻意用和 [ClassRow] 一样的卡片 + 进度条版式：等真的有了资产，同一个位置会换成
- * 当前比例和偏离，位置和形状不变，用户不需要重新找东西在哪。
+ * Deliberately uses the same card + progress-bar layout as [ClassRow]: once assets actually
+ * exist, the same spot switches to showing current ratio and deviation, with position and shape
+ * unchanged, so the user never has to relearn where things are.
  */
 @Composable
 private fun TargetPreview(active: TargetAllocation?) {
@@ -287,10 +297,12 @@ private fun TargetPreview(active: TargetAllocation?) {
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                // 这里填充的**就是目标**（还没有资产，没有"当前"可画），所以不画竖线 ——
-                // 一根和填充末端重合的竖线只是重复。用同一个 [AllocationBar] 是为了
-                // 让形状和高度跟有资产时完全一致：等录了第一笔，同一个位置换成
-                // "填充=当前、竖线=目标"，用户不用重新找东西在哪。
+                // What's filled here **is the target itself** (no assets yet, so there's no
+                // "current" to draw), so no marker line is drawn — a marker line coinciding with
+                // the end of the fill would just be redundant. The same [AllocationBar] is reused
+                // so shape and height stay identical to when assets exist: once the first one is
+                // recorded, the same spot switches to "fill = current, marker = target" and the
+                // user doesn't need to relearn where things are.
                 AllocationBar(
                     fillBp = targetBp,
                     markerBp = null,
@@ -328,8 +340,9 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
                 )
             }
 
-            // 填充 = 当前占比（画不出负数，负敞口按 0 长度，真实值在下面文字里），
-            // 竖线 = 目标位置。两个点位放在同一根条上才比得出来。
+            // Fill = current share (negative can't be drawn, a negative exposure renders as
+            // length 0, the actual value is in the text below), marker line = target position.
+            // Both points have to be on the same bar to be comparable.
             AllocationBar(
                 fillBp = shareBp,
                 markerBp = targetBp,
@@ -349,8 +362,9 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
             )
 
             if (targetBp != null && deviationBp != null) {
-                // 颜色**不是唯一线索**：超配/低配/已达标 这几个词一直在，
-                // 色盲用户和黑白打印都读得出方向。颜色只是让它可扫视。
+                // Color is **not the only cue**: the words over-allocated/under-allocated/on-target
+                // are always present, so colorblind users and black-and-white printing can still
+                // read the direction. Color is only there to make it scannable.
                 Text(
                     "目标 ${targetBp.bpToPercent(decimals = 0)}，" +
                         if (deviationBp == 0) "已达标"
@@ -371,17 +385,21 @@ private fun ClassRow(view: AllocationView, assetClass: AssetClass) {
 }
 
 /**
- * 「· 距目标 ±¥X」—— 把偏离度换算成钱。
+ * "· ¥X from target" — converts the deviation into an amount of money.
  *
- * 存在的理由：知道"超配 31%"并不等于知道该动多少钱，用户得自己拿净资产去乘
- * （实机反馈）。口径和取整的坑都在 [AllocationView.rebalanceAmount] 的文档里。
+ * Reasoning: knowing "over-allocated by 31%" doesn't tell you how much money to move — the user
+ * would have to multiply by net worth themselves (real-device feedback). The rounding and
+ * conventions pitfalls are documented in [AllocationView.rebalanceAmount].
  *
- * **接在偏离度那一行后面，不另起一行。** 五张卡片各多一行，这一页会明显变长，
- * 而"废话太多"已经被反馈过两次。共用同一个颜色也是有意的：超配是红的，
- * 跟着的调整额自然读作"该减"。
+ * **Appended to the end of the deviation line, not a new line.** Adding a line to each of the
+ * five cards would noticeably lengthen this page, and "too much verbosity" has already been
+ * flagged as feedback twice. Sharing the same color is also intentional: over-allocated is red,
+ * so the rebalance amount that follows naturally reads as "should reduce".
  *
- * 金额**不显示分**：这是个规划用的量级，分位是噪音。因此当调整额不足 ¥1 时整句省掉 ——
- * 否则会出现"低配 0.01% · 距目标 +¥0"这种自相矛盾的显示（净资产很小时会发生）。
+ * The amount **omits cents**: this is a planning-scale figure, and the cents digit is noise.
+ * So the whole clause is dropped when the rebalance amount is under ¥1 — otherwise you'd get a
+ * self-contradictory display like "under-allocated 0.01% · ¥0 from target" (which happens when
+ * net worth is very small).
  */
 private fun rebalanceClause(view: AllocationView, assetClass: AssetClass): String {
     val amount = view.rebalanceAmount(assetClass) ?: return ""
@@ -390,10 +408,11 @@ private fun rebalanceClause(view: AllocationView, assetClass: AssetClass): Strin
 }
 
 /**
- * 大类标签 = 小色块 + 名称。
+ * The class label = a small color swatch + name.
  *
- * **色块旁边一定有名字。** 身份不能只靠颜色 —— 浅色模式下有几个大类色低于 3:1 的
- * 色块对比度，靠色块本身认不出来；而且色盲用户和黑白打印都需要文字。
+ * **There is always a name next to the color swatch.** Identity must not rely on color alone —
+ * in light mode several class colors have a swatch contrast below 3:1, so the swatch alone
+ * isn't recognizable; also colorblind users and black-and-white printing both need the text.
  */
 @Composable
 private fun ClassLabel(assetClass: AssetClass) {
@@ -439,8 +458,9 @@ private fun NegativeExposureNotice() {
 
 @Composable
 private fun DenominatorNote() {
-    // 原来是一整句解释常驻显示，实机反馈是"有很多废话" —— 换成一行极短的提示
-    // + (i) 图标，完整解释收进点开才看的 tooltip。
+    // Used to be a full explanatory sentence shown permanently; real-device feedback was "too
+    // much filler text" — switched to one very short line + an (i) icon, with the full
+    // explanation moved into a tooltip that only shows on tap.
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             "净敞口已抵扣负债，比例加总 100%",

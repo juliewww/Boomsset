@@ -3,8 +3,9 @@ package com.boomsset.ui
 import com.boomsset.domain.AssetClass
 
 /**
- * 大类的展示文案。**唯一事实来源** —— 之前 `AddAssetDialog` 和 `AllocationScreen`
- * 各写了一份 `label()`，改一处忘另一处只是时间问题。
+ * Display copy for asset classes. **The single source of truth** — `AddAssetDialog` and
+ * `AllocationScreen` used to each write their own `label()`, and it was only a matter of
+ * time before one got updated and the other was forgotten.
  */
 fun AssetClass.label(): String = when (this) {
     AssetClass.LIQUID -> "流动资金"
@@ -15,11 +16,13 @@ fun AssetClass.label(): String = when (this) {
 }
 
 /**
- * 一句话说明这类里放什么。
+ * A one-line explanation of what belongs in this class.
  *
- * 存在的理由：用户**不知道自己要加的东西属于哪一类**，而分类术语（"另类实物"）
- * 对非专业用户没有信息量。添加资产时按品种选（支付宝、房贷…），这句话只是辅助解释，
- * 不要求用户理解它也能完成操作。
+ * Reason for existing: users **don't know which class the thing they're adding belongs
+ * to**, and classification jargon ("alternative/physical assets") carries no information
+ * for non-expert users. When adding an asset, selection happens by subtype (Alipay,
+ * mortgage, ...) — this sentence is only supplementary explanation and doesn't require the
+ * user to understand it to complete the action.
  */
 fun AssetClass.hint(): String = when (this) {
     AssetClass.LIQUID -> "随时能取用的钱"

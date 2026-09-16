@@ -1,5 +1,5 @@
-// 根工程不应用任何插件，只声明给子模块用。
-// 每个 plugin 都要 apply false —— 否则 AGP 9 会抱怨在非 Android 工程上应用了 Android 插件。
+// The root project applies no plugins itself — it only declares them for subprojects to use.
+// Every plugin needs apply false — otherwise AGP 9 complains about applying an Android plugin to a non-Android project.
 plugins {
     alias(libs.plugins.kotlinMultiplatform) apply false
     alias(libs.plugins.kotlinSerialization) apply false

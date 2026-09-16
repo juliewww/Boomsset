@@ -1,44 +1,48 @@
 package com.boomsset.domain
 
 /**
- * 单项资产在某时点的估值结果，供资产列表和详情页使用。
+ * The valuation result for a single asset at a point in time, used by the asset list and
+ * detail screens.
  *
- * 三个可空字段的语义要分清 —— 它们**不是**"值为 0"：
- * - [snapshot] 为 null：该时点这项资产还没有任何快照
- * - [localValue] 为 null：QUOTED 资产的行情缺失，无法算出市值
- * - [baseValue] 为 null：上面那种，或者缺少折算到基准币种的汇率
+ * The three nullable fields have distinct meanings — they are **not** "value is 0":
+ * - [snapshot] is null: this asset had no snapshot yet at this point in time
+ * - [localValue] is null: the QUOTED asset is missing a quote, so its market value can't be computed
+ * - [baseValue] is null: either the above, or the exchange rate to the base currency is missing
  */
 data class AssetValuation(
     val asset: Asset,
     val snapshot: Snapshot?,
-    /** 资产自身币种下的市值 */
+    /** Market value in the asset's own currency */
     val localValue: Money?,
-    /** 折算到基准币种后的市值 */
+    /** Market value converted to the base currency */
     val baseValue: Money?,
-    /** 自身币种下的浮动盈亏。没填成本或无法估值时为 null。 */
+    /** Unrealized P&L in the asset's own currency. Null if no cost basis was entered or valuation failed. */
     val pnl: ProfitAndLoss?,
-    /** 该资产现有的快照条数。用于 [AssetEditPolicy] 判断币种/负债标记能否改。 */
+    /** Number of existing snapshots for this asset. Used by [AssetEditPolicy] to decide whether currency/liability flag can be changed. */
     val snapshotCount: Int = 0,
-    /** 估值用到的那条行情（仅 QUOTED）。用于展示价格日期和判断是否过期。 */
+    /** The quote used for valuation (QUOTED only). Used to show the price date and check staleness. */
     val quote: Quote? = null,
-    /** 行情距今多少天。null = 不是 QUOTED，或者根本没有行情。 */
+    /** Days since the quote was fetched. Null = not QUOTED, or there is no quote at all. */
     val priceAgeDays: Int? = null,
 ) {
-    /** 无法估值 —— UI 要显式提示，不能显示成 0。 */
+    /** Cannot be valued — the UI must show this explicitly, never display it as 0. */
     val isUnpriced: Boolean get() = snapshot != null && baseValue == null
 
-    /** 还没录过任何快照。 */
+    /** No snapshot has ever been recorded. */
     val hasNoSnapshot: Boolean get() = snapshot == null
 
     /**
-     * 行情是否已经旧到需要提醒用户。
+     * Whether the quote is stale enough to warrant a user warning.
      *
-     * domain.md 要求「取价失败时用最后一次成功的单价，并标记为 stale，
-     * UI 上要能看出来这个价格是 3 天前的」。
+     * domain.md requires: "on a failed price fetch, use the last successfully fetched
+     * unit price and mark it stale — the UI should make it visible that this price is
+     * from 3 days ago."
      *
-     * 阈值取 3 天而不是 1 天，是因为周末和节假日本来就没有行情 ——
-     * 用 1 天会在每个周一之前都误报。**这里不建交易日历**：那需要维护各市场的
-     * 节假日表，成本远高于收益，而且判断错了反而制造噪音。
+     * The threshold is 3 days rather than 1, because weekends and holidays naturally
+     * have no quotes — a 1-day threshold would false-positive every Monday. **No
+     * trading calendar is built here**: that would require maintaining a holiday table
+     * per market, at a cost far exceeding the benefit, and a wrong holiday guess would
+     * just add noise.
      */
     val isPriceStale: Boolean get() = (priceAgeDays ?: 0) > STALE_AFTER_DAYS
 
@@ -47,9 +51,10 @@ data class AssetValuation(
     }
 
     /**
-     * 成本均价，仅 QUOTED 且填了成本时有值。
+     * Average cost per unit, only present when QUOTED and a cost basis was entered.
      *
-     * 这是**派生显示值** —— 库里存的是总成本。见 docs/domain.md「录入形式」。
+     * This is a **derived display value** — the store keeps total cost. See
+     * docs/domain.md, "input form".
      */
     val unitCost: Money?
         get() {

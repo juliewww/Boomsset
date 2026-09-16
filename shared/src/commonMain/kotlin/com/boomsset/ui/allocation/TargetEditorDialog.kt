@@ -29,13 +29,15 @@ import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.parsePercentToBp
 
 /**
- * 编辑目标配置比例。
+ * Edit target allocation ratios.
  *
- * **核心约束：之和必须正好 100%。** 不闭合的配置会让偏离度全错，而且不会报错 ——
- * 所以「保存」在不闭合时是禁用的，并且实时显示当前合计和差额。
+ * **Core constraint: the sum must be exactly 100%.** A configuration that doesn't sum to 100%
+ * would make every deviation value wrong, and silently so — so "Save" is disabled while it
+ * doesn't sum to 100%, and the current total and the difference are shown live.
  *
- * 预填用 [bpToInputPercent]（不带 % 和多余的 0），保证能被 [parsePercentToBp] 读回 ——
- * 这是从「预填带千分位导致保存永久禁用」那个 bug 学到的。
+ * Prefill uses [bpToInputPercent] (no % sign, no extraneous zeros), guaranteeing it can be read
+ * back by [parsePercentToBp] — a lesson learned from the bug where a thousands-separator prefill
+ * left "Save" permanently disabled.
  */
 @Composable
 fun TargetEditorDialog(
@@ -46,7 +48,7 @@ fun TargetEditorDialog(
     val isNew = allocation == null
     var name by remember { mutableStateOf(allocation?.name ?: "我的配置") }
 
-    // 每个大类一个输入框，预填现有值（没有的按 0）
+    // One input field per class, prefilled with the existing value (0 if absent)
     val inputs = remember {
         mutableStateMapOf<AssetClass, String>().apply {
             AssetClass.displayOrder.forEach { assetClass ->
@@ -99,7 +101,8 @@ fun TargetEditorDialog(
                     }
                 }
 
-                // 实时合计 —— 不闭合时明确告诉用户还差多少，而不是只把按钮变灰
+                // Live total — when it doesn't sum to 100%, tell the user explicitly how far off
+                // it is rather than just graying out the button
                 val diff = TargetAllocation.TOTAL_BP - sumBp
                 Text(
                     when {

@@ -11,13 +11,15 @@ import java.lang.ref.WeakReference
 import kotlin.coroutines.resume
 
 /**
- * 当前处于前台的 Activity 的持有者。
+ * Holder for whichever Activity is currently in the foreground.
  *
- * `BiometricPrompt` 的构造函数硬性要求 `FragmentActivity`（AGENTS.md 约束 6），
- * 而共享层不能持有 Activity。所以由 `MainActivity` 在 onCreate 注册、onDestroy 注销。
+ * `BiometricPrompt`'s constructor hard-requires a `FragmentActivity` (AGENTS.md
+ * constraint 6), and the shared layer can't hold an Activity. So `MainActivity`
+ * registers it in onCreate and unregisters it in onDestroy.
  *
- * 用 [WeakReference] 而不是强引用 —— 强引用会在配置变更或退出时泄漏整个 Activity，
- * 连带泄漏它的 View 树。
+ * Uses a [WeakReference] rather than a strong reference — a strong reference would
+ * leak the whole Activity (and its View tree along with it) across configuration
+ * changes or on exit.
  */
 object CurrentActivityHolder {
     private var ref: WeakReference<FragmentActivity>? = null
@@ -27,7 +29,8 @@ object CurrentActivityHolder {
     }
 
     fun clear(activity: FragmentActivity) {
-        // 只在还是自己时清除 —— 否则 A.onDestroy 晚于 B.onCreate 时会把 B 清掉
+        // Only clear if it's still the same activity — otherwise A.onDestroy firing
+        // after B.onCreate would wipe out B
         if (ref?.get() === activity) ref = null
     }
 
@@ -35,14 +38,16 @@ object CurrentActivityHolder {
 }
 
 /**
- * Android 侧的应用锁认证。
+ * Android-side app lock authentication.
  *
- * 用 stable 的 `androidx.biometric:1.1.0` + `BiometricPrompt`。
- * **没有用 1.4.0-alpha 的 Compose API** —— docs/stack.md 的结论：
- * 不在财务 App 的认证路径上用 alpha 依赖，为了一个更顺手的 API 不值得。
+ * Uses the stable `androidx.biometric:1.1.0` + `BiometricPrompt`.
+ * **Deliberately not using the 1.4.0-alpha Compose API** — docs/stack.md's conclusion:
+ * don't put an alpha dependency on a finance app's authentication path just for a
+ * nicer-to-use API.
  *
- * 认证器允许 `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`：没有指纹/面容的用户
- * 可以用锁屏密码。否则大量设备上应用锁根本开不了。
+ * The authenticator allows `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`: users without
+ * fingerprint/face enrollment can use their device passcode. Otherwise app lock
+ * would be unusable on a large fraction of devices.
  */
 class AndroidAppLockAuthenticator(private val context: Context) : AppLockAuthenticator {
 
@@ -51,14 +56,16 @@ class AndroidAppLockAuthenticator(private val context: Context) : AppLockAuthent
             BiometricManager.Authenticators.DEVICE_CREDENTIAL
 
     /**
-     * ⚠️ **必须分别查生物识别和设备密码，不能只查组合值。**
+     * ⚠️ **Must check biometrics and device passcode separately — never just the combined value.**
      *
-     * `canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)` 在没有录入生物识别时会返回
-     * `BIOMETRIC_ERROR_NONE_ENROLLED`，**即使设备设了锁屏密码、认证实际上能成功**。
-     * 只看组合值的话，一台设了 PIN 但没录指纹的设备会被判成"不能用应用锁" ——
-     * 实跑时就是这么发现的（模拟器设了 PIN 之后提示没变）。
+     * `canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)` returns
+     * `BIOMETRIC_ERROR_NONE_ENROLLED` when no biometric is enrolled, **even if the
+     * device has a passcode set and authentication would actually succeed**. Checking
+     * only the combined value would judge a device with a PIN but no enrolled
+     * fingerprint as "can't use app lock" — that's exactly how this was discovered on
+     * a real run (the prompt didn't change after setting a PIN on the emulator).
      *
-     * 所以：任一路径可用就是可用。
+     * So: available via either path counts as available.
      */
     override fun capability(): AuthCapability {
         val manager = BiometricManager.from(context)
@@ -70,12 +77,13 @@ class AndroidAppLockAuthenticator(private val context: Context) : AppLockAuthent
         )
         if (credential == BiometricManager.BIOMETRIC_SUCCESS) return AuthCapability.AVAILABLE
 
-        // 两条路都不通，用生物识别那条的原因来解释（对用户更具体）
+        // Neither path works — use the biometric path's reason to explain (more
+        // specific for the user)
         return when (biometric) {
             BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> AuthCapability.NOT_ENROLLED
             BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE,
             BiometricManager.BIOMETRIC_ERROR_UNSUPPORTED,
-            -> AuthCapability.NOT_ENROLLED  // 没硬件但可以设锁屏密码 —— 仍然是「去设置里加」
+            -> AuthCapability.NOT_ENROLLED  // No hardware, but a passcode can still be set — still "go add one in settings"
             else -> AuthCapability.TEMPORARILY_UNAVAILABLE
         }
     }
@@ -84,7 +92,7 @@ class AndroidAppLockAuthenticator(private val context: Context) : AppLockAuthent
         val activity = CurrentActivityHolder.current()
             ?: return AuthResult.Failed("界面不在前台，无法弹出验证")
 
-        // BiometricPrompt 必须在主线程构造和调用
+        // BiometricPrompt must be constructed and invoked on the main thread
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { cont ->
                 val prompt = BiometricPrompt(
@@ -102,7 +110,7 @@ class AndroidAppLockAuthenticator(private val context: Context) : AppLockAuthent
                             errString: CharSequence,
                         ) {
                             if (!cont.isActive) return
-                            // 用户点取消/返回不是错误，单独归类
+                            // User tapping cancel/back is not an error, categorize it separately
                             val cancelled = errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
                                 errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
                                 errorCode == BiometricPrompt.ERROR_CANCELED
@@ -112,8 +120,9 @@ class AndroidAppLockAuthenticator(private val context: Context) : AppLockAuthent
                             )
                         }
 
-                        // onAuthenticationFailed 是"这一次没认出来"，系统会让用户重试，
-                        // 不代表流程结束 —— 所以这里不 resume，等 error 或 success。
+                        // onAuthenticationFailed means "this one attempt wasn't recognized" —
+                        // the system will let the user retry, it doesn't mean the flow is
+                        // over — so we don't resume here, we wait for error or success.
                     },
                 )
 

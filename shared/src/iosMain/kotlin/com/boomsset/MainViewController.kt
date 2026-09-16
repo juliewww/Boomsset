@@ -5,9 +5,10 @@ import com.boomsset.ui.App
 import platform.UIKit.UIViewController
 
 /**
- * iOS 侧的 Compose 入口，由 iosApp 的 SwiftUI 包一层 UIViewControllerRepresentable 使用。
+ * iOS-side Compose entry point, wrapped by iosApp's SwiftUI in a UIViewControllerRepresentable.
  *
- * 待办：iOS 没有内置 ViewModelStoreOwner（AGENTS.md 约束 3），等接入 ViewModel 时
- * 要在这里把生命周期手动绑到 SwiftUI，不然 ViewModel 不会被正确回收。
+ * TODO: iOS has no built-in ViewModelStoreOwner (AGENTS.md constraint 3) — once
+ * ViewModels are wired up, the lifecycle needs to be manually bound to SwiftUI here,
+ * otherwise ViewModels won't be reclaimed correctly.
  */
 fun MainViewController(): UIViewController = ComposeUIViewController { App() }

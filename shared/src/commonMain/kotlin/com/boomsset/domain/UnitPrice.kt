@@ -3,14 +3,15 @@ package com.boomsset.domain
 import kotlin.jvm.JvmInline
 
 /**
- * 单位价格，定点整数，scale = 8。
+ * Unit price, as a fixed-point integer, scale = 8.
  *
- * **为什么不用 [Money]（scale 2）**：单价的精度需求比金额高得多。
- * - 港股低价股报到 3 位小数（腾讯接口返回 `462.400`）
- * - 加密货币代币可能是 `0.00001234`
+ * **Why not use [Money] (scale 2)**: unit prices need far more precision than amounts do.
+ * - Low-priced Hong Kong stocks are quoted to 3 decimal places (the Tencent API returns `462.400`)
+ * - Crypto tokens can be `0.00001234`
  *
- * 用 scale 2 存的话，`0.00001234` 会变成 `0.00`，整项资产静默归零 ——
- * 这正是本项目最不能接受的失败模式。scale 8 和 [Quantity] 对齐，够覆盖上面两种情况。
+ * Storing at scale 2 would turn `0.00001234` into `0.00`, silently zeroing out the
+ * entire asset — exactly the failure mode this project cannot accept. Scale 8 matches
+ * [Quantity] and covers both cases above.
  */
 @JvmInline
 value class UnitPrice(val scaled: Long) : Comparable<UnitPrice> {
@@ -25,32 +26,33 @@ value class UnitPrice(val scaled: Long) : Comparable<UnitPrice> {
 
         val ZERO = UnitPrice(0)
 
-        /** 从「元」构造，仅用于测试和常量。 */
+        /** Constructed from "yuan", used only in tests and constants. */
         fun ofMajorUnits(units: Long): UnitPrice = UnitPrice(units * ONE)
     }
 }
 
-/** 单价字符串 → 定点整数。不能为负。 */
+/** Unit price string → fixed-point integer. Cannot be negative. */
 fun parseUnitPrice(text: String): UnitPrice? =
     FixedPoint.parseDecimal(text, scale = UnitPrice.SCALE, allowNegative = false)
         ?.let { UnitPrice(it) }
 
 /**
- * 市值 = 份额 × 单价。结果是该资产币种下的 [Money]（分）。
+ * Market value = quantity × unit price. The result is [Money] (fen) in the asset's currency.
  *
- * 两个 scale=8 的定点数相乘再转成 scale=2，朴素写法 `q * p / 1e14` 必定溢出 Long
- * （份额 100 万 × 单价 1000 元 → 1e14 × 1e11 = 1e25）。分两步做：
+ * Multiplying two scale=8 fixed-point numbers and converting to scale=2 — the naive
+ * approach `q * p / 1e14` is guaranteed to overflow Long (quantity 1,000,000 × unit
+ * price 1000 yuan → 1e14 × 1e11 = 1e25). Done in two steps instead:
  *
- * 1. `multiply(p, q, ONE)` 得到「市值 × 1e8」（元的 scale-8 表示）
- * 2. 再除以 1e6 转成分（因为 1e8 / 100 = 1e6），四舍五入
+ * 1. `multiply(p, q, ONE)` gives "market value × 1e8" (yuan in scale-8 representation)
+ * 2. divide by 1e6 to convert to fen (since 1e8 / 100 = 1e6), rounding to nearest
  *
- * 溢出时抛 [ArithmeticException] 而不是回绕 —— 见 [FixedPoint]。
+ * Throws [ArithmeticException] on overflow instead of wrapping — see [FixedPoint].
  */
 fun Quantity.valueAt(unitPrice: UnitPrice): Money {
     if (isZero || unitPrice.isZero) return Money.ZERO
-    // 第一步：结果是「元」的 scale-8 表示
+    // Step 1: the result is yuan in scale-8 representation
     val yuanScaled = FixedPoint.multiply(unitPrice.scaled, scaled, Quantity.ONE)
-    // 第二步：scale-8 的元 → scale-2 的分，即除以 1e6，四舍五入
+    // Step 2: scale-8 yuan → scale-2 fen, i.e. divide by 1e6, rounding to nearest
     val divisor = 1_000_000L
     val negative = yuanScaled < 0
     val magnitude = if (negative) -yuanScaled else yuanScaled

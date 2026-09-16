@@ -10,19 +10,21 @@ import com.boomsset.domain.TargetAllocation
 import kotlin.time.Clock
 
 /**
- * 组装 [BoomssetDatabase]。
+ * Assembles [BoomssetDatabase].
  *
- * 枚举列用 [EnumColumnAdapter] 按名字存 TEXT —— 可读、且加新枚举值不需要迁移。
- * 代价是重命名枚举值会读不出旧数据，所以**不要重命名 [com.boomsset.domain.AssetClass]
- * 和 [com.boomsset.domain.ValuationMode] 的成员名**，要改就得写 migration。
+ * Enum columns are stored as TEXT by name via [EnumColumnAdapter] — readable, and adding a
+ * new enum value needs no migration. The trade-off is that renaming an enum value makes old
+ * data unreadable, so **do not rename the member names of [com.boomsset.domain.AssetClass]
+ * or [com.boomsset.domain.ValuationMode]** — if you must, write a migration.
  *
- * `INTEGER AS Boolean` 是 SQLDelight 内建支持的，不需要 adapter。
+ * `INTEGER AS Boolean` is natively supported by SQLDelight and needs no adapter.
  */
 fun createDatabase(driverFactory: DatabaseDriverFactory): BoomssetDatabase =
     createDatabase(driverFactory.create())
 
 /**
- * 给定 driver 组装数据库。测试用 JDBC driver 走这条，生产走上面那条。
+ * Assembles the database given a driver. Tests use the JDBC driver via this path; production
+ * uses the one above.
  */
 internal fun createDatabase(driver: app.cash.sqldelight.db.SqlDriver): BoomssetDatabase {
     val database = BoomssetDatabase(
@@ -47,10 +49,11 @@ internal fun createDatabase(driver: app.cash.sqldelight.db.SqlDriver): BoomssetD
 }
 
 /**
- * 写入内置品种和内置目标配置预设。
+ * Writes the built-in subtypes and built-in target allocation presets.
  *
- * **幂等**：品种用 `INSERT OR IGNORE` + 唯一索引，预设先查名字。所以每次启动调用都安全，
- * 不需要"是否首次启动"这种状态。
+ * **Idempotent**: subtypes use `INSERT OR IGNORE` + a unique index, and presets are looked
+ * up by name first. So it's safe to call on every startup — no "is this the first launch"
+ * state is needed.
  */
 internal fun BoomssetDatabase.seedBuiltIns() {
     transaction {
@@ -75,7 +78,7 @@ internal fun BoomssetDatabase.seedBuiltIns() {
             targetAllocationQueries.insertAllocation(
                 name = preset.name,
                 is_built_in = true,
-                // 首次 seed 时把「平衡」设为生效，用户之后可切换
+                // On the first seed, mark "平衡" (Balanced) as active; the user can switch later
                 is_active = existing.isEmpty() && preset.name == DEFAULT_ACTIVE_PRESET,
                 created_at = now,
             )

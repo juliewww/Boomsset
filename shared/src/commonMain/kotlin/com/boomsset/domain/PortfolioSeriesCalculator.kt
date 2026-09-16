@@ -10,14 +10,16 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
 /**
- * 全部原始数据。
+ * All raw data.
  *
- * **设计取舍：一次全量加载，在内存里算。** 这个 App 是本地优先、单用户，
- * 资产数量几十条、快照几百到几千条，全量加载远比"每个取样点一次查询"简单，
- * 而且让所有派生逻辑保持纯函数、可测。
+ * **Design choice: load everything at once, compute in memory.** This app is
+ * local-first, single-user, with a few dozen assets and a few hundred to a few thousand
+ * snapshots — loading everything is far simpler than "one query per sample point", and
+ * it keeps all the derived logic as pure, testable functions.
  *
- * 如果将来快照量级到了几万条（比如改成每天自动生成快照），这里要改成按范围查询 +
- * SQL 侧聚合。到时候会明显变慢，不会静默出错。
+ * If snapshot volume ever reaches tens of thousands (e.g. switching to automatic daily
+ * snapshots), this should change to range-based queries + SQL-side aggregation. At that
+ * point it would visibly slow down, not silently produce wrong results.
  */
 data class PortfolioData(
     val assets: List<Asset>,
@@ -32,7 +34,7 @@ data class PortfolioData(
     }
 }
 
-/** 净值时间序列，点按时间升序。 */
+/** Net worth time series, points in ascending time order. */
 data class NetWorthSeries(
     val period: Period,
     val baseCurrency: String,
@@ -43,11 +45,13 @@ data class NetWorthSeries(
     val earliest: NetWorthPoint? get() = points.firstOrNull()
 
     /**
-     * 首尾两个端点，只有一个点时为 null（没有可比的期初）。
+     * The two endpoints, null when there is only one point (no comparable starting
+     * point).
      *
-     * 三个「整段区间」的派生值（增长率、变化额、基准日）都从这里取端点 ——
-     * 各自判一次"点够不够"迟早会判得不一样，然后 UI 上出现"增长 —"却又
-     * 写着"相比 2026年8月"这种自相矛盾的组合。
+     * The three "whole range" derived values (growth rate, change amount, baseline
+     * date) all take their endpoints from here — judging "are there enough points"
+     * separately in each place would eventually diverge, producing a self-contradictory
+     * combination in the UI like "growth —" alongside "compared to August 2026".
      */
     private val endpoints: Pair<NetWorthPoint, NetWorthPoint>?
         get() {
@@ -56,14 +60,17 @@ data class NetWorthSeries(
             return if (from === to) null else from to to
         }
 
-    /** 有没有可比的期初（点数 ≥ 2）。UI 要区分「只记过一次」和「记过但算不出」。 */
+    /** Whether there is a comparable starting point (point count ≥ 2). The UI must distinguish "recorded only once" from "recorded, but can't be computed". */
     val hasBaseline: Boolean get() = endpoints != null
 
     /**
-     * 整段区间的净值增长率（基点）。注意这**包含新增投入**，不是投资收益率。
+     * The net worth growth rate over the whole range (basis points). Note this
+     * **includes new contributions**, it is not an investment return rate.
      *
-     * 任一端有资产无法估值就返回 null：百分比的分母是净值本身，而一个**已知低估**的
-     * 净值做分母会把涨幅按比例放大（房子估不出值时，股票涨 1 万可能显示成 +10%）。
+     * Returns null if either endpoint has an asset that can't be valued: the
+     * percentage's denominator is net worth itself, and a net worth that is **known to
+     * be understated** as the denominator would proportionally amplify the gain (if the
+     * house can't be valued, a stock gaining 10,000 might show as +10%).
      */
     val growthBp: Int?
         get() = endpoints
@@ -71,16 +78,22 @@ data class NetWorthSeries(
             ?.let { (from, to) -> PortfolioCalculator.netWorthGrowthBp(from, to) }
 
     /**
-     * 整段区间的净值变化**额**。和 [growthBp] 取同一对端点，一个绝对一个相对。
+     * The **absolute** net worth change over the whole range. Takes the same pair of
+     * endpoints as [growthBp], one absolute, one relative.
      *
-     * 需要它是因为百分比单独看不出量级："+2%" 可能是两千也可能是二十万，
-     * 而用户真正记得住的是那个金额。
+     * Needed because a percentage alone doesn't convey magnitude: "+2%" could mean two
+     * thousand or two hundred thousand, and what the user actually remembers is the
+     * amount.
      *
-     * **两端估值覆盖面不同时返回 null。** 这不是洁癖，是实机踩到的：把查看币种切成 USD，
-     * 8 月那天没有历史汇率 → 那个点的资产整个估不出值、净值算成 0，拿它当期初，
-     * "净值增长"就变成"这个月从 0 涨到全部身家"（+$13,097 相比 8 月）——
-     * 一个纯属虚构的好消息。覆盖面一样时差额仍然有意义（比较的是同一个子集），
-     * 所以这里判的是"覆盖面变没变"，而不是"有没有估不出的资产"。
+     * **Returns null when the two endpoints' valuation coverage differs.** This isn't
+     * being overly cautious, it's something hit in real usage: switching the display
+     * currency to USD, the day in August had no historical exchange rate → that point's
+     * assets couldn't be valued at all and net worth computed as 0; using it as the
+     * starting point turned "net worth growth" into "this month grew from 0 to my
+     * entire net worth" (+$13,097 compared to August) — purely fabricated good news.
+     * When coverage is the same, the difference is still meaningful (comparing the same
+     * subset), so what's checked here is "did coverage change", not "are there any
+     * assets that can't be valued".
      */
     val growthAbsolute: Money?
         get() = endpoints
@@ -88,26 +101,31 @@ data class NetWorthSeries(
             ?.let { (from, to) -> to.netWorth - from.netWorth }
 
     /**
-     * [growthBp] / [growthAbsolute] 是**相比哪一天**算的。
+     * The date [growthBp] / [growthAbsolute] are computed **relative to**.
      *
-     * UI 必须把它显示出来：同一个"净值增长 +2%"在按月/按季/按年下比的是完全不同的
-     * 起点，不说基准就等于没说清这个数是什么。
+     * The UI must display it: the same "net worth growth +2%" compares against
+     * completely different starting points depending on month/quarter/year view — not
+     * stating the baseline means not stating what this number actually is.
      */
     val baselineDate: LocalDate?
         get() = endpoints?.let { dates.firstOrNull() }
 }
 
 /**
- * 按大类拆开的净敞口时间序列，点按时间升序。
+ * A time series of net exposure broken down by top-level class, points in ascending
+ * time order.
  *
- * 每个点就是一个完整的 [AllocationView]，也就是说**口径和配置页一模一样**：
- * 分子是各大类的净敞口（该类资产 − 归属到该类的负债），只算
- * `includeInAllocation = true` 的资产。这一点很重要 —— 它意味着这条序列的合计
- * **不等于** [NetWorthSeries] 的净值（后者包含不计入配置的资产）。
- * 两个数并排出现时 UI 必须说明，否则用户会以为其中一个算错了。
+ * Each point is a complete [AllocationView], meaning **the convention is identical to
+ * the allocation screen**: the numerator is each class's net exposure (that class's
+ * assets − liabilities attributed to that class), counting only assets with
+ * `includeInAllocation = true`. This matters — it means this series' total is **not
+ * equal to** [NetWorthSeries]'s net worth (the latter includes assets excluded from
+ * allocation). Whenever the two numbers appear side by side the UI must explain this,
+ * otherwise the user will think one of them is wrong.
  *
- * 取样日期和 [NetWorthSeries] 用的是同一批（同一个 [PortfolioSeriesCalculator] 私有助手
- * 算出来的），所以两张图的 x 轴逐点对齐，可以直接在同一页上换着看。
+ * The sample dates are the same batch used for [NetWorthSeries] (computed by the same
+ * private helper in [PortfolioSeriesCalculator]), so the two charts' x-axes line up
+ * point-for-point and can be switched between on the same page.
  */
 data class AllocationSeries(
     val period: Period,
@@ -117,15 +135,17 @@ data class AllocationSeries(
 ) {
     val latest: AllocationView? get() = points.lastOrNull()
 
-    /** 某一类在每个取样点的净敞口，顺序与 [dates] 一致。缺失按 0 —— 该类此时确实没有敞口。 */
+    /** The net exposure for one class at each sample point, in the same order as [dates]. Missing values default to 0 — this class genuinely had no exposure at that time. */
     fun netExposures(assetClass: AssetClass): List<Money> =
         points.map { it.exposures[assetClass]?.netExposure ?: Money.ZERO }
 
     /**
-     * 这几类在每个取样点的净敞口之和。
+     * The sum of net exposure across these classes at each sample point.
      *
-     * 图上柱子的高度就是这个和，所以「相比前一根涨了多少」必须拿它来算 ——
-     * 用户勾掉几个大类之后，柱子变矮了，此时拿全量合计算出的增长率和眼前的柱子对不上。
+     * The height of the bar in the chart is this sum, so "how much did it rise compared
+     * to the previous bar" must be computed from it — after the user unchecks some
+     * classes and the bar gets shorter, computing the growth rate from the full total
+     * would no longer match the bar in front of them.
      */
     fun totals(classes: Collection<AssetClass>): List<Money> =
         points.map { point ->
@@ -135,37 +155,48 @@ data class AllocationSeries(
         }
 
     /**
-     * 这几类里**任何一个取样点**出现过负敞口（该类的负债超过该类资产）。
+     * Whether **any sample point** among these classes had a negative exposure (that
+     * class's liabilities exceeded its assets).
      *
-     * 堆叠面积图是靠「累计值 + 不透明色后画的盖前画的」拼出来的，这个做法要求每一段
-     * 都非负；出现负值时累计不再单调，画出来的分层就是错的。所以趋势图必须先问这个，
-     * 命中就退回各类独立曲线，而不是画一张看起来正常、其实分层错位的图。
+     * A stacked area chart is assembled from "cumulative value + opaque fill drawn over
+     * the previous layer", which requires every segment to be non-negative; once a
+     * negative value shows up the cumulative sum is no longer monotonic and the
+     * resulting layers are wrong. So the trend chart must check this first, and falls
+     * back to independent per-class lines when it hits, rather than drawing a chart that
+     * looks normal but has its layers misaligned.
      */
     fun hasNegativeExposure(classes: Collection<AssetClass>): Boolean =
         classes.any { assetClass -> netExposures(assetClass).any { it.minorUnits < 0L } }
 }
 
 /**
- * 把原始数据折成时间序列。纯函数。
+ * Folds raw data into time series. Pure functions.
  */
 object PortfolioSeriesCalculator {
 
     /**
-     * @param today 用户本地时区的今天。由调用方传入而不是内部取 Clock，这样可测。
-     * @param pointCount 取样点数量。12 个月 / 12 个季度 / 12 年。
-     * @param trimBeforeFirstSnapshot 丢掉「第一条快照之前」的取样点。
+     * @param today today in the user's local time zone. Passed in by the caller rather
+     *   than reading Clock internally, so this stays testable.
+     * @param pointCount number of sample points. 12 months / 12 quarters / 12 years.
+     * @param trimBeforeFirstSnapshot drop the sample points that fall "before the first snapshot".
      *
-     * 默认 `false`，保持 [periodSampleDates] 原本"固定取 N 个周期"的行为不变——
-     * 有一条测试（"资产创建之前的时点不计入"）明确依赖"资产建立前的周期显示为 0 值点"
-     * 这条结转语义，trim 不应该改写那条语义，只是**在展示层决定要不要把那些点画出来**。
+     * Defaults to `false`, keeping [periodSampleDates]'s original "always take N
+     * periods" behavior unchanged — a test ("time points before asset creation aren't
+     * counted") explicitly depends on the carry-forward convention that "periods before
+     * an asset was created show up as zero-valued points"; trimming shouldn't rewrite
+     * that convention, it only **decides at the presentation layer whether to draw
+     * those points**.
      *
-     * 传 `true` 时：实跑反馈是"按年/按季看的时候，账号才用了几个月，
-     * 前面一大截全是 0，还占满了图"。裁剪规则是丢掉**结束时刻早于最早快照时刻**的
-     * 那些取样点——不是看"净值是不是 0"，因为账户清零之后的真实 0（比如全部资产
-     * 归档）不该被当成"没数据"抹掉，那是历史的一部分。
+     * When passed `true`: real-usage feedback was "when viewing by quarter/year, the
+     * account has only been used for a few months, and a large leading stretch is all
+     * zeros, filling up the chart". The trim rule drops sample points whose **end time
+     * is earlier than the earliest snapshot's time** — not points where "net worth is
+     * 0", because a genuine 0 after the account clears out (e.g. all assets archived)
+     * shouldn't be erased as "no data" — that's part of the history.
      *
-     * 永远至少保留最后一个点（今天所在的周期），哪怕它也早于最早快照 ——
-     * 空状态由 `hasAssets` 单独判断，这里不需要再处理"一个点都不剩"的情况。
+     * Always keeps at least the last point (the period containing today), even if it
+     * too is earlier than the earliest snapshot — the empty state is judged separately
+     * by `hasAssets`, so there's no need to also handle "not a single point left" here.
      */
     fun buildSeries(
         data: PortfolioData,
@@ -190,13 +221,17 @@ object PortfolioSeriesCalculator {
     }
 
     /**
-     * 按大类拆开的时间序列，用于净值页「按大类看」。参数含义与 [buildSeries] 完全一致。
+     * The time series broken down by top-level class, used by the net worth screen's
+     * "view by class" mode. Parameters have exactly the same meaning as [buildSeries].
      *
-     * 每个取样点直接复用 [PortfolioCalculator.allocation] —— 净敞口、
-     * `includeInAllocation` 的取舍、分母怎么算，这些规则只能有一份实现，
-     * 否则净值页和配置页会对同一批数据给出两套百分比。
+     * Each sample point directly reuses [PortfolioCalculator.allocation] — net
+     * exposure, the `includeInAllocation` decision, and how the denominator is
+     * computed can only have one implementation, otherwise the net worth screen and the
+     * allocation screen would produce two different sets of percentages for the same
+     * data.
      *
-     * `target` 传 null：目标比例是配置页的事，这条序列只关心各类**金额**随时间怎么变。
+     * `target` is passed as null: target ratios are the allocation screen's concern;
+     * this series only cares how each class's **amount** changes over time.
      */
     fun buildAllocationSeries(
         data: PortfolioData,
@@ -222,12 +257,13 @@ object PortfolioSeriesCalculator {
     }
 
     /**
-     * 取样日期 + 「丢掉第一条快照之前那些点」的裁剪。
+     * Sample dates + trimming out "points before the first snapshot".
      *
-     * [buildSeries] 和 [buildAllocationSeries] **必须共用这一份** ——
-     * 两条序列会在同一页上换着看，各自算一遍取样日期的话，
-     * 只要有一处的裁剪判据写得不一样，两张图的 x 轴就会错开一格，
-     * 而这种错位在界面上看起来只是"数字有点怪"，很难联想到是取样点对不上。
+     * [buildSeries] and [buildAllocationSeries] **must share this one implementation** —
+     * the two series get switched between on the same page, and if each computed its
+     * own sample dates, any divergence in how the trim rule is written would offset the
+     * two charts' x-axes by one slot, and that kind of misalignment looks in the UI like
+     * just "the numbers are a bit off", hard to trace back to mismatched sample points.
      */
     private fun sampleDates(
         data: PortfolioData,
@@ -245,7 +281,7 @@ object PortfolioSeriesCalculator {
         else allDates.subList(firstWithData, allDates.size)
     }
 
-    /** 当前时点的配置视图。 */
+    /** The allocation view at the current point in time. */
     fun currentAllocation(
         data: PortfolioData,
         baseCurrency: String,
@@ -264,9 +300,10 @@ object PortfolioSeriesCalculator {
     }
 
     /**
-     * 当前时点每项资产的估值，用于资产列表。
+     * The valuation of each asset at the current point in time, used by the asset list.
      *
-     * 默认排除已归档的 —— 它们的历史仍在净值曲线里，但不该出现在"我现在持有什么"的列表里。
+     * Excludes archived assets by default — their history is still part of the net
+     * worth curve, but they shouldn't show up in a "what do I currently hold" list.
      */
     fun currentAssetValuations(
         data: PortfolioData,
@@ -306,7 +343,7 @@ object PortfolioSeriesCalculator {
             }
     }
 
-    /** 当前时点的组合浮动盈亏。 */
+    /** Portfolio-level unrealized P&L at the current point in time. */
     fun currentProfitAndLoss(
         data: PortfolioData,
         baseCurrency: String,
@@ -322,16 +359,19 @@ object PortfolioSeriesCalculator {
     }
 
     /**
-     * 最近一次记录快照的日期（用户本地时区）。
+     * The date of the most recently recorded snapshot (user's local time zone).
      *
-     * 这个 App **记快照不记流水**，所以"数据有多新"直接决定顶上那个净值可不可信 ——
-     * 三个月没更新的净值和今天刚更新的净值长得一模一样，不把日期显示出来，
-     * 用户没有任何线索判断自己在看的是不是过期数字。
+     * This app **records snapshots, not transactions**, so "how fresh is the data"
+     * directly determines whether the net worth figure at the top can be trusted — a
+     * net worth that hasn't been updated in three months looks identical to one updated
+     * today; without showing the date, the user has no way to tell whether they're
+     * looking at a stale number.
      *
-     * 只看**未归档**资产：归档会追加一条 0 值快照，那是"结束维护"的动作，
-     * 拿它当"最近记录"会让一次归档把整个组合伪装成刚更新过。
+     * Only looks at **unarchived** assets: archiving appends a zero-value snapshot,
+     * which is an "end of maintenance" action — treating it as the "most recent record"
+     * would let a single archive action disguise the whole portfolio as just updated.
      *
-     * @return 一条快照都没有时返回 null（新用户）。
+     * @return returns null when there isn't a single snapshot (a new user).
      */
     fun lastRecordedDate(data: PortfolioData, zone: TimeZone): LocalDate? {
         val activeIds = data.assets.filterNot { it.isArchived }.map { it.id }.toSet()
@@ -344,7 +384,8 @@ object PortfolioSeriesCalculator {
 }
 
 /**
- * 两个 ISO 日期之间相差多少天。解析失败返回 null 而不是猜。
+ * The number of days between two ISO dates. Returns null on a parse failure rather than
+ * guessing.
  */
 internal fun daysBetween(fromIsoDay: String, to: LocalDate): Int? {
     val from = runCatching { LocalDate.parse(fromIsoDay) }.getOrNull() ?: return null
@@ -352,14 +393,16 @@ internal fun daysBetween(fromIsoDay: String, to: LocalDate): Int? {
 }
 
 /**
- * 「这一天结束时」的瞬时值 —— 取次日零点前 1 毫秒，这样当天录入的快照都能被 `<=` 命中。
+ * The instant "at the end of this day" — taken as 1 millisecond before the start of the
+ * next day, so that snapshots recorded that same day are still matched by `<=`.
  */
 internal fun LocalDate.endOfDayIn(zone: TimeZone): Instant =
     plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone) - kotlin.time.Duration.parse("1ms")
 
 /**
- * 结转规则：每个资产取 [at] 之前**最近的一条**快照。
- * 同一时点有多条（修正历史）时取 id 最大的，即最后录入的那条。
+ * Carry-forward rule: for each asset, take the **most recent** snapshot before [at].
+ * When there are multiple at the same point in time (a historical correction), take the
+ * one with the largest id, i.e. the one recorded last.
  */
 internal fun PortfolioData.latestSnapshotsAt(at: Instant): Map<Long, Snapshot> =
     snapshots
@@ -368,10 +411,13 @@ internal fun PortfolioData.latestSnapshotsAt(at: Instant): Map<Long, Snapshot> =
         .mapValues { (_, list) -> list.maxWith(compareBy({ it.asOf }, { it.id })) }
 
 /**
- * 构造该日期的估值上下文 —— 行情和汇率都取**当天或之前最近的一条**。
+ * Builds the valuation context for this date — both quotes and exchange rates take the
+ * **most recent one as of that day or before**.
  *
- * 用历史汇率而不是今天的，否则汇率波动会污染历史曲线。
- * `asOfDay` 是 ISO 字符串，字典序即时间序，所以可以直接比较。
+ * Uses the historical exchange rate rather than today's, otherwise rate fluctuations
+ * would pollute the historical curve.
+ * `asOfDay` is an ISO string, whose lexicographic order matches time order, so it can be
+ * compared directly.
  */
 internal fun PortfolioData.valuationContextAt(
     day: LocalDate,

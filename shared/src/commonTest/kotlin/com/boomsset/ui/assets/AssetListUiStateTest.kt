@@ -31,15 +31,17 @@ class AssetListUiStateTest {
     )
 
     /**
-     * 回归测试。实跑时发现：把最后一项资产归档后，资产页走空状态分支提前 return，
-     * 而「查看已归档」的展开按钮只渲染在列表里 —— **那项资产在 UI 上彻底不可达**，
-     * 再也取消不了归档。
+     * Regression test. Found during a real run: after archiving the last remaining
+     * asset, the assets page took the empty-state branch with an early return, while the
+     * "view archived" expand button was only rendered inside the list — **that asset
+     * became completely unreachable in the UI**, with no way to unarchive it ever again.
      *
-     * 数据层一直是对的（archivedAt 已设、0 值快照在），纯粹是 UI 路径缺失。
-     * 现在空状态和列表走同一条渲染路径，已归档区块在两种情况下都可达。
+     * The data layer was always correct (archivedAt was set, the zero-value snapshot was
+     * there), it was purely a missing UI path. Now the empty state and the list share the
+     * same render path, so the archived section is reachable in both cases.
      */
     @Test
-    fun `全部归档后仍然报告已归档数量`() {
+    fun `still reports the archived count after everything is archived`() {
         val state = AssetListUiState(
             loading = false,
             grouped = AssetClass.displayOrder.associateWith { emptyList() },
@@ -47,15 +49,15 @@ class AssetListUiStateTest {
             archived = listOf(valuation(1, archived = true)),
         )
 
-        // 在持为空
+        // No active holdings
         state.isEmpty shouldBe true
-        // 但已归档的数量和列表都还在 —— UI 必须据此给出入口
+        // But the archived count and list are both still present — the UI must offer an entry point from them
         state.archivedCount shouldBe 1
         state.archived.size shouldBe 1
     }
 
     @Test
-    fun `有在持资产时不是空状态`() {
+    fun `not an empty state when there are active holdings`() {
         val state = AssetListUiState(
             loading = false,
             grouped = mapOf(AssetClass.LIQUID to listOf(valuation(1, archived = false))),
@@ -64,14 +66,14 @@ class AssetListUiStateTest {
     }
 
     @Test
-    fun `无法估值的数量跨大类累加`() {
+    fun `unpriced count accumulates across asset classes`() {
         val unpriced = AssetValuation(
             asset = valuation(1, false).asset,
             snapshot = com.boomsset.domain.Snapshot.Manual(
                 id = 1, assetId = 1, asOf = epoch, value = Money(100), recordedAt = epoch,
             ),
             localValue = Money(100),
-            baseValue = null,   // 折算不出来 → isUnpriced
+            baseValue = null,   // cannot be converted → isUnpriced
             pnl = null,
         )
         val state = AssetListUiState(

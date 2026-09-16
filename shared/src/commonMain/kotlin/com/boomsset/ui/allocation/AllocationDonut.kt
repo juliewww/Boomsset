@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AssetClass
 import com.boomsset.domain.Money
+import com.boomsset.ui.chartAnimationSpec
 import com.boomsset.ui.formatWithCurrency
 import com.boomsset.ui.label
 import com.boomsset.ui.theme.chartColors
@@ -42,27 +43,34 @@ private const val START_ANGLE_DEG = -90f
 private val INNER_RADIUS = 64.dp
 
 /**
- * 资产配置的环形占比图，扇区**可点**。
+ * The donut chart for asset allocation shares, with **tappable** slices.
  *
- * 是 [ClassRow] 那组进度条的**补充**，不是替代 —— 条形回答"每一类偏离目标多少"，
- * 这个图回答"现在整体是怎么分的"，一眼看比例更直接。所以画在同一屏里，
- * 用的还是 [chartColors] 那五个固定顺序的大类色，不重新定义配色。
+ * This is a **complement** to the [ClassRow] progress bars, not a replacement — the bars answer
+ * "how far off target is each class", while this chart answers "how is everything split right
+ * now", which reads as a proportion more directly at a glance. So it's drawn on the same screen,
+ * reusing the same five fixed-order class colors from [chartColors] rather than defining a new
+ * palette.
  *
- * 圆环中间默认显示净资产总额；**点一个扇区换成显示那一类的名称和金额**（实机反馈：
- * 光看颜色和角度猜不出具体是多少钱），再点一次收起。
+ * By default the center of the ring shows total net worth; **tapping a slice switches it to show
+ * that class's name and amount** (real-device feedback: color and angle alone don't let you guess
+ * the actual amount), and tapping again collapses it back.
  *
- * Vico 的 `PieChart` 没有内置的点击回调，所以命中检测是手写的：拿到 [Box] 的实际
- * 像素尺寸（[androidx.compose.ui.layout.onSizeChanged]），把点击坐标换算成相对圆心的
- * 角度和半径，再用 [values] 累加出的角度区间去判断落在哪个扇区。角度换算用的是
- * Android/Vico 共用的画布约定：`atan2(dy, dx)` 在屏幕坐标系（y 向下）里直接就是
- * "从 3 点钟方向顺时针量"的角度，不需要额外翻转符号 —— 这个约定和 [rememberPieChart]
- * 的 `startAngle` 参数是同一套，所以这里显式传 `startAngle = -90f`（12 点钟方向起画）
- * 而不是依赖库内部默认值，命中检测的角度基准才能保证和实际渲染完全一致。
+ * Vico's `PieChart` has no built-in tap callback, so hit testing is hand-written: get the [Box]'s
+ * actual pixel size ([androidx.compose.ui.layout.onSizeChanged]), convert the tap coordinate into
+ * an angle and radius relative to the center, then use the angle ranges accumulated from [values]
+ * to determine which slice it falls in. The angle conversion uses the canvas convention shared by
+ * Android/Vico: `atan2(dy, dx)` in screen coordinates (y pointing down) is directly the angle
+ * "measured clockwise from the 3 o'clock direction", no extra sign flip needed — this convention
+ * is the same one used by [rememberPieChart]'s `startAngle` parameter, which is why we explicitly
+ * pass `startAngle = -90f` here (start drawing from the 12 o'clock direction) instead of relying
+ * on the library's internal default, so the angle baseline used for hit testing is guaranteed to
+ * match the actual rendering exactly.
  *
- * @param shares 各大类的**净敞口**，按 [AssetClass.displayOrder] 传入，顺序必须对应
- *   [chartColors] 的顺序（[PieChart.SliceProvider.series] 是按下标配对颜色的，
- *   传错顺序不会报错，只会**颜色和大类对不上**，属于那种编译期发现不了的错误）。
- * @param netWorth 圆环中心默认显示的总额。
+ * @param shares Each class's **net exposure**, passed in [AssetClass.displayOrder] order; the
+ *   order must match [chartColors]'s order ([PieChart.SliceProvider.series] pairs colors by index,
+ *   so passing the wrong order won't raise an error — it will just silently **mismatch colors and
+ *   classes**, the kind of bug compile time can't catch).
+ * @param netWorth The total amount shown by default at the center of the ring.
  */
 @Composable
 fun AllocationDonut(
@@ -73,8 +81,9 @@ fun AllocationDonut(
 ) {
     val modelProducer = remember { PieChartModelProducer() }
 
-    // Pie 的 Entry 要求非负 —— 负净敞口（该类负债超过资产）画不成一个扇区，
-    // 和 ClassRow 的进度条一个道理：真实数值已经在文字里显示了，这里只负责占比形状。
+    // Pie entries require non-negative values — a negative net exposure (liabilities in that
+    // class exceed assets) can't be drawn as a slice; same reasoning as ClassRow's progress bar:
+    // the actual value is already shown as text, this is only responsible for the share shape.
     val values = shares.map { (_, money) -> money.minorUnits.coerceAtLeast(0L).toFloat() }
     val total = values.sum()
 
@@ -85,9 +94,9 @@ fun AllocationDonut(
         }
     }
 
-    // `chartColors` 是个 @Composable 属性（读 CompositionLocal），不能在 remember{}
-    // 的 lambda 里调用 —— 那个 lambda 带 @DisallowComposableCalls。所以先在
-    // 组合作用域里取出普通值，再拿普通值去构建 Slice 列表。
+    // `chartColors` is a @Composable property (reads a CompositionLocal), so it can't be called
+    // inside a remember{} lambda — that lambda is annotated @DisallowComposableCalls. So we
+    // extract it as a plain value in composition scope first, then build the slice list from it.
     val colors = chartColors
     val slices = shares.map { (assetClass, _) -> PieChart.Slice(fill = Fill(colors.of(assetClass))) }
     val pieChart = rememberPieChart(
@@ -117,6 +126,8 @@ fun AllocationDonut(
         PieChartHost(
             chart = pieChart,
             modelProducer = modelProducer,
+            // Vico's pie chart defaults to 1000ms (see [chartAnimationSpec]); switched to the M3-recommended 300ms.
+            animationSpec = chartAnimationSpec,
             modifier = Modifier.fillMaxWidth().height(180.dp),
         )
         val selectedShare = selected?.let { assetClass -> shares.firstOrNull { it.first == assetClass } }
@@ -137,7 +148,7 @@ fun AllocationDonut(
     }
 }
 
-/** 返回命中的扇区在 [values] 里的下标；洞里、圆外或点在缝隙上都算没命中。 */
+/** Returns the index of the hit slice in [values]; hitting the hole, outside the circle, or a gap between slices all count as no hit. */
 private fun hitTestSlice(
     offset: Offset,
     boxSize: IntSize,

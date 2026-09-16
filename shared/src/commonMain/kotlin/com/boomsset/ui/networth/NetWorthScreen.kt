@@ -63,6 +63,7 @@ fun NetWorthScreen(
     onSelectChartStyle: (ChartStyle) -> Unit,
     onToggleClass: (AssetClass) -> Unit,
     onToggleAmountsHidden: (Boolean) -> Unit,
+    onRetryPricing: () -> Unit,
     lockState: AppLockUiState,
     onToggleLock: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -79,12 +80,15 @@ fun NetWorthScreen(
 
             state.isEmpty -> {
                 EmptyHint()
-                // 空状态下也要能开应用锁 —— 提前 return 会砍掉这个入口，
-                // 这是 AGENTS.md 里那条「空状态不要用提前 return」的教训。
-                // ⚠️ 眼睛图标**故意**不在这个分支里：它藏的是金额，而空状态一个金额都没有，
-                // 放一个"藏起来"的按钮没有任何东西可藏。这和上面那条教训不冲突 ——
-                // 那条针对的是"空状态下够不着的功能入口"，而这个开关本身就依附于金额，
-                // 有金额时（下面那个分支）它一定在。
+                // The app lock must still be reachable in the empty state — an early return
+                // would cut off this entry point; this is the lesson from AGENTS.md about "don't
+                // use an early return for an empty state".
+                // ⚠️ The eye icon is **intentionally** not in this branch: it hides amounts, and
+                // the empty state has no amounts at all, so a "hide" button would have nothing
+                // to hide. This doesn't conflict with the lesson above — that one is about
+                // "a feature entry point unreachable in the empty state", whereas this toggle is
+                // inherently tied to amounts, and it's always present whenever amounts exist
+                // (the branch below).
                 AppLockToggle(lockState, onToggleLock)
             }
 
@@ -98,7 +102,7 @@ fun NetWorthScreen(
                     onSelectChartStyle = onSelectChartStyle,
                     onToggleClass = onToggleClass,
                 )
-                if (state.unpricedCount > 0) UnpricedWarning(state.unpricedCount)
+                if (state.unpricedCount > 0) UnpricedWarning(state.unpricedCount, onRetryPricing)
                 AppLockToggle(lockState, onToggleLock)
             }
         }
@@ -106,29 +110,39 @@ fun NetWorthScreen(
 }
 
 /**
- * 顶部总资产卡片。
+ * The top total-assets card.
  *
- * 原来是**四五行句子**（"净值增长 +2.10%（含新增投入）"、"浮动盈亏 …"、
- * "仅覆盖已填成本的 3 项资产"），每行都要读完整句才知道那个数是什么，而且：
- * - **没说数据是哪天的** —— 记快照不记流水，净值不会自己更新，三个月前的记录和
- *   今天的记录长得一模一样；这是这类 App 最该显示、我们偏偏没显示的一个数
- * - **没说"增长"是相比什么时候** —— 同一个 +2% 在按月/按季/按年下比的起点完全不同
- * - **只有百分比没有金额** —— "+2%" 记不住，"+¥12,345" 才记得住
- * - **总资产和总负债根本看不到**，负债率也没有
+ * It used to be **four or five sentences** ("Net worth growth +2.10% (including new
+ * contributions)", "Unrealized gain/loss …", "Only covers the 3 assets with cost basis
+ * entered"), where each line required reading the whole sentence to know what that number even
+ * was, and worse:
+ * - **It didn't say what day the data was from** — we record snapshots, not transactions, so net
+ *   worth doesn't update on its own, and a record from three months ago looks identical to one
+ *   from today; this is exactly the number this kind of app should show most, and we weren't
+ *   showing it
+ * - **It didn't say what "growth" was measured against** — the same +2% has a completely
+ *   different starting point depending on monthly/quarterly/yearly view
+ * - **Only a percentage, no amount** — "+2%" isn't memorable, "+¥12,345" is
+ * - **Total assets and total liabilities weren't visible at all**, nor was the liability ratio
  *
- * 现在分三段（参考家庭记账类 App 的顶部卡片做法）：
- * 1. 净值本身 + 数据是哪天记的
- * 2. 总资产 / 总负债 的分格（标签在上、数值在下），一眼扫到的是数值
- * 3. 净值增长 / 浮动盈亏 整行一条（标签在左、数值在右），口径解释收进 (i)
+ * Now split into three sections (modeled on the top card of household budgeting apps):
+ * 1. Net worth itself + what day the data was recorded
+ * 2. Total assets / total liabilities as separate cells (label on top, value below) — the value
+ *    is what your eye lands on first
+ * 3. Net worth growth / unrealized gain-loss as full-width rows (label on the left, value on the
+ *    right), with the detailed explanation tucked into an (i)
  *
- * 后两段用了**不同的排布**不是随手写的：短标签短数值适合分格，
- * 十来个汉字的标签并排就会连数值一起挤断行（见 [MetricRow] 上的注释）。
+ * The last two sections use **different layouts**, and that's not arbitrary: short label + short
+ * value suits a grid of cells, while a label a dozen-odd Chinese characters long would force both
+ * the label and the value to wrap if placed side by side (see the comment on [MetricRow]).
  *
- * **负债那一段只在真的有负债时出现** —— 无债用户看到"总负债 ¥0.00 / 负债率 0.00%"
- * 是纯噪音，而且此时总资产恒等于净值，再写一遍也是重复。
+ * **The liabilities section only appears when there actually are liabilities** — a debt-free
+ * user seeing "Total liabilities ¥0.00 / Liability ratio 0.00%" would see pure noise, and at that
+ * point total assets always equals net worth, so writing it again would be redundant too.
  *
- * 右上角的眼睛图标把**这张卡片里的全部金额**换成占位符（图表纵轴也跟着藏，
- * 见 [ChartSection]）。藏金额、留百分比，判据见 [NetWorthUiState.amountsHidden]。
+ * The eye icon in the top-right corner replaces **every amount on this card** with a placeholder
+ * (the chart's y-axis is hidden along with it, see [ChartSection]). Amounts are hidden while
+ * percentages remain; the rule is in [NetWorthUiState.amountsHidden].
  */
 @Composable
 private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean) -> Unit) {
@@ -138,18 +152,25 @@ private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean)
     val hidden = state.amountsHidden
     val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
 
-    // 卡片用品牌色的浅色容器打底 —— 整页只有这一处用容器强调。
+    // The card is grounded on the light brand-color container — this is the only place on the
+    // whole page that uses a container accent.
     //
-    // ⚠️ **不描边**（这条和奶黄/深紫檀两版的结论相反，见下面为什么）。容器是淡玫瑰
-    // `#FBCEDF`，压在暖调页面底上 WCAG 对比度只有 **1.34:1**——纯按亮度算，
-    // 两版旧品牌色也踩过这个数量级（奶黄 1.22:1、深紫檀 1.33:1），当时都靠一圈细描边
-    // 才勾得出轮廓。**这次量出同样的低对比度，但装到真机上一看，卡片其实很清楚**——
-    // 差别在于奶黄/深紫檀那两版容器和页面底**色相也很接近**（都是暖色调），
-    // 亮玫瑰容器和暖米页面底**色相离得远**（粉 vs 米黄），WCAG 对比度只看亮度、
-    // 看不出色相差异，但人眼看色相，肉眼上这张卡片边界很清楚，加边框反而多余
-    // （实机反馈"是不是不要边框比较好"，截图核对过确实不需要）。
-    // **通则：WCAG 对比度数字低不等于人眼看不清——色相差异大的时候，
-    // 光看这一个数字会误判，改完一定要装到真机上确认，不能只信计算器。**
+    // ⚠️ **No border** (this reverses the conclusion from both the cream-yellow and dark-purple
+    // versions, see why below). The container is pale rose `#FBCEDF`, which against the warm
+    // page background has a WCAG contrast of only **1.34:1** — purely by lightness, the two
+    // earlier brand-color versions hit the same order of magnitude (cream-yellow 1.22:1,
+    // dark-purple 1.33:1), and at the time both needed a thin border to trace out the outline.
+    // **This time the same low contrast number was measured, but once installed on a real
+    // device, the card was actually quite clear** — the difference is that in the cream-yellow/
+    // dark-purple versions the container and page background were **also close in hue** (both
+    // warm tones), while the bright-rose container and the warm-cream page background are **far
+    // apart in hue** (pink vs. cream). WCAG contrast only looks at lightness and can't see a hue
+    // difference, but the human eye sees hue — visually this card's boundary reads clearly, and
+    // adding a border turned out to be unnecessary (real-device feedback was "maybe it's better
+    // without a border", confirmed by comparing screenshots).
+    // **General rule: a low WCAG contrast number doesn't mean the human eye can't see it clearly
+    // — when hues are far apart, going by that one number alone can lead to a wrong call; always
+    // confirm on a real device after a change, don't trust the calculator alone.**
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -158,8 +179,9 @@ private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean)
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                // 眼睛和标签同一行、贴右边（卡片右上角）—— 它管的是整张卡片的金额，
-                // 所以放在卡片的角上，而不是挨着某一个具体数值。
+                // The eye icon shares a row with the label, flush right (the card's top-right
+                // corner) — it governs the amounts on the entire card, so it belongs at the
+                // card's corner rather than next to any one specific value.
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -178,17 +200,20 @@ private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean)
                     fontWeight = FontWeight.SemiBold,
                     color = onContainer,
                 )
-                // 数据新鲜度。没有任何快照时不显示这一行（新用户走的是空状态分支，
-                // 但归档全部资产后也可能落到这里）
+                // Data freshness. This line isn't shown when there are no snapshots at all (new
+                // users go through the empty-state branch, but this can also be reached after
+                // archiving every asset)
                 lastRecordDescription(state.lastRecordedDate, state.daysSinceLastRecord)?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall, color = onContainer)
                 }
             }
 
             if (point != null && !point.totalLiabilities.isZero) {
-                // 两列而不是三列：360dp 宽的手机上三列每格只有 90dp，
-                // 七位数金额（¥1,234,567.00）就要断行 —— 金额断行比多占一行难看得多。
-                // 负债率跟在总负债下面当注脚，它本来就是这两个数除出来的。
+                // Two columns rather than three: on a 360dp-wide phone, three columns leave only
+                // 90dp per cell, forcing a 7-digit amount (¥1,234,567.00) to wrap — a wrapped
+                // amount looks far worse than taking up one extra line. The liability ratio
+                // trails below total liabilities as a footnote, since it's derived from these
+                // exact two numbers.
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     KpiCell(
                         label = "总资产",
@@ -201,31 +226,39 @@ private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean)
                             hidden,
                             point.totalLiabilities.formatWithCurrency(currency),
                         ),
-                        // 负债率是**比率**，藏金额时照常显示 —— 单看它推不出欠了多少钱，
-                        // 而它是这一格最有用的那个数
-                        // null = 总资产 ≤ 0，此时比率无意义。不写成 0% —— 那会被读成"没负债"
+                        // The liability ratio is a **ratio**, so it's shown as usual even when
+                        // amounts are hidden — on its own it can't reveal how much is owed, and
+                        // it's the most useful number in this cell
+                        // null = total assets <= 0, in which case the ratio is meaningless. Not
+                        // written as 0% — that would be read as "no liabilities"
                         sub = "负债率 ${point.liabilityRatioBp?.bpToPercent() ?: "—"}",
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
 
-            // 净值增长和浮动盈亏是**两个不同口径**，必须写清区别 ——
-            // 见 docs/domain.md「增长率：两种口径必须分开」。
-            // 完整解释收进 (i)，不再占一整行常驻文字。
+            // Net worth growth and unrealized gain/loss are **two different bases**, and the
+            // distinction must be spelled out — see "growth rate: the two bases must be kept
+            // separate" in docs/domain.md. The full explanation is tucked into an (i), no longer
+            // taking up a permanent line of text.
             //
-            // 这两条不做成上面那种分格：标签本身就有十来个汉字，并排时每格
-            // 只剩 120dp，**标签和数值都会断行**（360dp 实测："净值增长（含新增投"
-            // 换行、"-¥12,000.00 ·" 后面吊着一个分隔点）。而且两个标签换行行数不同时，
-            // 下面的数值会一高一低，分格排布反而更乱。改成整行「标签在左、数值在右」：
-            // 数值先量、永远完整，宽度不够只让标签折行。
+            // These two aren't laid out as cells like above: the labels themselves run to a
+            // dozen-odd Chinese characters, and side by side each cell would have only 120dp
+            // left, forcing **both the label and the value to wrap** (360dp real test: "Net
+            // worth growth (including new c" wraps, and "-¥12,000.00 ·" is left dangling with a
+            // separator dot after it). And when the two labels wrap to different numbers of
+            // lines, the values below end up misaligned in height, making the cell layout even
+            // messier. Switched to full-width "label on the left, value on the right" rows: the
+            // value is measured first and stays whole, and only the label wraps if space is tight.
             MetricRow(
                 label = "净值增长（含新增投入）",
                 value = growthValue(state, hidden),
                 sub = growthSub(state),
                 valueColor = signedColor(state.series?.growthAbsolute?.minorUnits),
-                // 注意这里**不能**写 Markdown 的 `**加粗**`：`Text` 不解析标记，
-                // 星号会原样显示在气泡里（模拟器上截图确认过）。要强调就靠措辞和「」。
+                // Note: Markdown-style `**bold**` **must not** be used here — `Text` doesn't
+                // parse markup, and the asterisks would show up literally in the tooltip bubble
+                // (confirmed via a simulator screenshot). Emphasis has to come from wording and
+                // 「」quotation marks instead.
                 info = "「净值增长」= 期末净值 ÷ 期初净值 − 1，连你新存进去的钱一起算 —— " +
                     "这个月存一万工资进来，它也会涨，那不是赚的。" +
                     "「浮动盈亏」= 市值 − 成本，才反映投资本身的表现，" +
@@ -242,20 +275,23 @@ private fun SummaryCard(state: NetWorthUiState, onToggleAmountsHidden: (Boolean)
 }
 
 /**
- * 净值增长：**含新增投入**，金额和百分比一起给。
+ * Net worth growth: **includes new contributions**, given as amount plus percentage together.
  *
- * [hidden] 只换掉金额那一半，百分比留着 —— "•••••• · +2.10%" 仍然告诉用户涨了多少，
- * 但推不出身价。"没有变化"这句本身不含金额，藏与不藏都照原样给。
+ * [hidden] only swaps out the amount half, leaving the percentage — "•••••• · +2.10%" still
+ * tells the user how much things went up, without revealing net worth. The "no change" phrase
+ * itself contains no amount, so it's given as-is regardless of hidden state.
  */
 private fun growthValue(state: NetWorthUiState, hidden: Boolean): String {
     val series = state.series
     val delta = series?.growthAbsolute
     val bp = series?.growthBp
     return when {
-        // 只有一次记录时没有期初，显示"—"并在注脚说清缺什么 —— 空着会让人以为是 0
+        // With only one record there's no starting point, so show "—" and explain what's
+        // missing in the footnote — leaving it blank would look like 0
         delta == null -> "—"
-        // 一直没更新估值时结转会让首尾两点完全相等，这在本 App 里很常见。
-        // "¥0.00 · 0.00%" 要读两个数才知道"没动"，直说更快
+        // If the valuation was never updated, carry-forward makes the first and last points
+        // exactly equal, which is common in this app. "¥0.00 · 0.00%" takes reading two numbers
+        // to realize "nothing changed" — saying so directly is faster
         delta.isZero -> "没有变化"
         else -> {
             val amount = maskAmount(hidden, delta.formatSigned(state.baseCurrency))
@@ -265,10 +301,12 @@ private fun growthValue(state: NetWorthUiState, hidden: Boolean): String {
 }
 
 /**
- * 增长的基准是哪一期。同一个 +2% 在按月/按季/按年下比的起点完全不同。
+ * Which period the growth is measured against. The same +2% has a completely different starting
+ * point depending on monthly/quarterly/yearly view.
  *
- * 没有数的时候必须说清是**哪一种**没有：只记过一次，和"记过但两端不可比"，
- * 用户要做的事完全不同（一个是再记一次，一个是去补行情/汇率）。
+ * When there's no number, it must state clearly **which kind** of missing it is: "recorded only
+ * once" versus "recorded, but the two ends aren't comparable" call for completely different
+ * actions from the user (one is "record again", the other is "go fill in the missing quote/FX rate").
  */
 private fun growthSub(state: NetWorthUiState): String? {
     val series = state.series ?: return null
@@ -277,7 +315,7 @@ private fun growthSub(state: NetWorthUiState): String? {
     return series.baselineDate?.periodLabel(series.period)?.let { "相比 $it" }
 }
 
-/** 浮动盈亏：**剔除新增投入**。[hidden] 的口径同 [growthValue]。 */
+/** Unrealized gain/loss: **excludes new contributions**. [hidden] behaves the same as in [growthValue]. */
 private fun pnlValue(state: NetWorthUiState, hidden: Boolean): String {
     val pnl = state.pnl?.takeIf { it.hasCoverage } ?: return "—"
     val rate = pnl.pnl.returnBp
@@ -285,14 +323,15 @@ private fun pnlValue(state: NetWorthUiState, hidden: Boolean): String {
     return if (rate == null) absolute else "$absolute · ${rate.bpToSignedPercent()}"
 }
 
-/** 覆盖面必须写出来：没填成本的资产不参与，这个数只代表填了的那几项。 */
+/** The coverage must be stated: assets with no cost basis entered are excluded, so this number only represents the assets that have one. */
 private fun pnlSub(state: NetWorthUiState): String {
-    // 没有覆盖时不是"盈亏为 0"，是"没填成本所以算不了" —— 顺便告诉用户缺什么
+    // When there's no coverage, it's not "gain/loss is 0" — it's "no cost basis entered, so it
+    // can't be computed" — this also tells the user what's missing
     val pnl = state.pnl?.takeIf { it.hasCoverage } ?: return "还没填成本"
     return "覆盖 ${pnl.coveredAssetIds.size} 项资产"
 }
 
-/** 涨跌配色：中国股市语境红涨绿跌，见 [com.boomsset.ui.GainLossColors]。 */
+/** Gain/loss coloring: red for up, green for down per the Chinese stock market convention; see [com.boomsset.ui.GainLossColors]. */
 @Composable
 private fun signedColor(minorUnits: Long?): Color = when {
     minorUnits == null || minorUnits == 0L -> MaterialTheme.colorScheme.onPrimaryContainer
@@ -301,11 +340,12 @@ private fun signedColor(minorUnits: Long?): Color = when {
 }
 
 /**
- * 「标签在上、数值在下」的一格。
+ * A cell with "label on top, value below".
  *
- * 数值用 `titleSmall` 而不是 `bodySmall`：这一格里数值才是要被扫视的东西，
- * 标签是给它定口径的注脚。整句式的 "净值增长 +2.10%（含新增投入）" 做不到这一点 ——
- * 那行里数字和文字一样重。
+ * The value uses `titleSmall` rather than `bodySmall`: in this cell the value is what's meant to
+ * be scanned, with the label as a footnote defining its basis. The full-sentence form
+ * "Net worth growth +2.10% (including new contributions)" couldn't achieve this — in that line
+ * the number and the text carry equal visual weight.
  */
 @Composable
 private fun KpiCell(
@@ -338,11 +378,13 @@ private fun KpiCell(
 }
 
 /**
- * 整行一个指标：**标签在左、数值在右**，注脚另起一行贴在标签下面。
+ * One metric as a full-width row: **label on the left, value on the right**, with the footnote
+ * on its own line below the label.
  *
- * 给标签加 `weight(1f)` 而不是给数值 —— Row 先按完整宽度量没有 weight 的子项，
- * 剩下的才分给带 weight 的。所以**数值总是完整的一行**，宽度不够时折的是标签
- * （标签是句子，折行读起来无所谓；金额折行会把一个数劈成两半）。
+ * `weight(1f)` is given to the label rather than the value — Row measures non-weighted children
+ * at their full width first, and only what's left gets divided among weighted ones. So the
+ * **value is always shown whole**, and when space runs short it's the label that wraps (a label
+ * is a sentence, wrapping it reads fine; wrapping an amount would split one number in half).
  */
 @Composable
 private fun MetricRow(
@@ -358,9 +400,10 @@ private fun MetricRow(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // (i) 要紧跟在标签文字后面，不能直接放进外层 Row —— 标签占了 weight(1f)
-            // 会把 (i) 推到数值旁边，看起来像是在解释数值。`fill = false` 让标签
-            // 只占它真正需要的宽度，(i) 才贴着标签末尾。
+            // The (i) has to sit right after the label text, not directly in the outer Row —
+            // giving the label weight(1f) there would push the (i) next to the value, making it
+            // look like it explains the value. `fill = false` makes the label take only the
+            // width it actually needs, so the (i) sits right at the end of the label.
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     label,
@@ -389,10 +432,11 @@ private fun MetricRow(
 }
 
 /**
- * 应用锁开关。
+ * The app lock toggle.
  *
- * 不可用时**说明原因并禁用**，而不是让用户开了之后发现进不去 ——
- * 「没录入」是去系统设置能解决的，「不支持」是无解的，两者要说清区别。
+ * When unavailable, **state the reason and disable it**, rather than letting the user turn it on
+ * and then discover they're locked out — "not enrolled" is something the system settings can
+ * fix, "unsupported" has no solution, and the distinction must be made clear.
  */
 @Composable
 private fun AppLockToggle(lockState: AppLockUiState, onToggle: (Boolean) -> Unit) {
@@ -433,15 +477,17 @@ private fun AppLockToggle(lockState: AppLockUiState, onToggle: (Boolean) -> Unit
 }
 
 /**
- * 基准币种（以哪种币种看净值）。
+ * The base currency (which currency net worth is viewed in).
  *
- * 原来是一排 9 个 `FilterChip` + 标签 + 一行说明，在手机上占掉三四行 ——
- * 实机反馈"位置占比太大"。这一页是只读的趋势概览，最值钱的是概览卡片和图表；
- * 而基准币种默认 CNY、**几乎从不改**，不该占这么大一块。
- * 添加资产页早就因为同样的理由把币种换成了下拉（见 `CurrencyDropdown`），这里跟上。
+ * Used to be a row of 9 `FilterChip`s + a label + a line of explanation, taking up three or four
+ * lines on a phone — real-device feedback was "takes up too much space". This page is a
+ * read-only trend overview, and what's most valuable is the summary card and the chart; the base
+ * currency defaults to CNY and is **almost never changed**, so it shouldn't take up this much room.
+ * The add-asset page already switched its currency picker to a dropdown for the same reason (see
+ * `CurrencyDropdown`); this follows suit.
  *
- * 说明文字收进 (i) —— "切换不会改写数据"是**用户切之前**才需要的一次性保证，
- * 常驻显示只是噪音。
+ * The explanatory text is tucked into an (i) — "switching won't rewrite any data" is a one-time
+ * reassurance only needed **before the user switches**, and showing it permanently is just noise.
  */
 @Composable
 private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
@@ -457,12 +503,14 @@ private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
                 onClick = { expanded = true },
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
-                // 箭头直接写字形，和项目里"＋""ⓘ"的用法一致（没有引图标依赖）
+                // The arrow is written directly as a glyph, consistent with how "＋" and "ⓘ" are
+                // used elsewhere in the project (no icon dependency pulled in)
                 Text("$selected ▾", style = MaterialTheme.typography.labelLarge)
             }
-            // 菜单锚在按钮这个 Box 上 —— DropdownMenu 自己会算位置，
-            // 不需要 ExposedDropdownMenuBox 那套（那是给文本输入框用的，
-            // 在这里会带进一个 56dp 高的输入框，正好和"省空间"相反）
+            // The menu is anchored to this Box around the button — DropdownMenu computes its own
+            // position, so ExposedDropdownMenuBox isn't needed (that's meant for text input
+            // fields, and using it here would pull in a 56dp-tall input field, exactly the
+            // opposite of "saving space")
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
@@ -470,9 +518,11 @@ private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
                 SUPPORTED_CURRENCIES.forEach { code ->
                     DropdownMenuItem(
                         text = { Text(code) },
-                        // 菜单展开时会盖住按钮本身（实机确认），所以当前币种必须在菜单里
-                        // 也标出来 —— 否则展开后就看不出现在是哪一种了。
-                        // 用勾而不是只换颜色：颜色单独承载状态对色弱用户不成立。
+                        // The menu covers the button itself when expanded (confirmed on a real
+                        // device), so the current currency must also be marked inside the menu —
+                        // otherwise, once expanded, there'd be no way to tell which one is active.
+                        // A checkmark is used rather than just changing the color: relying on
+                        // color alone to carry state doesn't work for color-weak users.
                         trailingIcon = if (code == selected) {
                             { Text("✓") }
                         } else {
@@ -494,15 +544,18 @@ private fun BaseCurrencySelector(selected: String, onSelect: (String) -> Unit) {
 }
 
 /**
- * 图表区：控件 + 图例 + 图表 + 脚注。
+ * The chart area: controls + legend + chart + footnotes.
  *
- * 四种组合（总资产/按大类 × 柱状图/趋势图）共用这一块，**能不能画**的判断也集中在这里 ——
- * 分散到各个图表里的话，"什么都没画出来"就会变成一张空图，而不是一句说明
- * （AGENTS.md 教训 10 就是这么来的）。
+ * All four combinations (total assets/by-class × column chart/trend chart) share this block, and
+ * the **can-it-be-drawn** decision is also centralized here — scattering it across each
+ * individual chart would turn "nothing got drawn" into an empty chart rather than an explanatory
+ * message (this is exactly how AGENTS.md lesson 10 came about).
  *
- * ⚠️ **藏金额时图表的纵轴刻度必须一起藏。** 只藏卡片的话，纵轴上还写着"13万"，
- * 顶上那个占位符就成了摆设 —— 一个只挡住一半的隐私开关比没有更糟，
- * 用户会以为自己已经藏好了。柱子的形状和增长率带留着：形状是相对的，推不出金额。
+ * ⚠️ **When amounts are hidden, the chart's y-axis ticks must be hidden along with them.** If only
+ * the card is hidden, the y-axis would still show "130K", making the placeholder at the top
+ * pointless — a privacy toggle that only blocks half the picture is worse than none at all,
+ * since the user would think they'd already hidden everything. The shape of the columns and the
+ * growth-rate band are kept: shape is a relative quantity and can't reveal the amount.
  */
 @Composable
 private fun ChartSection(
@@ -569,7 +622,7 @@ private fun ChartControls(
             onSelectChartStyle(if (on) ChartStyle.TREND else ChartStyle.COLUMN)
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(CONTROL_HEIGHT)) {
-            // ⚠️ Text 不解析 Markdown，这里不能写 **强调**，会原样显示成四个星号
+            // ⚠️ Text doesn't parse Markdown, so **emphasis** must not be written here — it would show up literally as four asterisks
             InfoTooltip(
                 "柱状图每根柱子上方是相对前一根的涨跌幅，四舍五入到整数 —— " +
                     "十几根柱子并排时，带小数的百分比会被截断，截断的数字比没有更糟。" +
@@ -581,20 +634,22 @@ private fun ChartControls(
 }
 
 /**
- * 所有控件统一 40dp 高。
+ * All controls are uniformly 40dp tall.
  *
- * `FlowRow` 里的项默认按顶端对齐，而 `OutlinedButton`（40dp）和 `Switch`（32dp）
- * 高度不一样，不统一的话下拉按钮和开关会差着几 dp 错开。
+ * Items in a `FlowRow` are top-aligned by default, and `OutlinedButton` (40dp) and `Switch`
+ * (32dp) have different heights — without unifying them, the dropdown button and the switch
+ * would sit a few dp out of alignment.
  */
 private val CONTROL_HEIGHT = 40.dp
 
 /**
- * 带文字标签的开关。
+ * A switch with a text label.
  *
- * `Switch` 上要显式给 [contentDescription]：标签是**相邻的兄弟节点**，不会并进开关自己的
- * 无障碍节点里 —— 不给的话读屏用户听到的只是"开关，已开启"，而这一页有三个开关
- * （按大类 / 趋势图 / 应用锁），根本分不出是哪一个。顺带也让 XCUITest 能按名字定位到它，
- * 和输入框那几个 `field-*` 是同一套办法（见 [com.boomsset.ui.FIELD_NAME] 的注释）。
+ * `Switch` needs [contentDescription] set explicitly: the label is a **sibling node**, not
+ * merged into the switch's own accessibility node — without it, a screen-reader user hears only
+ * "switch, on", and this page has three switches (by class / trend chart / app lock), giving no
+ * way to tell which one it is. This also lets XCUITest locate it by name, the same approach used
+ * for the `field-*` input fields (see the comment on [com.boomsset.ui.FIELD_NAME]).
  */
 @Composable
 private fun LabeledSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
@@ -613,11 +668,13 @@ private fun LabeledSwitch(label: String, checked: Boolean, onCheckedChange: (Boo
 }
 
 /**
- * 周期从一排 `FilterChip` 改成下拉。
+ * The period picker changed from a row of `FilterChip`s to a dropdown.
  *
- * 理由和币种那个一样（见 [BaseCurrencySelector]）：这一页最值钱的是概览卡片和图表，
- * 三个常驻 chip 占一整行、而三选一的下拉只占一个按钮。省下来的横向空间正好给了
- * 旁边两个新开关 —— 三个控件挤在一行才放得下。
+ * The reasoning is the same as for the currency picker (see [BaseCurrencySelector]): what's most
+ * valuable on this page is the summary card and the chart, and three permanent chips take up a
+ * whole row while a pick-one-of-three dropdown takes up just one button. The horizontal space
+ * saved is exactly what makes room for the two new switches next to it — only then do all three
+ * controls fit on one line.
  */
 @Composable
 private fun PeriodSelector(selected: Period, onSelect: (Period) -> Unit) {
@@ -634,7 +691,8 @@ private fun PeriodSelector(selected: Period, onSelect: (Period) -> Unit) {
             Period.entries.forEach { period ->
                 DropdownMenuItem(
                     text = { Text(period.label()) },
-                    // 菜单会盖住按钮本身，当前选中项必须在菜单里也标出来（同币种下拉）
+                    // The menu covers the button itself, so the currently selected item must also
+                    // be marked inside the menu (same as the currency dropdown)
                     trailingIcon = if (period == selected) {
                         { Text("✓") }
                     } else {
@@ -657,13 +715,15 @@ private fun Period.label(): String = when (this) {
 }
 
 /**
- * 大类图例，勾选控制画哪几类。
+ * The class legend, with checkboxes controlling which classes get drawn.
  *
- * 颜色**画在复选框上**而不是另加一个色块：色块和名字之间隔着一个复选框会让
- * "这个颜色是这一类"变得不那么直接，而且五项各多 16dp 在手机宽度上就是多折一行。
- * 未勾选时方框是空心的、边框仍是该类的颜色，所以颜色和名称的对应关系不会因为
- * 取消勾选就消失（浅色模式下几个大类色低于 3:1，**必须靠"色块旁边永远有名字"补偿**，
- * 见 AGENTS.md 的配色约束）。
+ * Color is **painted onto the checkbox itself** rather than adding a separate swatch: with a
+ * checkbox sitting between a swatch and the name, "this color means this class" becomes less
+ * direct, and 16dp extra per item across five items means an extra wrapped line at phone widths.
+ * When unchecked, the box is hollow with its border still in that class's color, so the
+ * color-to-name mapping doesn't disappear just because it's unchecked (in light mode several
+ * class colors fall below 3:1 contrast, and **this must be compensated for by always having a
+ * name next to the swatch**, per the color constraints in AGENTS.md).
  */
 @Composable
 private fun ClassLegend(hidden: Set<AssetClass>, onToggle: (AssetClass) -> Unit) {
@@ -688,10 +748,11 @@ private fun ClassLegend(hidden: Set<AssetClass>, onToggle: (AssetClass) -> Unit)
 }
 
 /**
- * 按大类看时的口径说明。
+ * The explanation of what's being measured in the by-class view.
  *
- * 第一句是必须的：这张图的合计**不等于**上面那个净值 —— 分类看的是净敞口、
- * 且只算"计入配置"的资产。不说清楚，用户会以为哪里算错了。
+ * The first sentence is necessary: this chart's total **does not equal** the net worth figure
+ * above — the by-class view looks at net exposure, and only counts assets marked "included in
+ * allocation". Without stating this, users would think something was computed wrong.
  */
 @Composable
 private fun AllocationChartNotes(style: ChartStyle, hasNegative: Boolean) {
@@ -702,9 +763,12 @@ private fun AllocationChartNotes(style: ChartStyle, hasNegative: Boolean) {
     if (hasNegative) {
         ChartNote(
             when (style) {
-                // Vico 的堆叠柱原生支持负值，负的那段画在零线下方，是真实情况，不遮掩
+                // Vico's stacked columns natively support negative values, drawing the negative
+                // segment below the zero line — this reflects reality and is not hidden
                 ChartStyle.COLUMN -> "有大类的净敞口是负的（负债超过了这类资产），画在零线下方。"
-                // 堆叠面积靠"累计值单调递增"才成立，有负段就会分层错位 —— 宁可换一种画法
+                // A stacked area chart only holds up when the cumulative value is monotonically
+                // increasing; a negative segment would scramble the layering — better to switch
+                // to a different rendering
                 ChartStyle.TREND -> "有大类的净敞口是负的，堆叠面积在这种情况下会分层错位，" +
                     "所以改成各类各画一条线（不填充）。"
             },
@@ -722,7 +786,7 @@ private fun ChartNote(text: String) {
 }
 
 @Composable
-private fun UnpricedWarning(count: Int) {
+private fun UnpricedWarning(count: Int, onRetry: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -732,24 +796,34 @@ private fun UnpricedWarning(count: Int) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("$count 项资产无法估值", style = MaterialTheme.typography.titleSmall)
             Text(
-                // 同上：`Text` 不解析 Markdown，原来这里的 `**没有**` 在界面上
-                // 就是四个星号（和上面那个 tooltip 是同一个坑）
+                // Same as above: `Text` doesn't parse Markdown, so the `**none**` that used to be
+                // here showed up on screen as four literal asterisks (the same pitfall as the
+                // tooltip above)
                 "可能是缺行情/汇率，也可能是份额或价格的数量级超出了可计算范围。" +
                     "这些资产没有计入上面的净值 —— 不按 0 计算，是为了避免静默低估。",
                 style = MaterialTheme.typography.bodySmall,
             )
+            // If the first automatic FX-rate fetch after adding a foreign-currency asset happens
+            // to fail (a network blip), no subsequent event would ever trigger a retry, and
+            // restarting the app used to be the only option — this button provides a recovery
+            // path without a restart; see the comment on RateRefresher.retryAll.
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onRetry) { Text("重试") }
+            }
         }
     }
 }
 
 /**
- * 空状态的上手指引。
+ * The empty-state onboarding guide.
  *
- * 原来只有一句"点右下角加号"。问题是**新用户不知道这个 App 的工作方式**：
- * 它不记流水、记快照，这跟大部分记账 App 相反 —— 不先说清楚，用户会按记流水的
- * 预期去用，然后觉得功能缺失。所以这里把三步说完，并且指出配置可以先设。
+ * It used to be just "tap the + in the bottom right". The problem is **new users don't know how
+ * this app works**: it records snapshots, not transactions, which is the opposite of most
+ * budgeting apps — without stating this upfront, users would use it expecting transaction
+ * entry and then feel like a feature was missing. So this spells out all three steps, and points
+ * out that the target allocation can be set up first.
  *
- * 刻意保持短：三条各一行。空状态放长篇说明没人看。
+ * Deliberately kept short: three items, one line each. Nobody reads a long essay in an empty state.
  */
 @Composable
 private fun EmptyHint() {

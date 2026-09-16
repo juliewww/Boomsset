@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
-"""校验 app icon 的配色和几何。改了 generate.py 的常量就跑这个。
+"""Validate the app icon's color scheme and geometry. Run this after changing any
+constants in generate.py.
 
     python3 tools/appicon/validate.py
 
-⚠️ **这一版删掉了「环的五段 = ChartColors 的五个大类色」那组检查。**
-图标从「破环而出」（分段环 + 三根柱）换成了「驮着钱的飞猪」，环和柱都不存在了，
-那几条判据没有可检查的对象。删掉是对的 —— 留着一条永远 FAIL 或永远空转的检查，
-比没有检查更糟，它会让人以为还有东西在把关。
+WARNING: **this version removes the check group "the ring's five segments = ChartColors'
+five asset-class colors".** The icon changed from "breaking out of the ring" (a
+segmented ring + three bars) to "flying pig carrying money" -- the ring and bars no
+longer exist, so those checks have nothing left to check against. Removing them was
+the right call -- keeping a check that either always FAILs or always no-ops is worse
+than having no check at all, since it gives the false impression that something is
+still being gated.
 
-**配色**
-  1. 图标底色 FIELD 和 Theme.kt 的品牌色**同一个色相角**
-  2. 自适应背景层的色值 = FIELD（前景把缝隙留成透明，露出的就是它）
-  3. 钱币对猪身要有分离度 —— 金和粉的**亮度几乎一样**（1.11:1），
-     全靠那圈深金描边分开。这条锁住"描边没被顺手删掉"
+**Color scheme**
+  1. The icon background color FIELD shares **the same hue angle** as Theme.kt's brand
+     color
+  2. The adaptive background layer's color value = FIELD (the foreground leaves the gaps
+     transparent, so this is what shows through)
+  3. The coins need separation from the pig's body -- gold and pink have **nearly
+     identical lightness** (1.11:1), so the dark-gold outline is the only thing keeping
+     them apart. This check locks in "the outline wasn't accidentally deleted"
 
-**几何**（直接读生成物，不信常量）
-  4. 自适应前景的**全部不透明像素**落在直径 66/108 的保证可见圆内。
-     ⚠️ 这条**不能靠核对常量**：上一版有个手算的 `CONTENT_R`，**算错了 27%**
-     （最远的点不在想当然的位置），前景因此超出安全圆、在圆形遮罩的启动器上被削掉，
-     而这本地合成看不出来。现在 generate.py 改成扫像素自适应了，这条是它的独立复核。
-  5. iOS 那张 1024 **不能带 alpha 通道**（带 alpha 会被 App Store 拒）。
+**Geometry** (reads the generated artifact directly, doesn't trust the constants)
+  4. **All opaque pixels** of the adaptive foreground fall within the guaranteed-visible
+     circle of diameter 66/108.
+     WARNING: this check **cannot rely on checking a constant**: the previous version
+     had a hand-computed `CONTENT_R` that was **off by 27%** (the farthest point wasn't
+     where it was assumed to be), so the foreground overflowed the safe circle and got
+     clipped on launchers with a circular mask, invisible when composited locally.
+     generate.py now scans pixels adaptively instead; this check is its independent
+     cross-check.
+  5. The iOS 1024 image **must not have an alpha channel** (having one gets it rejected
+     by the App Store).
 
-退出码 0 全过，1 有 FAIL。
+Exit code 0 = all pass, 1 = at least one FAIL.
 """
 import math
 import os
@@ -33,9 +45,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import generate as G  # noqa: E402
 
-# 色相角允许的误差（度）。**不能取太紧**：8-bit 量化会把色相角推 ±1.5°。
+# Allowed tolerance for the hue angle (degrees). **Can't be too tight**: 8-bit
+# quantization can push the hue angle by ±1.5°.
 HUE_TOL = 3.0
-COIN_EDGE_MIN = 1.6     # 描边色对钱币色的对比度下限（它是唯一的分隔手段）
+COIN_EDGE_MIN = 1.6     # minimum contrast of the outline color against the coin color (the only means of separation)
 
 
 def _s2l(c):
@@ -85,10 +98,11 @@ def check(ok, label, detail):
 
 print("配色")
 
-# 1. 图标底色和 Theme.kt 的品牌色同色相
+# 1. The icon background color and Theme.kt's brand color share the same hue
 theme = os.path.join(ROOT, "shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt")
-# 匹配 `val Brand<任意名>` —— 这个常量名已经改过四次（Amber→Olive→Gold→Cream→Rose），
-# 写死名字只会让验证器在下次改色时假报警。
+# Matches `val Brand<any name>` -- this constant's name has already changed four
+# times (Amber -> Olive -> Gold -> Cream -> Rose); hardcoding the name would just
+# make the validator false-alarm the next time the color changes.
 brand = re.search(r"val Brand\w* = Color\(0xFF([0-9A-Fa-f]{6})\)", open(theme).read())
 if not brand:
     check(False, "图标底与品牌色同色相", "Theme.kt 里找不到 `val Brand* = Color(0xFF……)`")
@@ -100,19 +114,19 @@ else:
           f"BRAND_HUE={G.BRAND_HUE}° · 偏差 {abs(bh - G.BRAND_HUE):.1f}° / "
           f"{abs(fh - G.BRAND_HUE):.1f}°（容差 {HUE_TOL}°）")
 
-# 蹄色应当就是 Theme.kt 的 primary 本身 —— 图标和 UI 共用一个色值
+# The hoof color should be exactly Theme.kt's primary -- the icon and the UI share one color value
 if brand:
     check(hex_to_rgb(brand.group(1)) == G.HOOF, "蹄色 = Theme.kt 的 primary",
           f"图标 #{'%02X%02X%02X' % G.HOOF} · Theme #{brand.group(1).upper()}")
 
-# 2. 自适应背景层的色值必须等于 FIELD
+# 2. The adaptive background layer's color value must equal FIELD
 colors = os.path.join(ROOT, "androidApp/src/main/res/values/colors.xml")
 bg = ET.parse(colors).getroot().find("./color[@name='ic_launcher_bg']")
 check(bg is not None and hex_to_rgb(bg.text) == G.FIELD,
       "背景层色值 = FIELD",
       f"colors.xml {bg.text if bg is not None else '缺失'} · FIELD #{'%02X%02X%02X' % G.FIELD}")
 
-# 3. 钱币靠描边和猪身分开
+# 3. The coins are separated from the pig's body by their outline
 c_body = contrast(G.GOLD, G.BODY)
 c_edge = contrast(G.GEDGE, G.GOLD)
 print(f"  [INFO] 金对猪身               {c_body:.2f}:1 —— 几乎一样，所以描边是**唯一**的分隔手段")
@@ -127,13 +141,14 @@ try:
     n = im.width
     px = im.getchannel("A").load()
     cx = cy = n / 2
-    # **逐像素**找真正最远的不透明点。用包围盒的角算会高估 ——
-    # 那个角上往往根本没有像素，会把没问题的设计判成超界。
+    # Find the truly farthest opaque point **pixel by pixel**. Computing from the
+    # bounding box's corner would overestimate it -- there's often no pixel at all at
+    # that corner, which would wrongly flag a fine design as out of bounds.
     far = 0.0
     for y in range(n):
         dy2 = (y - cy) ** 2
         for x in range(n):
-            if px[x, y] > 8:        # 8：忽略抗锯齿边缘的近透明像素
+            if px[x, y] > 8:        # 8: ignore near-transparent anti-aliased edge pixels
                 r2 = (x - cx) ** 2 + dy2
                 if r2 > far:
                     far = r2

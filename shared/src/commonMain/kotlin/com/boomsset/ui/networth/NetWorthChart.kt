@@ -26,6 +26,7 @@ import com.boomsset.domain.Money
 import com.boomsset.domain.NetWorthSeries
 import com.boomsset.domain.Period
 import com.boomsset.domain.PortfolioCalculator
+import com.boomsset.ui.chartAnimationSpec
 import com.boomsset.ui.fallColor
 import com.boomsset.ui.riseColor
 import com.boomsset.ui.theme.chartColors
@@ -53,41 +54,47 @@ import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.datetime.LocalDate
 
-/** 图表看的是哪个口径。 */
+/** Which basis the chart is viewed in. */
 enum class ChartMode {
-    /** 一根柱子 = 整体净值。 */
+    /** One column = total net worth. */
     TOTAL,
 
-    /** 一根柱子按五大类堆叠，每个周期仍然只有一根。 */
+    /** One column stacked by the five classes; still only one column per period. */
     ALLOCATION,
 }
 
-/** 图表画成什么样子。 */
+/** What shape the chart is drawn as. */
 enum class ChartStyle {
-    /** 柱状图：每个周期一根，柱顶上方标出相对前一根的增长率。 */
+    /** Column chart: one column per period, with the growth rate relative to the previous column labeled above it. */
     COLUMN,
 
-    /** 趋势图：面积/折线，看的是形状而不是逐期的涨跌幅。 */
+    /** Trend chart: area/line, focused on shape rather than period-over-period swings. */
     TREND,
 }
 
 private val CHART_HEIGHT = 220.dp
 
 /**
- * 净值页的图表。四种组合：总资产/按大类 × 柱状图/趋势图。
+ * The net worth page's chart. Four combinations: total assets/by-class × column chart/trend chart.
  *
- * ⚠️ **每种组合都套在 `key(mode, style)` 里，让切换时整个 host 离开 composition。**
- * 这不是风格问题，是 Vico 的一条硬约束：`CartesianChartModelProducer.collectAsState`
- * 里有一句 `check(previousHashCode == null || hashCode == previousHashCode)`，
- * 给同一个 host 换一个 producer 会直接抛异常。而柱状图和趋势图需要的 model 类型不同
- * （`columnModel` / `lineModel`），一个 producer 里同时塞两种也不行 ——
- * 图表的 y 轴范围是按 `model.models` **全体**算的，用不到的那份 model 会把范围一起撑开。
- * `key()` 让每种组合各自持有一个干净的 producer，互不干扰。
+ * ⚠️ **Each combination is wrapped in `key(mode, style)`, so the whole host leaves composition
+ * on switch.** This isn't a style preference, it's one of Vico's hard constraints:
+ * `CartesianChartModelProducer.collectAsState` contains
+ * `check(previousHashCode == null || hashCode == previousHashCode)`, so swapping in a different
+ * producer for the same host throws immediately. And the column chart and trend chart need
+ * different model types (`columnModel` / `lineModel`); stuffing both into one producer doesn't
+ * work either — the chart's y-axis range is computed from **all** of `model.models`, so the
+ * model that isn't in use would still stretch the range. `key()` gives each combination its own
+ * clean producer, isolated from the others.
  *
- * @param visibleClasses 按大类看时要画哪几类，**必须按 [AssetClass.displayOrder] 排好** ——
- *   堆叠顺序和颜色顺序都依赖它，乱序会让同一类在柱状图和趋势图里换位置。
- * @param hideAmounts 眼睛图标藏起金额时为 true —— **纵轴刻度整条不画**。
- *   柱子/曲线的形状和顶上的增长率都留着：那些是相对量，藏了反而把这一页变成一张白图。
+ * @param visibleClasses Which classes to draw when viewing by class; **must be sorted by
+ *   [AssetClass.displayOrder]** — both stacking order and color order depend on it, and an
+ *   out-of-order list would make the same class swap position between the column chart and the
+ *   trend chart.
+ * @param hideAmounts True when the eye icon is hiding amounts — **the entire y-axis tick label
+ *   column is skipped**. The shape of the columns/lines and the growth-rate labels above them
+ *   are both kept: those are relative quantities, and hiding them too would turn this page into
+ *   a blank picture.
  */
 @Composable
 fun NetWorthChart(
@@ -115,31 +122,39 @@ fun NetWorthChart(
 }
 
 /**
- * 趋势图至少要两个点才画得出线段 —— 只有一个点时 Vico 什么都不画，
- * 用户看到的是一张只有坐标轴的空图（这就是当初把净值图从纯折线改成柱状图的原因，
- * 见 AGENTS.md 教训 10）。趋势图现在是用户主动选的，所以点数不够时要**明说**，
- * 而不是给一张空图让人以为是坏了。
+ * A trend chart needs at least two points to draw a line segment — with only one point Vico
+ * draws nothing at all, leaving the user looking at an empty chart with just axes (this is
+ * exactly why the net worth chart was originally changed from a plain line chart to a column
+ * chart, see AGENTS.md lesson 10). The trend chart is now something the user opts into, so when
+ * there aren't enough points it must **say so explicitly**, rather than showing an empty chart
+ * that looks broken.
  */
 fun canDrawTrend(pointCount: Int): Boolean = pointCount >= 2
 
-// ---------------------------------------------------------------- 柱状图
+// ---------------------------------------------------------------- Column chart
 
 /**
- * 总资产柱状图。
+ * The total-assets column chart.
  *
- * 只有一个点时，Vico 会把那一根柱子放大到撑满整条 x 轴，`thickness` 完全不起作用——
- * 实机验证过：把 thickness 从 10dp 改到 1dp，柱子宽度肉眼看不出任何变化。原因是
- * `CartesianChartHost` 默认会把内容缩放到填满视口，只有 1 个 x 位置时缩放系数就变得很大。
+ * With only one point, Vico blows that column up to fill the entire x-axis, and `thickness` has
+ * no effect whatsoever — verified on a real device: changing thickness from 10dp to 1dp produced
+ * no visible change in column width at all. The reason is that `CartesianChartHost` by default
+ * scales content to fill the viewport, and with only 1 x position the scale factor becomes huge.
  *
- * 改 x 轴范围（把 minX 往左扩）修不了这个：Vico 在测量坐标轴标签宽度时会对扩出来的
- * "虚拟" x 位置也调一次 `valueFormatter`，而那些位置没有对应日期、formatter 只能返回
- * 空串 —— Vico 明确不允许（`IllegalStateException`，异常信息就写着"改用 ItemPlacer"）。
+ * Changing the x-axis range (extending minX to the left) doesn't fix this: when Vico measures
+ * the axis label widths, it also calls `valueFormatter` once for the extended "virtual" x
+ * positions, and since those positions have no corresponding date, the formatter can only return
+ * an empty string — which Vico explicitly disallows (`IllegalStateException`, whose message says
+ * to use ItemPlacer instead).
  *
- * 用的是**幽灵系列**：借 `MergeMode.Grouped` 把同一个 x 位置的宽度切成 5 份，
- * 真实数据占中间那份，其余 4 份是全 0 值的占位系列（0 高度 = 不可见）。
- * ⚠️ Grouped 按 `series()` 的调用顺序从左到右排子柱，所以占位系列必须**左右各两个**、
- * 真实系列夹在正中间 —— 否则柱子贴在这个 x 位置最左边，而坐标轴标签是按整个位置的
- * 中心画的，看起来就是"柱子对错了日期"（实机反馈过一次）。
+ * Uses **phantom series** instead: `MergeMode.Grouped` is borrowed to split the width at that one
+ * x position into 5 slices, with the real data occupying the middle one and the other 4 being
+ * placeholder series that are all zero (zero height = invisible). ⚠️ Grouped lays out sub-columns
+ * left to right in the order `series()` was called, so the placeholder series must be **split
+ * two on each side**, with the real series sandwiched in the exact middle — otherwise the column
+ * would sit flush against the leftmost edge of that x position, while the axis label is drawn at
+ * the center of the whole position, which looks like "the column doesn't match its date" (this
+ * was actually seen in real-device feedback once).
  */
 @Composable
 private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modifier: Modifier) {
@@ -151,7 +166,7 @@ private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modif
     LaunchedEffect(series) {
         if (values.isEmpty()) return@LaunchedEffect
         modelProducer.runTransaction {
-            // 标签必须和这一批数据点**同一个 transaction** 落地 —— 见 [AxisLabelsKey]
+            // Labels must land in **the same transaction** as this batch of data points — see [AxisLabelsKey]
             extras {
                 it[AxisLabelsKey] = labels
                 it[GrowthLabelsKey] = growth
@@ -168,25 +183,32 @@ private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modif
         }
     }
 
-    // 柱子直接用 `colorScheme.primary`。
-    // ⚠️ 这一条**和 primary 的亮度强耦合**：奶黄那一版 primary 对页面底只有 1.78:1，
-    // 当时不得不把柱子拆出一个单独的深色（`ChartColors.brand`）。
-    // 现在是中玫瑰，对页面底 **4.34:1**，柱子可以放心用单一品牌色。
-    // （中间短暂用过的亮玫瑰只有 3.00:1、压线，也是这次换成中玫瑰的原因之一。）
-    // **换品牌色时都要重新量这条，不能想当然复用上一版的判断。**
+    // The column uses `colorScheme.primary` directly.
+    // ⚠️ This choice is **tightly coupled to primary's lightness**: in the cream-yellow version,
+    // primary only had a 1.78:1 contrast against the page background, which forced the column to
+    // be split out into its own separate dark color (`ChartColors.brand`).
+    // Now it's mid rose, at **4.34:1** against the page background, so the column can safely use
+    // the single brand color.
+    // (The bright rose used briefly in between was only 3.00:1 — right at the line — which was
+    // also part of why it was switched to mid rose.)
+    // **Whenever the brand color changes, this must be re-measured — don't assume the previous
+    // version's conclusion still holds.**
     val brand = MaterialTheme.colorScheme.primary
-    // **实色，不加 alpha。** 这里原本是 `alpha = 0.5f` —— 那是柱子和折线叠画那一版的
-    // 遗留（半透明才能让折线透出来），折线删掉之后它只剩"把柱子变淡"这一个效果：
-    // 实测 0.5 alpha 下柱子对页面底只有 **1.95:1**（配旧紫），而柱子是这一页的主数据标记。
-    // （这个 alpha 一直都偏低 —— 配旧的 `#BD4D03` 是 2.08:1、配莫兰迪 `#918163`
-    // 更是 1.77:1，只是那时没人量过。）趋势图的区域填充也已经改成不透明，见 TotalTrendChart。
+    // **Solid color, no alpha.** This used to be `alpha = 0.5f` — a leftover from the version
+    // where columns and a line were drawn overlapping (transparency was needed so the line showed
+    // through). Once the line was removed, the alpha's only remaining effect was "make the column
+    // fainter": measured at 0.5 alpha the column only had **1.95:1** contrast against the page
+    // background (with the old purple), while the column is this page's primary data marker.
+    // (This alpha had always been too low — 2.08:1 with the old `#BD4D03`, and 1.77:1 with the
+    // Morandi `#918163` — it just had never been measured before.) The trend chart's area fill
+    // has likewise been changed to opaque, see TotalTrendChart.
     val column = rememberLineComponent(
         fill = Fill(brand),
         thickness = 10.dp,
         shape = RoundedCornerShape(2.dp),
     )
-    // 幽灵系列复用同一个 LineComponent 没关系 —— 它们的值是 0，画出来高度是 0，
-    // 用什么颜色都看不见。
+    // It's fine for the phantom series to reuse the same LineComponent — their values are 0, so
+    // they render at zero height and are invisible regardless of color.
     val columnCount = if (values.size == 1) PHANTOM_COLUMNS_PER_SIDE * 2 + 1 else 1
     val columnProvider = remember(columnCount, column) {
         ColumnCartesianLayer.ColumnProvider.series(List(columnCount) { column })
@@ -203,41 +225,48 @@ private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modif
             bottomAxis = rememberPeriodAxis(),
         ),
         modelProducer = modelProducer,
-        // 只用 Zoom.Content（不夹 Zoom.x）：1 个点时正好让那一个 x 位置铺满视口，
-        // 而真实柱子只占其中 1/5，幽灵系列的效果就是这么来的。
+        // Uses Zoom.Content alone (not clamped by Zoom.x): with 1 point this makes that single
+        // x position fill the viewport exactly, with the real column occupying only 1/5 of it —
+        // that's exactly where the phantom-series effect comes from.
         zoomState = rememberFittingZoomState(remember { Zoom.Content }),
+        // Vico defaults to 500ms (see [chartAnimationSpec]); switched to the M3-recommended 300ms.
+        animationSpec = chartAnimationSpec,
         modifier = modifier.fillMaxWidth().height(CHART_HEIGHT),
     )
 }
 
 /**
- * 柱状图一律「内容铺满、不横向滚动」。
+ * Column charts always use "fill content, no horizontal scrolling".
  *
- * Vico 默认的 `initialZoom` 是 `Zoom.max(Zoom.fixed(), Zoom.Content)` —— 柱子按 1:1
- * 排下来比视口宽时它取 1:1，图表变成可横向滚动，而**默认停在最左边**：
- * 最新那一期在屏幕外，还没有任何滚动提示。实机 12 根堆叠柱就是这样，9 月那根被切掉了。
- * 净值图最多 12 个点，全塞进一屏永远好过藏起最新一期。
+ * Vico's default `initialZoom` is `Zoom.max(Zoom.fixed(), Zoom.Content)` — when columns laid out
+ * at 1:1 would be wider than the viewport, it picks 1:1, making the chart horizontally
+ * scrollable, and **it defaults to sitting at the far left**: the most recent period is off
+ * screen, with no scroll hint at all. On a real device this is exactly what happened with 12
+ * stacked columns — the September one got cut off. The net worth chart has at most 12 points, and
+ * fitting them all on one screen is always better than hiding the most recent period.
  *
- * `minZoom` 必须一起给：它默认是 `Zoom.Content`，而 Vico 取 `max(minZoom, initialZoom)`，
- * 只改 `initialZoom` 会被拉回去。
+ * `minZoom` must be supplied alongside it: it defaults to `Zoom.Content`, and since Vico takes
+ * `max(minZoom, initialZoom)`, changing `initialZoom` alone would just get pulled back.
  */
 @Composable
 private fun rememberFittingZoomState(zoom: Zoom) =
     rememberVicoZoomState(zoomEnabled = false, initialZoom = zoom, minZoom = zoom)
 
 /**
- * 按大类堆叠的柱状图 —— 每个周期仍然只有一根柱子，柱子内部按五大类分段。
+ * The by-class stacked column chart — still one column per period, subdivided by the five classes.
  *
- * 段的口径是**净敞口**（该类资产 − 归属到该类的负债），和配置页完全一致。
- * 负敞口会被 Vico 画到零线**下方**（`MergeMode.Stacked` 原生支持），
- * 也就是说这时候"一根柱子"会变成上下两截 —— 这是真实情况，不做隐藏，
- * 页面上另有一行说明。
+ * Each segment's basis is **net exposure** (that class's assets minus the liabilities
+ * attributed to it), exactly consistent with the allocation page. A negative exposure gets drawn
+ * by Vico **below** the zero line (natively supported by `MergeMode.Stacked`), meaning "one
+ * column" can turn into an upper and a lower part in that case — this reflects reality and is
+ * not hidden; there's an explanatory line elsewhere on the page.
  *
- * ⚠️ 单点时柱子撑满的问题在这里**不能**用幽灵系列解决：Stacked 不切分同一个 x 位置的
- * 宽度（那是 Grouped 才做的事），加多少条 0 值系列柱子都不会变窄。改用 `Zoom.x(n)`
- * 让视口里至少容得下 n 个 x 单位，柱子自然只占 1/n。
- * `minZoom` 默认是 `Zoom.Content`，**必须一起改**，否则 Vico 取两者较大的那个，
- * 又把柱子放大回去。
+ * ⚠️ The single-point-fills-the-whole-width problem **cannot** be solved with phantom series
+ * here: Stacked doesn't split the width at a single x position (that's what Grouped does), so
+ * adding any number of zero-value series wouldn't narrow the column. Instead, `Zoom.x(n)` is used
+ * to make the viewport hold at least n x-units, so the column naturally occupies only 1/n of it.
+ * `minZoom` defaults to `Zoom.Content`, and **must be changed together with it**, otherwise Vico
+ * takes whichever is larger and blows the column back up.
  */
 @Composable
 private fun AllocationColumnChart(
@@ -248,8 +277,9 @@ private fun AllocationColumnChart(
 ) {
     val modelProducer = remember { CartesianChartModelProducer() }
     val labels = remember(series) { axisLabels(series.period, series.dates) }
-    // 增长率按**可见那几类的合计**算 —— 勾掉几类之后柱子矮了一截，
-    // 此时拿全量合计算出来的百分比和眼前的柱子对不上。
+    // Growth rate is computed from **the total of only the visible classes** — once a few
+    // classes are unchecked, the column gets shorter, and a percentage computed from the
+    // full total wouldn't match the column in front of you anymore.
     val growth = remember(series, classes) { growthLabels(series.totals(classes)) }
     val values = remember(series, classes) {
         classes.map { assetClass -> series.netExposures(assetClass).map { it.toYuan() } }
@@ -278,8 +308,9 @@ private fun AllocationColumnChart(
         ColumnCartesianLayer.ColumnProvider.series(columns)
     }
 
-    // 一个表达式同时管住两头：点多时 Content 更小（缩到刚好装下），
-    // 只有 1 个点时 Content 会把那根柱子拉宽到整屏、此时 Zoom.x 更小 —— min 取到的正是想要的那个。
+    // One expression handles both ends: with many points, Content is smaller (shrinks to fit
+    // exactly); with only 1 point, Content would stretch that column to fill the whole screen,
+    // in which case Zoom.x is smaller — taking the min gets exactly the one that's wanted.
     val fit = remember { Zoom.min(Zoom.Content, Zoom.x(SINGLE_POINT_SLOTS)) }
 
     CartesianChartHost(
@@ -294,13 +325,14 @@ private fun AllocationColumnChart(
         ),
         modelProducer = modelProducer,
         zoomState = rememberFittingZoomState(fit),
+        animationSpec = chartAnimationSpec,
         modifier = modifier.fillMaxWidth().height(CHART_HEIGHT),
     )
 }
 
-// ---------------------------------------------------------------- 趋势图
+// ---------------------------------------------------------------- Trend chart
 
-/** 总资产趋势：一条线 + 线下的淡填充。单序列用品牌色，不占用大类的分类色。 */
+/** Total-assets trend: a line + a faint fill below it. A single series uses the brand color rather than any class's color. */
 @Composable
 private fun TotalTrendChart(series: NetWorthSeries, hideAmounts: Boolean, modifier: Modifier) {
     val modelProducer = remember { CartesianChartModelProducer() }
@@ -312,11 +344,13 @@ private fun TotalTrendChart(series: NetWorthSeries, hideAmounts: Boolean, modifi
     }
 
     val brand = MaterialTheme.colorScheme.primary
-    // 区域填充：不透明。这里踩过两次 —— 先是 `brand.copy(alpha = 0.16f)`
-    // （16% 几乎等于没填），改成不透明之后又选了 `primaryContainer`，
-    // 那是 hero 卡片的底、整套里最浅的一档，实机上照样被反馈"不是实心的"。
-    // 现在用 `chartColors.trendArea`，它的取值**跟着 primary 的亮度走**，
-    // 每次换品牌色都要重解 —— 判据和三次换值的经过写在 ChartColors 的 trendArea 文档里。
+    // Area fill: opaque. This was gotten wrong twice — first `brand.copy(alpha = 0.16f)`
+    // (16% is nearly no fill at all), then after switching to opaque, `primaryContainer` was
+    // picked, which is the hero card's background, the lightest tone in the whole palette, and
+    // real-device feedback still called it "not solid". Now `chartColors.trendArea` is used,
+    // whose value **tracks primary's lightness** — it has to be re-derived every time the brand
+    // color changes; the rationale and the history of the three attempts are documented on
+    // ChartColors's trendArea.
     val area = chartColors.trendArea
     TrendChartFrame(series.dates, modifier) {
         CartesianChartHost(
@@ -332,24 +366,30 @@ private fun TotalTrendChart(series: NetWorthSeries, hideAmounts: Boolean, modifi
                 startAxis = rememberAmountAxis(hideAmounts),
             ),
             modelProducer = modelProducer,
+            animationSpec = chartAnimationSpec,
             modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
         )
     }
 }
 
 /**
- * 趋势图 + 图下的首末日期。
+ * The trend chart + the first/last dates below it.
  *
- * 趋势图看的是形状，中间那些刻度对判断走势没帮助、反而挤；但"这段曲线从哪天到哪天"
- * 必须交代 —— 没有它，一条上扬的曲线可能是三个月也可能是三年。
+ * A trend chart is about shape, so the intermediate tick marks don't help judge the trend and
+ * just crowd things — but "which day to which day does this curve span" absolutely must be
+ * stated, otherwise an upward-sloping curve could be three months or could be three years.
  *
- * ⚠️ **这两个日期是自己画的，没有用 Vico 的底部坐标轴。** 试过了，画不出来：
- * `AlignedHorizontalAxisItemPlacer.getLabelValues` 会跳过正好落在 x 范围端点上的值
- * （`potentialValue == fullXRange.endInclusive` 直接 break），而折线层两端不留白、
- * 最后一个点恰好就是那个端点，于是**末尾日期永远不画**（实机 12 个点时只有起始日期，
- * 连它那根竖向网格线都没有）。按文档给 `layerPadding` 加留白本该把端点让开，
- * 实机 1dp / 32dp / 150dp 三档试下来**画面一模一样**，那条参数在这个组合下不起作用。
- * 两个字符串的说明行不值得再跟布局引擎较劲，自己画反而每次都对。
+ * ⚠️ **These two dates are drawn manually, not via Vico's bottom axis.** This was tried and
+ * couldn't be made to work: `AlignedHorizontalAxisItemPlacer.getLabelValues` skips any value that
+ * falls exactly on the x-range's endpoint (it breaks the moment
+ * `potentialValue == fullXRange.endInclusive`), while the line layer leaves no padding at either
+ * end and the last point is exactly that endpoint, so **the trailing date is never drawn** (on a
+ * real device with 12 points, only the starting date showed, and it didn't even get its own
+ * vertical gridline). Per the documentation, adding padding via `layerPadding` should make room
+ * around the endpoint, but tested on a real device at three settings — 1dp / 32dp / 150dp — the
+ * result was **pixel-identical each time**; that parameter simply has no effect in this
+ * combination. Two strings of explanatory text aren't worth further fighting with the layout
+ * engine — drawing them manually just works, every time.
  */
 @Composable
 private fun TrendChartFrame(
@@ -364,8 +404,9 @@ private fun TrendChartFrame(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            // 空列表在这里画不出图，上层已经拦掉（canDrawTrend），兜底给空串也无妨 ——
-            // 这不是 Vico 的坐标轴，空串只是不显示，不会抛异常
+            // An empty list can't be drawn here anyway; the caller already guards against it
+            // (canDrawTrend), so falling back to an empty string is harmless — this isn't one of
+            // Vico's axes, an empty string here just doesn't display, it doesn't throw
             TrendDateLabel(labels.firstOrNull())
             TrendDateLabel(labels.lastOrNull())
         }
@@ -382,17 +423,20 @@ private fun TrendDateLabel(text: String?) {
 }
 
 /**
- * 按大类的趋势图 —— 正常情况下是**堆叠面积**。
+ * The by-class trend chart — normally a **stacked area** chart.
  *
- * Vico 没有原生的堆叠面积图。这里是用「累计边界 + 不透明填充 + 后画的盖前画的」拼出来的：
- * 第 k 条线画的是前 k+1 类的累计值、各自填到 0，从最高的那条开始画，
- * 后面每条盖住前面一截，剩下的可见部分正好就是那一类的带子。
+ * Vico has no native stacked area chart. This is assembled from "cumulative boundaries + opaque
+ * fill + later draws covering earlier ones": the k-th line draws the cumulative value of the
+ * first k+1 classes, each filled down to 0, drawn starting from the highest one, with each
+ * subsequent line covering part of the previous one, leaving exactly that class's band visible.
  *
- * ⚠️ 这个拼法**要求每一段都非负**。净敞口是可以为负的（车贷超过车值、
- * 信用卡欠款超过流动资金），一旦有负值，累计就不再单调、边界互相穿插，
- * 画出来是一张看着正常、其实分层错位的图。所以先问
- * [AllocationSeries.hasNegativeExposure]，命中就**退回各类独立曲线**（不填充），
- * 页面上同时给出说明 —— 宁可换一种表达，也不给一张静默画错的图。
+ * ⚠️ This technique **requires every segment to be non-negative**. Net exposure can be negative
+ * (a car loan exceeding the car's value, credit card debt exceeding liquid assets), and once
+ * there's a negative value the cumulative sum is no longer monotonic and the boundaries cross
+ * each other, producing a chart that looks normal but has its layers scrambled. So
+ * [AllocationSeries.hasNegativeExposure] is checked first, and if it's true, it **falls back to
+ * independent per-class lines** (unfilled), with an explanation shown on the page at the same
+ * time — better to switch to a different representation than to silently render a wrong chart.
  */
 @Composable
 private fun AllocationTrendChart(
@@ -410,8 +454,9 @@ private fun AllocationTrendChart(
         val bands = if (stacked) stackedBands(perClass) else perClass
         bands.map { band -> band.map { it / 100.0 } }
     }
-    // 堆叠时从最高的那条开始画（后画的盖前画的）；退回独立曲线时顺序无所谓，
-    // 保持大类展示顺序，图例读起来和配置页一致。
+    // When stacked, drawing starts from the highest line (later draws cover earlier ones); when
+    // falling back to independent lines the order doesn't matter, so the class display order is
+    // kept so the legend reads consistently with the allocation page.
     val order = remember(lineValues, stacked) {
         if (stacked) lineValues.indices.reversed().toList() else lineValues.indices.toList()
     }
@@ -441,24 +486,30 @@ private fun AllocationTrendChart(
                 startAxis = rememberAmountAxis(hideAmounts),
             ),
             modelProducer = modelProducer,
+            animationSpec = chartAnimationSpec,
             modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
         )
     }
 }
 
-// ---------------------------------------------------------------- 坐标轴
+// ---------------------------------------------------------------- Axes
 
 /**
- * 顶部的增长率标签带 —— 每根柱子上方一个"相对前一根涨跌多少"。
+ * The growth-rate label band at the top — above each column, "how much it moved relative to the
+ * previous one".
  *
- * **为什么是一条坐标轴，而不是 Vico 自带的 `dataLabel`：** dataLabel 的 formatter
- * 只拿得到 y 值、拿不到 x，只能靠"y 值 → 标签"的映射表反查。而这个 App 的结转语义
- * 让**相邻周期净值完全相同**很常见（没记新快照就沿用上次估值，有测试锁着），
- * 两根一样高的柱子会共用同一个键，增长率就会标反 —— 静默算错，不能接受。
- * 坐标轴的 formatter 拿得到 x，按下标取值，不存在这个问题。
+ * **Why this is an axis rather than Vico's built-in `dataLabel`:** dataLabel's formatter only has
+ * access to the y value, not x, so it has to look things up via a "y value → label" mapping
+ * table. But this app's carry-forward semantics make **identical net worth in adjacent
+ * periods** common (if no new snapshot was recorded, the previous valuation is carried forward,
+ * and this is locked in by tests) — two columns of the same height would share the same key, and
+ * the growth-rate label would end up on the wrong one — a silent miscalculation that's
+ * unacceptable. An axis's formatter has access to x and looks values up by index, so this problem
+ * doesn't arise.
  *
- * 颜色逐个标签不同（红涨绿跌）靠的是返回 [AnnotatedString]：Vico 的 TextComponent
- * 会把 `CharSequence` 原样交给 `TextMeasurer`，是 AnnotatedString 就走带 span 的重载。
+ * Per-label coloring (red for up, green for down) relies on returning an [AnnotatedString]:
+ * Vico's TextComponent passes the `CharSequence` through to `TextMeasurer` as-is, and when it's
+ * an AnnotatedString the span-aware overload is used.
  */
 @Composable
 private fun rememberGrowthAxis(): HorizontalAxis<Axis.Position.Horizontal.Top> {
@@ -466,7 +517,8 @@ private fun rememberGrowthAxis(): HorizontalAxis<Axis.Position.Horizontal.Top> {
     val fall = fallColor()
     val neutral = MaterialTheme.colorScheme.onSurfaceVariant
     return HorizontalAxis.rememberTop(
-        // 线、刻度、网格线全去掉：这一条不是真的坐标轴，只是借它的定位能力摆一排标签
+        // Line, tick, and gridline all removed: this isn't really an axis, it's just borrowing
+        // its positioning ability to lay out a row of labels
         line = null,
         label = rememberAxisLabelComponent(
             style = MaterialTheme.typography.labelSmall.copy(color = neutral),
@@ -479,14 +531,17 @@ private fun rememberGrowthAxis(): HorizontalAxis<Axis.Position.Horizontal.Top> {
         },
         tick = null,
         guideline = null,
-        // spacing/offset 和底部的周期轴**完全一致**：这样标了增长率的柱子底下一定也有月份，
-        // 读起来是"8月 +12%"一组，而不是上下两排各标各的。
+        // spacing/offset are **exactly the same** as the period axis at the bottom: this way a
+        // column labeled with a growth rate always also has a month label beneath it, reading as
+        // one group like "Aug +12%" rather than two rows each labeled independently.
         //
-        // ⚠️ 不能图省事用 `aligned()` 的默认值（spacing = 1、offset = 0）。
-        // `aligned()` 默认 `addExtremeLabelPadding = true`，Vico 会把 spacing 再乘上
-        // `ceil(maxLabelWidth / xSpacing)` 防止标签重叠 —— 12 根柱子时实际间隔变成 2，
-        // 而 offset 还是 0，于是标到 0/2/4/6/8/10，**最后一根（最新那期）恰好漏掉**。
-        // 实机截图确认过：12 个月时只有 6 个百分比，且最右边那根柱子头上是空的。
+        // ⚠️ Don't take the shortcut of using `aligned()`'s defaults (spacing = 1, offset = 0).
+        // `aligned()` defaults to `addExtremeLabelPadding = true`, under which Vico multiplies
+        // spacing by `ceil(maxLabelWidth / xSpacing)` to prevent labels from overlapping — with
+        // 12 columns the effective spacing becomes 2, while offset stays 0, so labels land on
+        // 0/2/4/6/8/10, **and the last one (the most recent period) is exactly the one that gets
+        // skipped**. Confirmed via a real-device screenshot: at 12 months there were only 6
+        // percentages, and the rightmost column had nothing above it.
         itemPlacer = remember {
             HorizontalAxis.ItemPlacer.aligned(
                 spacing = { extras -> axisLabelSpacing(extras.labelCount(GrowthLabelsKey)) },
@@ -496,12 +551,13 @@ private fun rememberGrowthAxis(): HorizontalAxis<Axis.Position.Horizontal.Top> {
     )
 }
 
-/** 底部的周期标签（"8月" / "Q3" / "2026"），点多时按 [axisLabelSpacing] 稀疏标注。 */
+/** The period label at the bottom ("Aug" / "Q3" / "2026"); thinned out per [axisLabelSpacing] when there are many points. */
 @Composable
 private fun rememberPeriodAxis(): HorizontalAxis<Axis.Position.Horizontal.Bottom> =
     HorizontalAxis.rememberBottom(
-        // x 和标签的对应关系一律从**正在绘制的那个 model** 上取，不从 composition
-        // 捕获的 series 上取 —— 见 [AxisLabelsKey]，那是一次真实崩溃的修复。
+        // The x-to-label mapping is always read from **the model currently being drawn**, never
+        // from a `series` captured by composition — see [AxisLabelsKey], which is the fix for a
+        // real crash.
         valueFormatter = { context, x, _ ->
             axisLabelAt(context.model.extraStore.getOrNull(AxisLabelsKey), x)
         },
@@ -514,27 +570,35 @@ private fun rememberPeriodAxis(): HorizontalAxis<Axis.Position.Horizontal.Bottom
     )
 
 /**
- * 纵轴金额，缩写成「万/亿」—— 完整数字（600900.36）会占掉三四十 dp 的绘图宽度。
+ * The y-axis amount, abbreviated to "10K/100M" — the full number (600900.36) would take up
+ * thirty or forty dp of drawing width.
  *
- * [hideAmounts] 时把 `label` 整个给 null（Vico 的 `rememberStart` 允许，
- * 画标签那一步是 `label ?: return@forEach`），**刻度线和网格线留着** ——
- * 没有它们柱子就悬在空处，读不出高低。
+ * When [hideAmounts] is set, `label` is set to null entirely (Vico's `rememberStart` allows this;
+ * the label-drawing step is `label ?: return@forEach`), while **the tick marks and gridlines are
+ * kept** — without them the columns would float in empty space with no readable scale.
  *
- * 不走"formatter 返回占位符"那条路：Vico 会在每一个刻度上都画一遍那个占位符，
- * 变成纵向一列重复的 `••••••`，比不画更吵。（顺带避开了 `check(isNotBlank())`。）
+ * Not going the "formatter returns a placeholder" route: Vico would draw that placeholder once
+ * per tick, turning into a vertical column of repeated `••••••`, noisier than drawing nothing.
+ * (This incidentally also avoids `check(isNotBlank())`.)
  *
- * ⚠️ **`label = null` 必须连 `itemPlacer` 一起换掉**（模拟器截图才看出来的）。
- * 两个 placer 在 `maxLabelHeight == 0`（= 没有标签）时的行为都是**特例分支**：
- * - `step()`（默认）跳过防重叠那一步，直接用 `10^(floor(log10(maxY))-1)` 当步长 ——
- *   净值 238 万时步长就是 10 万，**23 条横向网格线**，柱子被条纹糊掉。
- * - `count()` 有一句短路：标签高度为 0 时只返回 `minY` 和 `maxY`，
- *   于是横向网格线整个消失。**这正是想要的** —— 网格线是给标签读数用的，
- *   标签没了它们只剩装饰。竖向的月份网格线来自底部坐标轴，不受影响。
+ * ⚠️ **`label = null` must be changed together with `itemPlacer`** (only discovered from a
+ * simulator screenshot). Both placers have **special-case branches** when
+ * `maxLabelHeight == 0` (= no labels):
+ * - `step()` (the default) skips the anti-overlap step and uses
+ *   `10^(floor(log10(maxY))-1)` directly as the step size — at a net worth of ¥2.38M the step
+ *   becomes ¥100K, giving **23 horizontal gridlines**, smearing the columns into stripes.
+ * - `count()` has a short-circuit: when the label height is 0, it returns only `minY` and
+ *   `maxY`, so the horizontal gridlines disappear entirely. **This is exactly what's wanted** —
+ *   gridlines exist to help read label values, and with no labels they're just decoration. The
+ *   vertical month gridlines come from the bottom axis and are unaffected.
  *
- * 传给 `count` 的数字在这条路径上其实用不到（短路发生在它之前），写 2 是把意图说明白：
- * 只要两端。将来 Vico 去掉那条短路，`count(2)` 仍然是 2 条线，不会退回条纹。
+ * The number passed to `count` isn't actually used on this path (the short-circuit happens
+ * before it), but 2 is written to make the intent explicit: just the two ends. If Vico ever
+ * removes that short-circuit in the future, `count(2)` would still draw 2 lines rather than
+ * reverting to stripes.
  *
- * **通则：把某个组件设成 null 之前，先查清楚谁在拿它的尺寸算别的东西。**
+ * **General rule: before setting some component to null, first find out who else is reading its
+ * size to compute something else.**
  */
 @Composable
 private fun rememberAmountAxis(hideAmounts: Boolean): VerticalAxis<Axis.Position.Vertical.Start> =
@@ -550,46 +614,52 @@ private fun rememberAmountAxis(hideAmounts: Boolean): VerticalAxis<Axis.Position
         },
     )
 
-/** 只要 y 轴两端（最小值和最大值），中间不画网格线。见 [rememberAmountAxis]。 */
+/** Only the two ends of the y-axis (min and max), no gridlines in between. See [rememberAmountAxis]. */
 private const val AXIS_ENDS_ONLY = 2
 
-// ---------------------------------------------------------------- 纯函数
+// ---------------------------------------------------------------- Pure functions
 
 private fun Money.toYuan(): Double = minorUnits / 100.0
 
 /**
- * 只有一个取样点时，人为让视口"容得下"这么多个 x 单位，柱子就只占其中一格。
+ * When there's only one sample point, artificially make the viewport "hold" this many x-units,
+ * so the column occupies only one slot within it.
  *
- * 取 2 是实机比出来的：Vico 画出的柱宽约等于「视口宽 ÷ (2 × 槽数)」，
- * 槽数取 2 时那根柱子的宽度和**有两个点时**的柱子一模一样 ——
- * 看起来就是"两根里的第一根，第二根还没记"，而不是一块撑满全宽的实心矩形
- * （那是 AGENTS.md 教训 13 里被反馈过的样子）。
- * 槽数再大（试过 6）柱子会细成一条，右边空一大片，反而像画坏了。
+ * 2 was arrived at through real-device comparison: the column width Vico draws is roughly
+ * "viewport width ÷ (2 × slot count)"; with a slot count of 2, that column's width comes out
+ * identical to a column **when there are two points** — reading as "the first of two, the
+ * second not recorded yet" rather than a solid rectangle filling the entire width (the look that
+ * drew feedback in AGENTS.md lesson 13). A larger slot count (6 was tried) makes the column shrink
+ * to a sliver with a big empty gap on the right, which looks broken in its own way.
  */
 private const val SINGLE_POINT_SLOTS = 2.0
 
-/** 幽灵系列每侧的数量，真实系列夹在正中间。见 [TotalColumnChart] 的注释。 */
+/** The number of phantom series on each side, with the real series sandwiched exactly in the middle. See the comment on [TotalColumnChart]. */
 private const val PHANTOM_COLUMNS_PER_SIDE = 2
 
 /**
- * x 轴标签**跟着 model 一起走**，通过 [ExtraStore] 塞进同一次 `runTransaction`。
+ * The x-axis labels **travel together with the model**, pushed into the same `runTransaction`
+ * via [ExtraStore].
  *
- * 修的是一次实机崩溃：**按月切到按季/按年直接闪退**。
- * `modelProducer` 跨 period 切换一直活着，而模型更新是 `LaunchedEffect` 里的
- * **suspend transaction**（还带过渡动画）。切 period 的那一帧，composition 已经拿到
- * 新的 `series`（比如按年只有 1 个点），Vico 手里却还是旧模型（按月 12 个点）——
- * 之前 formatter 直接闭包捕获 `series.dates`，于是被问到越界的 x 时返回空串，
- * 而 Vico 对每个轴标签都有 `check(isNotBlank())`，**空串直接抛异常**。
+ * This fixes a real-device crash: **switching from monthly to quarterly/yearly caused an
+ * immediate crash**. `modelProducer` stays alive across period switches, while the model update
+ * happens inside a **suspend transaction** in `LaunchedEffect` (with a transition animation on
+ * top). During the frame where the period is switched, composition already has the new `series`
+ * (say, only 1 point for yearly), but Vico still holds the old model (12 points for monthly) —
+ * previously the formatter directly closed over `series.dates`, so when asked about an
+ * out-of-range x it returned an empty string, and since Vico runs `check(isNotBlank())` on every
+ * axis label, **an empty string threw immediately**.
  *
- * `itemPlacer` 的 spacing/offset 是同一个坑的另一半：`getFirstLabelValue()` 会用
- * `minX + offset * xStep` 去问 formatter，**这个 x 不做范围裁剪**。
+ * `itemPlacer`'s spacing/offset is the other half of the same pitfall: `getFirstLabelValue()`
+ * asks the formatter using `minX + offset * xStep`, and **this x is not range-clipped**.
  *
- * 判据：**凡是 formatter/ItemPlacer 需要的东西，都必须和数据点在同一个 transaction 里，
- * 不能从 composition 捕获。** 否则"UI 状态"和"图表模型"之间必然有一帧不一致。
+ * The rule: **anything formatter/ItemPlacer needs must live in the same transaction as the data
+ * points, never captured from composition.** Otherwise there is necessarily a frame where "UI
+ * state" and "chart model" are out of sync.
  */
 private val AxisLabelsKey = ExtraStore.Key<List<String>>()
 
-/** 增长率标签，理由同 [AxisLabelsKey]。 */
+/** Growth-rate labels, for the same reason as [AxisLabelsKey]. */
 private val GrowthLabelsKey = ExtraStore.Key<List<GrowthLabel>>()
 
 private fun <T> ExtraStore.labelCount(key: ExtraStore.Key<List<T>>): Int = getOrNull(key)?.size ?: 0
@@ -609,20 +679,22 @@ internal fun axisLabels(series: NetWorthSeries): List<String> =
 internal fun dateLabels(dates: List<LocalDate>): List<String> = dates.map { it.toString() }
 
 /**
- * 标签数量超过这个值就会在一张手机宽度的图上挤到重叠/截断
- * （实测：12 个月标签挤在一起，"10月"/"11月"/"12月" 被截断成"10…"/"11…"/"12…"）。
+ * Beyond this many labels, they'd crowd into overlapping/truncated text on a phone-width chart
+ * (observed: 12 monthly labels crammed together, with "Oct"/"Nov"/"Dec" truncated to "10…"/"11…"/"12…").
  */
 private const val MAX_AXIS_LABELS = 6
 
-/** Vico 的默认 itemPlacer 是"每个点都放一个标签"，点数超过阈值就每隔几个点标一次。 */
+/** Vico's default itemPlacer is "one label per point"; once the point count exceeds the threshold, only label every few points. */
 internal fun axisLabelSpacing(labelCount: Int): Int =
     if (labelCount <= MAX_AXIS_LABELS) 1
     else (labelCount + MAX_AXIS_LABELS - 1) / MAX_AXIS_LABELS
 
 /**
- * `aligned` 默认从 minX（下标 0）开始数，每隔 spacing 个点标一次 ——
- * 点数不是 spacing 的整数倍时，**最后一个点（今天所在的周期）可能刚好落不到标签上**，
- * 而那正是用户最关心的点。取"最后一个下标 mod spacing"，让标签序列反过来从最后一个点对齐。
+ * `aligned` by default counts from minX (index 0), labeling every `spacing` points — when the
+ * point count isn't a multiple of spacing, **the last point (the period containing today) can
+ * end up not landing on a label**, and that's exactly the point the user cares about most.
+ * Taking "the last index mod spacing" makes the label sequence align from the last point
+ * backwards instead.
  */
 internal fun axisLabelOffset(labelCount: Int): Int {
     val spacing = axisLabelSpacing(labelCount)
@@ -630,9 +702,11 @@ internal fun axisLabelOffset(labelCount: Int): Int {
 }
 
 /**
- * 取不到标签时给一个占位符而**不是空串** —— Vico 对每个轴标签都做 `check(isNotBlank())`，
- * 返回空串会抛异常把 App 打崩。标签现在随 model 走，正常情况下不会走到这个分支；
- * 留着是因为"崩掉"和"多一个占位点"完全不对等，兜底必须便宜且安全。
+ * When a label can't be found, a placeholder is given rather than **an empty string** — Vico
+ * runs `check(isNotBlank())` on every axis label, and returning an empty string would throw and
+ * crash the app. Labels now travel with the model, so under normal circumstances this branch is
+ * never hit; it's kept because "crashing" and "one extra placeholder point" are not remotely
+ * equivalent outcomes — the fallback must be cheap and safe.
  */
 internal const val MISSING_AXIS_LABEL = "·"
 
@@ -640,24 +714,26 @@ internal fun axisLabelAt(labels: List<String>?, x: Double): String =
     labels?.getOrNull(x.toInt())?.takeIf { it.isNotBlank() } ?: MISSING_AXIS_LABEL
 
 /**
- * 一根柱子相对前一根的增长率标签。
+ * A column's growth-rate label relative to the previous one.
  *
- * [direction] 是 1 / -1 / 0，UI 按它上色 —— **不要去解析 [text] 的正负号**，
- * "算不出来"的占位符和负号长得像但不是一回事。
+ * [direction] is 1 / -1 / 0, used by the UI to color it — **do not parse the sign from [text]**;
+ * the "can't be computed" placeholder happens to look like a minus sign but is not one.
  */
 internal data class GrowthLabel(val text: String, val direction: Int) {
     companion object {
         /**
-         * 算不出来：第一根柱子没有前一根，或者上一根 ≤ 0（分母无意义）。
+         * Can't be computed: the first column has no previous one, or the previous one is <= 0
+         * (the denominator would be meaningless).
          *
-         * **不能是空白串** —— 它会经过 Vico 的 `check(isNotBlank())`。
-         * 也不写成 "0%"：那是"没有变化"，和"算不出来"完全是两回事。
+         * **Must not be a blank string** — it would be caught by Vico's `check(isNotBlank())`.
+         * Also not written as "0%": that means "no change", which is entirely different from
+         * "can't be computed".
          */
         val MISSING = GrowthLabel("—", 0)
     }
 }
 
-/** UI 侧上色。红涨绿跌是中国股市语境，见 [com.boomsset.ui.GainLossColors]。 */
+/** Colored on the UI side. Red for up, green for down reflects the Chinese stock market convention; see [com.boomsset.ui.GainLossColors]. */
 private fun GrowthLabel.annotated(rise: Color, fall: Color, neutral: Color): AnnotatedString {
     val color = when {
         direction > 0 -> rise
@@ -668,19 +744,22 @@ private fun GrowthLabel.annotated(rise: Color, fall: Color, neutral: Color): Ann
 }
 
 /**
- * 每根柱子相对**前一根**的增长率。
+ * Each column's growth rate relative to the **previous** one.
  *
- * 复用 [PortfolioCalculator.growthBp]，和顶部卡片那个"整段区间的净值增长"共用
- * 同一条"期初 ≤ 0 就算不出"的判据 —— 两处各写一遍除法，迟早会一处显示「—」、
- * 另一处显示某个凭空算出来的百分比。
+ * Reuses [PortfolioCalculator.growthBp], sharing the same "can't be computed when the starting
+ * value is <= 0" rule with the top card's "net worth growth over the whole period" — if the
+ * division were written twice in two places, sooner or later one would show "—" while the other
+ * showed some percentage computed out of thin air.
  */
 internal fun growthLabels(values: List<Money>): List<GrowthLabel> =
     values.mapIndexed { index, value ->
         val previous = values.getOrNull(index - 1) ?: return@mapIndexed GrowthLabel.MISSING
         val bp = PortfolioCalculator.growthBp(previous.minorUnits, value.minorUnits)
             ?: return@mapIndexed GrowthLabel.MISSING
-        // 方向按**四舍五入之后**的那个数判，不是按原始基点：+0.19% 显示出来是 "0%"，
-        // 此时再涂成"涨"的红色就自相矛盾（字说没动、颜色说涨了）。颜色跟着看得见的数走。
+        // Direction is judged from the number **after rounding**, not the raw basis points:
+        // +0.19% displays as "0%", and coloring it "up" red at that point would be
+        // self-contradictory (the text says no change, the color says it went up). Color
+        // follows the number that's actually visible.
         val percent = roundToPercent(bp)
         GrowthLabel(text = formatGrowthPercent(bp), direction = percent.compareTo(0))
     }
@@ -689,12 +768,14 @@ internal fun growthLabelAt(labels: List<GrowthLabel>?, x: Double): GrowthLabel =
     labels?.getOrNull(x.toInt()) ?: GrowthLabel.MISSING
 
 /**
- * 增长率格式化成**整数百分比**，四舍五入。
+ * The growth rate is formatted as an **integer percentage**, rounded.
  *
- * 不是偷懒：12 根柱子并排时每根只分到二十几 dp，"+12.34%" 放不下会被截断成 "+12…"，
- * 而一个被截断的数字比没有更糟。精确到小数的那个数在顶部卡片里（那里只有一个，放得下）。
+ * This isn't laziness: with 12 columns side by side, each only gets a couple dozen dp, and
+ * "+12.34%" wouldn't fit and would get truncated to "+12…" — a truncated number is worse than no
+ * number. The decimal-precision figure lives on the top card (where there's only one, so it fits).
  *
- * 四舍五入而不是截断：+0.9% 截断成 "+0%" 会被读成"没动"，而它其实涨了。
+ * Rounded rather than truncated: truncating +0.9% to "+0%" would read as "no change", when it
+ * actually went up.
  */
 internal fun roundToPercent(bp: Int): Int = (bp + if (bp >= 0) 50 else -50) / 100
 
@@ -703,20 +784,21 @@ internal fun formatGrowthPercent(bp: Int): String {
     return when {
         rounded > 0 -> "+$rounded%"
         rounded < 0 -> "$rounded%"
-        // 真的四舍五入到 0（比如 +0.3%）：给 "0%" 而不是 "+0%"，
-        // 后者会让人以为是"涨了一点点但显示不出来"
+        // Genuinely rounds to 0 (e.g. +0.3%): give "0%" rather than "+0%" —
+        // the latter would suggest "went up a tiny bit that just can't be displayed"
         else -> "0%"
     }
 }
 
 /**
- * 纵轴金额标签：**万/亿**缩写。
+ * The y-axis amount label: abbreviated to **10K/100M** (万/亿).
  *
- * 和 [com.boomsset.ui.formatCompact] 的阈值一致（中文语境用万/亿，不用 K/M），
- * 但这里的输入是 Vico 给的 Double（元），不是 Money —— 轴上的刻度值本来就是
- * Vico 按范围算出来的，不对应任何一笔真实金额，所以不需要走定点数那条路。
+ * Consistent with [com.boomsset.ui.formatCompact]'s thresholds (10K/100M rather than K/M, per
+ * Chinese convention), but the input here is the Double (yuan) that Vico provides, not a Money —
+ * a tick value on the axis is a range computed by Vico itself and doesn't correspond to any real
+ * amount, so there's no need to go through the fixed-point path.
  *
- * 永远不返回空串：Vico 对轴标签有 `check(isNotBlank())`。
+ * Never returns an empty string: Vico runs `check(isNotBlank())` on axis labels.
  */
 internal fun compactAmountLabel(yuan: Double): String {
     val magnitude = abs(yuan)
@@ -728,7 +810,7 @@ internal fun compactAmountLabel(yuan: Double): String {
     return if (yuan < 0 && body != "0") "-$body" else body
 }
 
-/** 保留一位小数，末尾的 .0 去掉。用 Long 算，避免 Double 的科学计数法。 */
+/** Keeps one decimal place, dropping a trailing .0. Computed with Long to avoid Double's scientific notation. */
 private fun Double.oneDecimal(): String {
     val scaled = (this * 10).roundToLong()
     val whole = scaled / 10
@@ -737,13 +819,15 @@ private fun Double.oneDecimal(): String {
 }
 
 /**
- * 堆叠面积图的累计边界：第 k 条 = 前 k+1 段之和。
+ * Cumulative boundaries for the stacked area chart: the k-th line = the sum of the first k+1 segments.
  *
- * 画法是每条边界各自填到 0、从最高的那条开始画、后画的盖住前画的，
- * 露出来的那截正好是该类的带子。
+ * The technique is that each boundary is filled down to 0 on its own, drawn starting from the
+ * highest one, with each later draw covering part of the previous one, so what's left visible is
+ * exactly that class's band.
  *
- * ⚠️ **要求每一段非负**，否则累计不单调、边界互相穿插，画出来分层是错的。
- * 调用方必须先问 [AllocationSeries.hasNegativeExposure]。
+ * ⚠️ **Requires every segment to be non-negative**, otherwise the cumulative sum isn't monotonic
+ * and the boundaries cross each other, producing an incorrectly layered chart. Callers must
+ * check [AllocationSeries.hasNegativeExposure] first.
  */
 internal fun stackedBands(seriesByClass: List<List<Long>>): List<List<Long>> {
     val running = LongArray(seriesByClass.firstOrNull()?.size ?: 0)

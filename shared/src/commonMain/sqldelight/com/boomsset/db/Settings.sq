@@ -1,10 +1,11 @@
--- 简单键值设置表。
+-- Simple key-value settings table.
 --
--- **偏离 docs/stack.md 的一处：这里没用 DataStore。**
--- 理由：目前只需要存一个基准币种字符串，而 DataStore 要引入新依赖 +
--- okio Path + 两个平台的路径实现，而且它的非 Android 目标至今是 Google 官方标注的
--- experimental。为一个字符串付这个代价不值得，也多担一份 iOS 上的风险。
--- 等真有批量偏好（主题、提醒、应用锁配置）再上 DataStore，届时这张表可以迁过去。
+-- **One deviation from docs/stack.md: DataStore is not used here.**
+-- Reason: right now we only need to store a single base-currency string, while DataStore would
+-- pull in a new dependency + okio Path + per-platform path implementations, and its non-Android
+-- targets are still officially marked experimental by Google. Paying that cost for one string
+-- isn't worth it, and it would add extra iOS risk. Once there's a real batch of preferences
+-- (theme, reminders, app-lock config), adopt DataStore then and this table can be migrated over.
 CREATE TABLE settings (
     key   TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL

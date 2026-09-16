@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      API 31+ 的系统开屏。`windowSplashScreenBackground` 只在这一档存在 ——
-      放进 values/ 会在低版本上报未知属性。图标沿用 `android:icon`（自适应图标），
-      系统自己套圆形遮罩并再缩一次，所以这里不用也不该另指定图标。
+      System splash screen for API 31+. `windowSplashScreenBackground` only exists at this level —
+      putting it in values/ would report an unknown attribute on lower versions. The icon reuses
+      `android:icon` (the adaptive icon); the system applies its own circular mask and rescales it,
+      so there's no need to — and shouldn't be a need to — specify a separate icon here.
     -->
     <style name="Theme.Boomsset" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/splash_bg</item>

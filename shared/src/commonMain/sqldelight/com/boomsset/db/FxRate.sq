@@ -1,7 +1,9 @@
--- 汇率。折算历史净值必须用**当时的汇率**，不是今天的 ——
--- 否则汇率波动会污染历史曲线，让用户看到自己从没经历过的涨跌。
+-- Exchange rates. Converting historical net worth must use **the rate at that time**, not
+-- today's rate -- otherwise rate fluctuations would contaminate the historical curve, showing
+-- the user gains/losses they never actually experienced.
 --
--- rate 用定点整数 scale=8，不用 REAL。理由和金额一样：这个数会参与净值累加。
+-- rate uses a fixed-point integer with scale=8, not REAL. Same reasoning as for amounts: this
+-- number participates in net worth accumulation.
 CREATE TABLE fx_rate (
     base        TEXT NOT NULL,
     quote       TEXT NOT NULL,

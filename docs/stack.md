@@ -1,634 +1,774 @@
-# 技术选型与版本决策
+# Technology Stack and Version Decisions
 
-所有版本号取自 2026-07-28 对 `repo1.maven.org` / `dl.google.com/dl/android/maven2` 的
-`maven-metadata.xml` 实测，不是搜索结果。锁定值在 `gradle/libs.versions.toml`。
+All version numbers were taken from actually inspecting `maven-metadata.xml` on
+`repo1.maven.org` / `dl.google.com/dl/android/maven2` on 2026-07-28 — not from search results.
+The pinned values live in `gradle/libs.versions.toml`.
 
-> 顺带一提：`search.maven.org` 的索引当时严重滞后（把 CMP 报成 1.8.2、Ktor 报成 3.2.0）。
-> 核版本请直接读 maven-metadata.xml。
+> Side note: `search.maven.org`'s index was badly stale at the time (it reported CMP as 1.8.2
+> and Ktor as 3.2.0). Check core versions by reading maven-metadata.xml directly.
 
-## 版本兼容性
+## Version compatibility
 
-| 组件 | 我们锁定 | 当时最新 | 为什么 |
+| Component | We pin | Latest at the time | Why |
 |---|---|---|---|
-| AGP | 9.3.1 | 9.3.1 | 见下面「被迫升 AGP」 |
-| Gradle | 9.5.0 | 9.6.1 | Kotlin 2.4.x 测试上限；同时满足 AGP 9.3 要求的 ≥9.5.0 |
-| compileSdk | 37 | — | androidx 生态的硬下限，见下 |
-| DataStore | 1.2.1 | 1.3.0-alpha09 | 1.3.0 连续九个 alpha 没进 beta |
-
-### 被迫升 AGP：一个原计划没走通的地方
-
-**原计划**是锁 AGP 9.1.0，留在 Kotlin 2.4.x 官方测试范围（AGP ≤9.1.0 + Gradle ≤9.5.0）内。
-**实测走不通**，构建报错逼出来的：
-
-1. `androidx.lifecycle 2.11.0` 要求 compileSdk ≥ 37
-2. 降到 lifecycle 2.10.0 后，`androidx.core 1.19.0` 同样要求 compileSdk ≥ 37
-3. 而 AGP 9.1.0 的 compileSdk 上限是 36
-
-也就是说 androidx 生态的下限已经整体移到 37 了。继续锁 36 意味着要把一堆 androidx 库
-逐个往回降版本，而且新增依赖时会不断复发。
-
-**结论：升到 AGP 9.3.1 + compileSdk 37**，代价是超出 Kotlin 官方测试的 AGP 上限。
-Gradle 保持 9.5.0（同时满足 Kotlin 测试上限和 AGP 9.3 的最低要求）。
-`targetSdk` 保持 36 —— compileSdk 用最新、targetSdk 用测过的，这是常规做法。
-
-本地需要 `platforms;android-37.0`（已装）。
-
-### CMP 的 material3 走独立版本线
-
-`org.jetbrains.compose.material3:material3` 的版本**和 compose 插件版本不一致** ——
-插件 1.11.1 时它是 **1.9.0**。用 1.11.1 去引会报 `Could not find ...material3:1.11.1`。
-（原来那套 `compose.material3` 简写能自动对齐版本，但 CMP 1.11 起简写已废弃，
-改用显式坐标后就得自己管这个版本。已实测 material3 1.9.0 + CMP 1.11.1 在两端都能解析和编译。）
-
-lifecycle 方面：CMP 1.11.1 自带的是 **2.11.0-beta01**，stable 2.11.0 只接到 1.12.0-beta 线上。
-我们手动顶到 stable 2.11.0（这也是上面 compileSdk 37 的来源之一）。
-
-## AGP 9 的模块结构要求（硬性）
-
-AGP 9 起：
-
-- `com.android.library` + KMP 不再能共存 → KMP 模块用 **`com.android.kotlin.multiplatform.library`**
-- `com.android.application` + KMP 也不能共存 → **Android 入口必须是独立 subproject**
-
-所以老教程里那种单 `composeApp` 模块的布局已经作废了，别照抄。其他连带变化：
-
-- 顶层 `android { }` 块没了，配置移到 `kotlin { android { ... } }` 里
-- 源码目录 `src/main` → `src/androidMain`
-- 新插件的限制：**只支持单 variant，没有 build type / product flavor**，没有 BuildConfig、
-  没有 view binding、没有 NDK。Java 编译、host test、device test、Android 资源都要显式 opt-in
-  （`withJava()`、`withHostTestBuilder {}`、`withDeviceTestBuilder {}`、`androidResources { enable = true }`）
-- 逃生舱 `android.enableLegacyVariantApi=true` 在 AGP 10 会失效，别依赖它
-
-### 搭脚手架时实际撞到的四个（调研没覆盖到的）
-
-1. **`org.jetbrains.kotlin.android` 插件不能加。** AGP 9.0 起内置 Kotlin 支持，
-   在 androidApp 里应用它会**直接构建失败**：
-   `The 'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support since AGP 9.0`。
-   androidApp 只需要 `com.android.application` + `org.jetbrains.kotlin.plugin.compose`。
-2. **`androidLibrary {}` 已废弃，用 `kotlin { android {} }`。** 前者仍能工作但报 deprecation。
-   注意这个 `android {}` 在 `kotlin {}` **里面**，和顶层那个（对 KMP 模块已不存在）不是一回事。
-3. **测试 target 要显式开。** `withHostTestBuilder {}` 不写，`commonTest` 里的测试
-   **在 JVM 上无处运行，且没有任何报错提示** —— 会以为"测试通过了"，其实一个都没跑。
-   跑的任务名是 `testAndroidHostTest`（不是 `androidHostTest`）。
-4. **`compose.runtime` 那套简写已废弃**，改显式坐标后要自己处理 material3 的独立版本线（见上）。
-
-JetBrains 的 wizard（kmp.jetbrains.com）2026 年 5 月起已经输出新结构，需要
-IntelliJ 2026.1.2+ / Android Studio Otter 3 Feature Drop+。
-
-## 有争议的几个选择
-
-### 数据库：SQLDelight（否掉 Room）
-
-两个都真正支持 iOS，不是稳定 vs alpha 的问题。选 SQLDelight 的理由：
-
-1. **不需要 KSP。** Room 要给每个 target 单独注册（`kspAndroid` / `kspIosArm64` /
-   `kspIosSimulatorArm64` / `kspIosX64`），这是 KMP 构建最常见的摩擦源。而且当时
-   **KSP 停在 2.3.10、Kotlin 已经 2.4.10** —— 这个版本差是 day-one 最可能卡住的地方。
-   SQLDelight 用自己的 Gradle 插件，绕开整个问题。
-2. **SQL-first 契合这个 App。** 净值计算本质是时间序列聚合（按日期分组、按类别汇总、
-   币种折算），这些用 SQL 写比用 DAO 注解自然，而且 SQLDelight 会对着真实 schema
-   做编译期校验。
-3. **iOS 支持没有星号。** Room 在非 Android 平台有一串排除项（预置数据库、
-   `setQueryCallback`、多实例失效通知都不可用），且 **DAO 函数在非 Android 上必须全是
-   `suspend`**。SQLDelight 是 KMP 原生设计，没这些例外。
-4. Room 最后一个 release 是 2025-11，八个月没动静；SQLDelight 2.3.2 是 2026-03。
-
-**什么情况下该换回 Room：** 团队 Room 经验深、想要注解式 entity 而非 `.sq` 文件、
-或者要 Google 一方支持和 Paging 集成。Room 2.8.4 + `androidx.sqlite:sqlite-bundled:2.7.0`
-（用 `BundledSQLiteDriver`，别用平台 SQLite，否则两端 SQLite 版本会漂移）。
-
-### 导航：navigation-compose 2.9.2（暂不上 Nav3）
-
-Nav3 在 CMP 上**是可用的**，但有个坑：Google 的 `navigation3-runtime` 是真 KMP，
-可 Google 的 `navigation3-ui` 只发 `-android` 和 stubs —— `NavDisplay` 是 Android-only。
-要在 CMP 用 Nav3，UI 层必须换成 JetBrains 的 `org.jetbrains.androidx.navigation3:navigation3-ui`。
-只看 Google 的 Nav3 文档会被误导。
-
-暂时不上的原因：Nav3 在 iOS 上路由序列化要手写 `SerializersModule`（反射式路由是 JVM 限定），
-`adaptive-navigation3` 还在 alpha，而 navigation-compose 2.9.2 自 2025-09 稳定、文档充分。
-起步阶段选稳的。
-
-**Voyager 否掉：** 没有 stable 1.1.0，2024-10 之后没有功能更新，最新构建还停在 CMP 1.10.3。
-**Decompose 3.5.0** 只在"某些页面要用原生 SwiftUI"时才值得考虑。
-
-### DI：Koin 4.2.2
-
-规模不大的情况下 Koin 的运行时开销可以忽略，好处很实在：不用 codegen，
-迭代最快，没有 per-target KSP 配置。`koin-compose-viewmodel` 直接对接 multiplatform ViewModel。
-运行时报错的老问题可以用 `verify()` 测试兜住。
-
-**Metro 1.3.2** 是真正的替代选项 —— 2026-04 发的 1.0，编译期校验，KMP 原生，
-而且是**编译器插件而非 KSP**（所以没有 per-target 配置问题），JetBrains 自己的 KotlinConf App
-已经从 Koin 迁到了 Metro。如果后面模块数量涨起来、或者受不了运行时 DI 失败，换它。
-代价是编译器插件会绑死 Kotlin 版本，可能挡住 Kotlin 升级。
-
-**kotlin-inject 不要选**：五年了还是 0.9.0，Metro 基本是它的超集。
-
-Google 和 JetBrains **都没有**官方的 KMP DI 推荐，这块是社区自选。
-
-### 图表：Vico 3.2.3，坐标是 `:compose-m3`
-
-**这里的模块命名极易搞错，务必看清。** Vico 3.0.0（2026-02）做了一次重组：
-把原来 Android-only 的 `compose` 模块**删掉**，然后把跨平台的 `multiplatform` 模块**改名为
-`compose`**。所以现在：
-
-- ✅ `com.patrykandpatrick.vico:compose-m3:3.2.3` —— 跨平台，Material 3，当前 stable
-- ⚠️ `com.patrykandpatrick.vico:multiplatform:2.5.2` —— 2.x 遗留线，仍在打补丁但不要用于新项目
-
-Vico 官方发布说明的原话是 Compose Multiplatform 模块"is now stable"。已确认 3.2.3
-发布了 `compose-iosarm64` / `compose-iossimulatorarm64` 的 klib，对着 CMP 1.11.1 + Kotlin 2.4.10 构建，
-仓库每周有更新，Software Mansion 赞助。折线/趋势图正是它的主场（`LineCartesianLayer`）。
-
-注意：`compose-iosx64` 停在 3.1.0，3.2.0 起砍了 Intel 模拟器 —— 对我们无影响（本来就只 arm64）。
-另一个代价：3.x 每个 minor 都有 deprecation 或小破坏性改动，升级要读 release notes。
-
-**其他选项的实测结论**（别信 README，这些是查了实际发布的 artifact 的）：
-- KoalaPlot 0.12.0 支持 iOS 但 pre-1.0，且 0.12.0 真的删了一批 API。做产品依赖偏险。
-- ComposeCharts 1.0.0（2026-07）、HDCharts 2.3.0 都可用且活跃，但没有 Vico 的里程数。
-- **aay-chart 不能用于 iOS** —— README 声称支持，但实际 artifact 只有 android/desktop/js/wasm，
-  iOS variant 停在 2023 年。
-- **Kandy（JetBrains 自家）是 JVM-only**，发的是普通 jar，没有 klib。不是 CMP 方案。
-- Charty 停滞：最新发布literally 打的是 `-test` tag，仓库 2025-12 之后没动过。
-
-如果最后只在列表行里画迷你 sparkline，直接用 `Canvas` / `drawPath` 也完全合理 ——
-CMP 在 iOS 上走 Skia，`DrawScope`/`Path`/`TextMeasurer` 都是共享代码，行为一致。
-真正费事的是轴刻度取整、标签避让、日期轴格式化、缩放惯性、hit-testing 这些，
-这才是图表库赚钱的地方。**混合用法值得考虑：正经图表用 Vico，列表行里的小 sparkline 手写 Canvas。**
-
-### 时间：用标准库的 `kotlin.time`，不用 kotlinx-datetime 的
-
-`kotlin.time.Instant` 和 `kotlin.time.Clock` 从 Kotlin 2.3.0 起是稳定的，
-而 kotlinx-datetime 0.7.0 **移除了**自己的 `Instant`/`Clock`。
-kotlinx-datetime 0.8.0 只用来拿 `LocalDate`、`TimeZone` 和格式化。
-
-注意有些三方库还在用旧类型，有 `-0.6.x-compat` artifact 过渡，但 JetBrains 在 0.8.x 之后不再发。
-
-kotlinx-datetime 本身还是 0.x 且自称 experimental，这是已知风险。
-
-### 网络：Ktor 3.5.1，跳过 3.5.0
-
-3.5.1 修了几个 iOS Darwin 的 bug，其中一个 WebSocket 在 close 后收到 PONG 会直接崩进程。
-用 `ktor-client-darwin`，`DarwinLegacy` 在 3.4.0 已废弃。
-
-## 安全存储：生态最薄弱的一环，要有心理预期
-
-- `androidx.security:security-crypto` 虽然到了 1.1.0，但 **`EncryptedSharedPreferences` 已废弃**
-  （Keystore 可靠性和性能问题）。新项目别用。
-- Google 的替代品 `androidx.datastore:datastore-tink` **只发 `-android` 和 `-jvm`，不是 multiplatform**，
-  没法作为共享层方案。
-- **multiplatform-settings 不能用来存密钥。** 两个常见误解，都已实测证伪：
-  `multiplatform-settings-keychain` 这个 artifact **不存在**（`KeychainSettings` 在核心
-  artifact 的 `appleMain` 里，且标注 experimental）；而且整个库**没有任何加密的 Android 后端** ——
-  Android 侧只有明文 `SharedPreferencesSettings` / `DataStoreSettings`。
-  存非敏感偏好可以，存钱相关的东西不行。
-- **DataStore 是跨平台的，但它只给你文件容器，不给加密。** iOS 上要自己写 `Serializer`，
-  密钥放 Keychain。
-
-### 应用锁（已实现，Android 实机验证）
-
-按上面的结论自己写了两端，没引第三方 KMP 生物识别库。加起来约 200 行。
-
-- **Android**：stable 的 `androidx.biometric:1.1.0` + `BiometricPrompt`，
-  允许 `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`（没指纹的用户能用锁屏密码）。
-  ⚠️ **实跑发现的坑**：`canAuthenticate(组合值)` 在没录生物识别时返回 `NONE_ENROLLED`，
-  即使锁屏密码可用。必须**分别查两种能力**再取「任一可用」，否则设了 PIN 的设备
-  会被误判成不能用应用锁。
-- **iOS**：`LAContext` + `LAPolicyDeviceOwnerAuthentication`（**不是**
-  `...WithBiometrics`，前者才会自动回落到设备密码）。**不需要 cinterop**。
-  `canEvaluatePolicy` 的 NSError 出参要用 `memScoped { alloc<ObjCObjectVar<NSError?>>() }`。
-- **Activity 桥接**：`BiometricPrompt` 硬性要求 `FragmentActivity` 而共享层不能持有它，
-  所以用 `CurrentActivityHolder`（**弱引用**，强引用会泄漏整个 Activity 和 View 树），
-  由 `MainActivity` 在 onCreate/onDestroy 注册注销。
-
-两条产品决策：**开启前必须先认证成功**（否则拿到手机的人能把主人锁在外面，
-或者用户在认证不了的设备上开了锁自己进不来）；**解锁状态不落库**（回后台或重启都要重验，
-这是应用锁的意义所在）。
-
-**结论：存储和应用锁都自己写 expect/actual。** 两个平台加起来存储约 300 行、认证约 120 行，
-不值得把一个 9 star 或者仓库只有 14 个月的项目当成安全边界。
-
-- **`androidMain` 存储**：256-bit DEK 用 AndroidKeyStore 的 AES/GCM key 包起来，
-  包好的 DEK + 密文塞进 DataStore Preferences。**不要用 EncryptedSharedPreferences。**
-  另外记得**把这个安全存储排除出 Android Auto Backup** —— 恢复到新设备上的密文解不开。
-- **`iosMain` 存储**：`platform.Security.SecItemAdd` + `kSecClassGenericPassword` +
-  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`。可以考虑
-  `SecAccessControlCreateWithFlags(..., kSecAccessControlBiometryCurrentSet)`，
-  让录入的生物特征变更时条目自动失效 —— 对财务类 App 挺有价值。
-- **生物识别没有成熟 KMP 库**，但好消息是 **iOS 侧不需要 cinterop**：`LocalAuthentication`
-  是 Kotlin/Native 的一等 platform library，`iosMain` 里直接
-  `import platform.LocalAuthentication.LAContext` 就行，零 Gradle 配置、零 `.def`、零 Obj-C shim。
-  Android 侧用 stable 的 `androidx.biometric:1.1.0` + `BiometricPrompt`；
-  **不要**为了 Compose 原生 API 就在财务 App 的认证路径上用 1.4.0-alpha。
-  （顺带：KMPAuth 是 OAuth/社交登录，不是生物识别，别搞混；moko-biometry 已三年未维护。）
-- **数据库加密：默认不做整库加密**，除非合规要求。iOS Data Protection 和 Android FBE
-  已经在系统层加密了 App 私有存储。只把真正的密钥（token、应用锁 PIN 哈希）放 Keychain/Keystore。
-  真要在 iOS 上跑 SQLCipher，**有个会静默失败的坑**：任何传递依赖链接了系统 `-lsqlite3`
-  的库（Firebase iOS SDK 就是）会赢得符号解析，你的数据库**变成明文且不报错**，
-  调整链接顺序也修不好。若非做不可，运行时务必断言 `PRAGMA cipher_version` 并检查文件头。
-
-## 测试
-
-组合：`kotlin-test`（runner + 基础断言）+ Kotest **assertions only** + Turbine + Compose `ui-test`，
-都能在 `iosSimulatorArm64Test` 上跑。跑法：`./gradlew :shared:iosSimulatorArm64Test`
-（需要 macOS + Xcode）。Kotlin/Native 上**不经过 JUnit**，是编译出测试二进制丢进模拟器跑。
-
-按"最可能坑到你"排序：
-
-1. **`runComposeUiTest` 已废弃。** CMP 1.11.0 起废弃了 `runComposeUiTest` /
-   `runSkikoComposeUiTest` / `runDesktopComposeUiTest`，改用
-   **`androidx.compose.ui.test.v2.runComposeUiTest`**（仍是 `@ExperimentalTestApi`）。
-   行为有变：v2 在非 Android 平台默认 `StandardTestDispatcher` 而不是 `UnconfinedTestDispatcher`，
-   照着 v1 写的测试会挂。
-2. **`ui-test-junit4` 没有 iOS variant**（只有 `-android` 和 `-desktop`）。在 `commonTest` 里用 `ui-test`。
-3. **不要引 Mokkery。** 它是编译器插件，兼容表只列到 Kotlin **2.4.0**，我们在 2.4.10。
-   MockK 是 JVM-only。**默认手写 fake** —— 这个 App 的领域层就是几个窄接口的 repository，
-   手写 fake 配 `MutableStateFlow` + Turbine 很自然，且零编译器插件/KSP/Kotlin 版本耦合。
-   真要 mock 验证再上 **Mockative 3.3.2**（KSP 式，不锁死 Kotlin 版本）。
-4. **`IdlingResource` 在 iOS 上不可用**（已移出 commonMain），用 `waitUntil {}`。
-5. **Kotest 只用断言，不用它的 framework。** `kotest-assertions-core` 有 iOS klib，
-   可以在 `commonTest` 里直接 `shouldBe`，**不需要 `io.kotest` Gradle 插件、不需要 KSP**。
-   它的 framework engine 虽然确实支持 native，但注解式配置（`@EnabledIf`、`@Tags`）
-   在非 JVM 平台**静默失效** —— 因为 Kotlin 不在运行时暴露注解。踩上去很难查。
-
-⚠️ **Turbine 1.2.1 的 iOS klib 是对着 Kotlin stdlib 2.1.21 / coroutines 1.10.2 编的**，
-和我们的 2.4.10 差三个 minor。2.x 内 klib 兼容一般没问题，但**早点写个冒烟测试验证**，
-别等到项目中期才发现。（Turbine 本身没死，只是 2025-06 之后只有依赖升级，无功能更新。）
-
-**assertk 不要用**：还停在 0.28.1（2024-04），iOS klib 声明的是 stdlib 1.9.21，
-1.9→2.4 的 native klib 跨度会以晦涩报错的形式炸出来。
-
-## 已知未解风险
-
-1. **KSP 2.3.10 落后于 Kotlin 2.4.10。** 我们选 SQLDelight 已经绕开了主要影响面，
-   但如果后面引入任何 KSP-based 库（Room、koin-annotations、Mokkery 某些配置），
-   先验证这个组合能不能构建。
-2. **KMP + Gradle configuration cache** 和 Kotlin/Native task 长期有兼容问题（KT-44900），
-   没有找到一方声明完全支持。遇到诡异构建失败先试着关掉它。
-3. Metro 在 native/Wasm 上的 contribution hint 生成据其文档需要 Kotlin 2.3.20-Beta1+，
-   未能直接确认现状 —— 若将来迁 Metro 需复核。
-
-## 环境要求
-
-- **Apple Silicon Mac**（iosX64 已移除，Intel 机器跑不了 iOS 模拟器）
-- JDK 17+ —— 本机 21，已验证可用
-- Android SDK `platforms;android-37.0` —— 已装
-- **完整 Xcode** —— **本机目前只有 Command Line Tools，尚未安装。**
-  影响范围（实测）：`linkDebugFrameworkIosSimulatorArm64` 和跑模拟器不可用；
-  `compileKotlinIosSimulatorArm64` **不受影响，能正常跑**。
-- Android Studio + KMP 插件（用于 IDE 内的 run configuration；命令行构建不需要）
-
-## 尚未验证的部分
-
-诚实记录一下哪些是"已实测"、哪些还只是"文档上应该没问题"：
-
-**已实测通过**：
-- Android 构建出 APK；iOS klib 编译（含 SQLDelight native driver）
-- 35 个单元测试全绿（领域计算 + 真实 SQLite 上的 schema/约束验证）
-- **SQLDelight 全链路**：代码生成、枚举 adapter 双向、CHECK 约束真的拦得住、
-  seed 幂等、结转查询、按天 upsert —— 都在真实 SQLite（JDBC driver）上跑过
+| AGP | 9.3.1 | 9.3.1 | See "Forced to upgrade AGP" below |
+| Gradle | 9.5.0 | 9.6.1 | Kotlin 2.4.x's tested upper bound; also satisfies AGP 9.3's ≥9.5.0 requirement |
+| compileSdk | 37 | — | Hard floor imposed by the androidx ecosystem, see below |
+| DataStore | 1.2.1 | 1.3.0-alpha09 | 1.3.0 has gone through nine consecutive alphas without reaching beta |
+
+### Forced to upgrade AGP: a plan that didn't pan out
+
+**The original plan** was to pin AGP 9.1.0, staying within Kotlin 2.4.x's officially tested range
+(AGP ≤9.1.0 + Gradle ≤9.5.0). **That turned out not to work**, forced out by actual build errors:
+
+1. `androidx.lifecycle 2.11.0` requires compileSdk ≥ 37.
+2. After downgrading to lifecycle 2.10.0, `androidx.core 1.19.0` also required compileSdk ≥ 37.
+3. AGP 9.1.0's compileSdk ceiling is 36.
+
+In other words, the androidx ecosystem's floor has moved to 37 across the board. Staying pinned
+at 36 would mean walking a whole set of androidx libraries back down version by version, and the
+problem would keep recurring with every new dependency.
+
+**Conclusion: upgrade to AGP 9.3.1 + compileSdk 37**, at the cost of exceeding Kotlin's officially
+tested AGP ceiling. Gradle stays at 9.5.0 (satisfying both Kotlin's tested ceiling and AGP 9.3's
+minimum requirement). `targetSdk` stays at 36 — compileSdk uses the latest, targetSdk uses what's
+actually been tested; this is standard practice.
+
+Locally requires `platforms;android-37.0` (already installed).
+
+### CMP's material3 follows its own independent version line
+
+The version of `org.jetbrains.compose.material3:material3` **does not match the Compose plugin
+version** — with plugin 1.11.1, it's **1.9.0**. Pulling it in with 1.11.1 gives
+`Could not find ...material3:1.11.1`. (The old `compose.material3` shorthand used to align
+versions automatically, but that shorthand was deprecated as of CMP 1.11; once you switch to the
+explicit coordinate you have to manage this version yourself. Tested and confirmed: material3
+1.9.0 + CMP 1.11.1 resolves and compiles on both platforms.)
+
+On the lifecycle side: CMP 1.11.1 ships with **2.11.0-beta01** by default, while the stable 2.11.0
+line is only picked up starting from 1.12.0-beta. We manually bump it to stable 2.11.0 (this is
+also one of the sources of the compileSdk 37 requirement above).
+
+## AGP 9's module structure requirements (hard requirements)
+
+Starting with AGP 9:
+
+- `com.android.library` and KMP can no longer coexist → KMP modules must use
+  **`com.android.kotlin.multiplatform.library`**.
+- `com.android.application` and KMP can no longer coexist either → **the Android entry point must
+  be a standalone subproject**.
+
+So the old single-`composeApp`-module layout from older tutorials is obsolete — don't copy it.
+Other knock-on changes:
+
+- The top-level `android { }` block is gone; configuration moves into `kotlin { android { ... } }`.
+- The source directory `src/main` becomes `src/androidMain`.
+- The new plugin's limitations: **single variant only, no build types / product flavors**, no
+  BuildConfig, no view binding, no NDK. Java compilation, host tests, device tests, and Android
+  resources all need to be explicitly opted into
+  (`withJava()`, `withHostTestBuilder {}`, `withDeviceTestBuilder {}`,
+  `androidResources { enable = true }`).
+- The escape hatch `android.enableLegacyVariantApi=true` will stop working in AGP 10 — don't rely
+  on it.
+
+### Four issues actually hit while scaffolding (that research didn't cover)
+
+1. **You can't add the `org.jetbrains.kotlin.android` plugin.** AGP 9.0 has built-in Kotlin
+   support, and applying that plugin in androidApp **fails the build outright**:
+   `The 'org.jetbrains.kotlin.android' plugin is no longer required for Kotlin support since AGP 9.0`.
+   androidApp only needs `com.android.application` + `org.jetbrains.kotlin.plugin.compose`.
+2. **`androidLibrary {}` is deprecated; use `kotlin { android {} }`.** The former still works but
+   emits a deprecation warning. Note this `android {}` is *inside* `kotlin {}`, and is not the same
+   thing as the top-level one (which no longer exists for KMP modules).
+3. **Test targets must be explicitly enabled.** Without `withHostTestBuilder {}`, tests in
+   `commonTest` **have nowhere to run on the JVM, and there's no error whatsoever** — you'd think
+   "tests passed" when in fact none ran. The task name to run is `testAndroidHostTest` (not
+   `androidHostTest`).
+4. **The `compose.runtime` shorthand is deprecated too**; once you switch to explicit coordinates
+   you have to handle material3's independent version line yourself (see above).
+
+JetBrains' wizard (kmp.jetbrains.com) has been producing the new structure since May 2026, and
+requires IntelliJ 2026.1.2+ / Android Studio Otter 3 Feature Drop or later.
+
+## A few contested choices
+
+### Database: SQLDelight (rejected Room)
+
+Both genuinely support iOS — this isn't a stable-vs-alpha question. Reasons for choosing
+SQLDelight:
+
+1. **No KSP required.** Room needs to be registered separately for every target
+   (`kspAndroid` / `kspIosArm64` / `kspIosSimulatorArm64` / `kspIosX64`), which is the single most
+   common friction point in KMP builds. And at the time, **KSP was stuck at 2.3.10 while Kotlin
+   was already at 2.4.10** — that version gap is the most likely day-one blocker. SQLDelight uses
+   its own Gradle plugin and sidesteps the whole issue.
+2. **SQL-first fits this app.** Net-worth computation is fundamentally time-series aggregation
+   (group by date, roll up by category, convert currencies) — this is more natural to write in SQL
+   than via DAO annotations, and SQLDelight does compile-time validation against the real schema.
+3. **No asterisks on iOS support.** Room has a list of exclusions on non-Android platforms
+   (prepackaged databases, `setQueryCallback`, multi-instance invalidation notifications are all
+   unavailable), and **DAO functions on non-Android platforms must all be `suspend`**. SQLDelight
+   is KMP-native by design and has none of these exceptions.
+4. Room's last release was 2025-11 — eight months of silence; SQLDelight 2.3.2 shipped in 2026-03.
+
+**When it would make sense to switch back to Room:** if the team has deep Room experience and
+wants annotation-style entities rather than `.sq` files, or wants first-party Google support and
+Paging integration. Room 2.8.4 + `androidx.sqlite:sqlite-bundled:2.7.0` (use `BundledSQLiteDriver`,
+not the platform SQLite, otherwise the SQLite versions on the two platforms will drift apart).
+
+### Navigation: navigation-compose 2.9.2 (not moving to Nav3 yet)
+
+Nav3 **is usable** on CMP, but there's a catch: Google's `navigation3-runtime` is genuinely KMP,
+but Google's `navigation3-ui` only ships `-android` artifacts and stubs — `NavDisplay` is
+Android-only. To use Nav3 on CMP, the UI layer has to be swapped for JetBrains'
+`org.jetbrains.androidx.navigation3:navigation3-ui`. Reading only Google's Nav3 docs will mislead
+you.
+
+Reasons for not adopting it yet: on iOS, Nav3 route serialization has to be hand-written via
+`SerializersModule` (reflection-based routes are JVM-only), `adaptive-navigation3` is still in
+alpha, and navigation-compose 2.9.2 has been stable since 2025-09 with solid documentation. Pick
+the stable option while getting started.
+
+**Voyager rejected:** no stable 1.1.0, no feature updates since 2024-10, latest build still stuck
+on CMP 1.10.3. **Decompose 3.5.0** is only worth considering when some screens specifically need
+native SwiftUI.
+
+### DI: Koin 4.2.2
+
+At our current scale, Koin's runtime overhead is negligible, and the upside is real: no codegen,
+fastest iteration, no per-target KSP configuration. `koin-compose-viewmodel` plugs directly into
+the multiplatform ViewModel. The old problem of runtime errors can be caught with `verify()`
+tests.
+
+**Metro 1.3.2** is a genuine alternative — 1.0 shipped 2026-04, compile-time validated, KMP-native,
+and it's a **compiler plugin rather than KSP** (so no per-target configuration issues); JetBrains'
+own KotlinConf App has already migrated from Koin to Metro. If the module count grows later, or
+runtime DI failures become intolerable, switch to it. The cost is that a compiler plugin ties you
+to a Kotlin version, which could block Kotlin upgrades.
+
+**Don't pick kotlin-inject**: five years in and it's still at 0.9.0; Metro is essentially a
+superset of it.
+
+**Neither** Google nor JetBrains has an official KMP DI recommendation — this is a
+community-chosen area.
+
+### Charts: Vico 3.2.3, coordinate is `:compose-m3`
+
+**The module naming here is extremely easy to get wrong — read carefully.** Vico 3.0.0 (2026-02)
+did a reorganization: it **deleted** the old Android-only `compose` module, then **renamed** the
+cross-platform `multiplatform` module to `compose`. So now:
+
+- ✅ `com.patrykandpatrick.vico:compose-m3:3.2.3` — cross-platform, Material 3, current stable.
+- ⚠️ `com.patrykandpatrick.vico:multiplatform:2.5.2` — the legacy 2.x line, still patched but not
+  for new projects.
+
+Vico's official release notes literally say the Compose Multiplatform module "is now stable."
+Confirmed that 3.2.3 ships `compose-iosarm64` / `compose-iossimulatorarm64` klibs, and builds
+against CMP 1.11.1 + Kotlin 2.4.10; the repo gets weekly updates and is sponsored by Software
+Mansion. Line/trend charts (`LineCartesianLayer`) are exactly its home turf.
+
+Note: `compose-iosx64` is stuck at 3.1.0 — 3.2.0 dropped the Intel simulator, which doesn't affect
+us (we're arm64-only anyway). Another cost: every 3.x minor has some deprecation or small breaking
+change, so upgrades require reading the release notes.
+
+**Findings on other options** (verified against actually published artifacts, not README claims):
+- KoalaPlot 0.12.0 supports iOS but is pre-1.0, and 0.12.0 genuinely removed a batch of APIs. Risky
+  to depend on for a product.
+- ComposeCharts 1.0.0 (2026-07) and HDCharts 2.3.0 are both usable and active, but lack Vico's
+  track record.
+- **aay-chart cannot be used for iOS** — the README claims support, but the actually published
+  artifact only has android/desktop/js/wasm; the iOS variant stopped in 2023.
+- **Kandy (JetBrains' own) is JVM-only** — it ships a plain jar, not a klib. Not a CMP solution.
+- Charty is stalled: the latest release literally has a `-test` tag, and the repo hasn't moved
+  since 2025-12.
+
+If in the end you're only drawing mini sparklines in list rows, using `Canvas` / `drawPath`
+directly is perfectly reasonable too — CMP runs on Skia on iOS, so `DrawScope`/`Path`/`TextMeasurer`
+are shared code with consistent behavior. What's actually laborious is axis-tick rounding, label
+collision avoidance, date-axis formatting, zoom inertia, hit-testing — that's where a chart library
+earns its keep. **A hybrid approach is worth considering: Vico for real charts, hand-rolled Canvas
+for sparklines in list rows.**
+
+### Time: use the standard library's `kotlin.time`, not kotlinx-datetime's
+
+`kotlin.time.Instant` and `kotlin.time.Clock` have been stable since Kotlin 2.3.0, while
+kotlinx-datetime 0.7.0 **removed** its own `Instant`/`Clock`. kotlinx-datetime 0.8.0 is only used
+for `LocalDate`, `TimeZone`, and formatting.
+
+Note that some third-party libraries still use the old types; there's a `-0.6.x-compat` artifact
+for transition, but JetBrains stopped publishing it after 0.8.x.
+
+kotlinx-datetime itself is still 0.x and self-describes as experimental — this is a known risk.
+
+### Networking: Ktor 3.5.1, skipping 3.5.0
+
+3.5.1 fixes several iOS Darwin bugs, one of which crashes the process outright when a WebSocket
+receives a PONG after close. Uses `ktor-client-darwin`; `DarwinLegacy` was deprecated in 3.4.0.
+
+## Secure storage: the weakest link in the ecosystem — set expectations accordingly
+
+- `androidx.security:security-crypto` did reach 1.1.0, but **`EncryptedSharedPreferences` is
+  deprecated** (Keystore reliability and performance issues). Don't use it in new projects.
+- Google's replacement, `androidx.datastore:datastore-tink`, **only ships `-android` and `-jvm`, it
+  is not multiplatform**, so it can't serve as a shared-layer solution.
+- **multiplatform-settings cannot be used to store secrets.** Two common misconceptions, both
+  disproven by testing: the `multiplatform-settings-keychain` artifact **does not exist**
+  (`KeychainSettings` lives in the core artifact's `appleMain` and is marked experimental); and the
+  library **has no encrypted Android backend at all** — the Android side only has plaintext
+  `SharedPreferencesSettings` / `DataStoreSettings`. Fine for non-sensitive preferences, not fine
+  for anything money-related.
+- **DataStore is cross-platform, but it only gives you a file container, not encryption.** On iOS
+  you have to write your own `Serializer`; keys go in the Keychain.
+
+### App lock (implemented, verified on a real Android device)
+
+Following the conclusions above, we hand-wrote both platforms ourselves rather than pulling in a
+third-party KMP biometrics library. About 200 lines total.
+
+- **Android**: stable `androidx.biometric:1.1.0` + `BiometricPrompt`, allowing
+  `BIOMETRIC_STRONG or DEVICE_CREDENTIAL` (so users without a fingerprint can still use their
+  screen-lock PIN). ⚠️ **A pitfall found during real testing**: `canAuthenticate(combined value)`
+  returns `NONE_ENROLLED` when no biometric is enrolled, even if the screen-lock PIN is available.
+  You must **check both capabilities separately** and take "either available," otherwise a device
+  with only a PIN set will be wrongly judged unable to use app lock.
+- **iOS**: `LAContext` + `LAPolicyDeviceOwnerAuthentication` (**not**
+  `...WithBiometrics` — only the former automatically falls back to the device passcode).
+  **No cinterop needed.** The `NSError` out-parameter of `canEvaluatePolicy` needs
+  `memScoped { alloc<ObjCObjectVar<NSError?>>() }`.
+- **Activity bridging**: `BiometricPrompt` strictly requires a `FragmentActivity`, and the shared
+  layer can't hold a reference to one, so we use `CurrentActivityHolder` (**a weak reference** — a
+  strong reference would leak the whole Activity and its View tree), registered/unregistered by
+  `MainActivity` in onCreate/onDestroy.
+
+Two product decisions: **authentication must succeed before app lock can be enabled** (otherwise
+whoever is holding the phone could lock the owner out, or a user could enable it on a device that
+can't authenticate and then be unable to get back in); **unlocked state is never persisted**
+(going to the background or restarting always requires re-authentication — that's the whole point
+of an app lock).
+
+**Conclusion: both storage and app lock are hand-written expect/actual.** Storage totals roughly
+300 lines and authentication about 120 lines across both platforms — not worth treating a 9-star,
+or a 14-month-old, repo as a security boundary.
+
+- **`androidMain` storage**: a 256-bit DEK is wrapped with an AES/GCM key from AndroidKeyStore; the
+  wrapped DEK plus ciphertext go into DataStore Preferences. **Do not use
+  EncryptedSharedPreferences.** Also remember to **exclude this secure storage from Android Auto
+  Backup** — the ciphertext can't be decrypted after restoring to a new device.
+- **`iosMain` storage**: `platform.Security.SecItemAdd` + `kSecClassGenericPassword` +
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Worth considering:
+  `SecAccessControlCreateWithFlags(..., kSecAccessControlBiometryCurrentSet)`, so the entry
+  auto-invalidates when the enrolled biometric changes — quite valuable for a financial app.
+- **No mature KMP biometrics library exists**, but the good news is **iOS doesn't need cinterop at
+  all**: `LocalAuthentication` is a first-class Kotlin/Native platform library, so `iosMain` can
+  just `import platform.LocalAuthentication.LAContext` directly — zero Gradle config, zero `.def`
+  file, zero Obj-C shim. Android side uses the stable `androidx.biometric:1.1.0` + `BiometricPrompt`;
+  **do not** reach for the 1.4.0-alpha just to get the Compose-native API on the authentication path
+  of a financial app. (Side note: KMPAuth is OAuth/social login, not biometrics — don't confuse
+  the two; moko-biometry has been unmaintained for three years.)
+- **Database encryption: no full-database encryption by default**, unless compliance requires it.
+  iOS Data Protection and Android FBE already encrypt app-private storage at the system layer. Only
+  put the actual secrets (tokens, app-lock PIN hashes) in Keychain/Keystore. If you really do need
+  SQLCipher on iOS, **there's a pitfall that fails silently**: any transitive dependency that
+  links the system `-lsqlite3` (the Firebase iOS SDK does this) will win symbol resolution, and
+  your database **becomes plaintext with no error** — reordering the link order doesn't fix it. If
+  you must go this route, always assert `PRAGMA cipher_version` at runtime and check the file
+  header.
+
+## Testing
+
+The combination: `kotlin-test` (runner + basic assertions) + Kotest **assertions only** + Turbine +
+Compose `ui-test`, all runnable under `iosSimulatorArm64Test`. Run with:
+`./gradlew :shared:iosSimulatorArm64Test` (requires macOS + Xcode). On Kotlin/Native this
+**doesn't go through JUnit** — a test binary is compiled and dropped into the simulator to run.
+
+Ordered by "most likely to trip you up":
+
+1. **`runComposeUiTest` is deprecated.** CMP 1.11.0 deprecated `runComposeUiTest` /
+   `runSkikoComposeUiTest` / `runDesktopComposeUiTest` in favor of
+   **`androidx.compose.ui.test.v2.runComposeUiTest`** (still `@ExperimentalTestApi`). Behavior
+   changed too: v2 defaults to `StandardTestDispatcher` rather than `UnconfinedTestDispatcher` on
+   non-Android platforms, so tests written against v1 assumptions will hang.
+2. **`ui-test-junit4` has no iOS variant** (only `-android` and `-desktop`). Use `ui-test` in
+   `commonTest`.
+3. **Don't bring in Mokkery.** It's a compiler plugin whose compatibility table only lists up to
+   Kotlin **2.4.0**, and we're on 2.4.10. MockK is JVM-only. **Default to hand-written fakes** —
+   this app's domain layer is just a handful of narrow repository interfaces, and hand-written
+   fakes paired with `MutableStateFlow` + Turbine feel natural, with zero coupling to a compiler
+   plugin/KSP/Kotlin version. If you genuinely need mock verification, reach for
+   **Mockative 3.3.2** (KSP-based, doesn't pin a Kotlin version).
+4. **`IdlingResource` is unavailable on iOS** (removed from commonMain); use `waitUntil {}`.
+5. **Kotest: assertions only, not its test framework.** `kotest-assertions-core` has an iOS klib,
+   so `shouldBe` works directly in `commonTest`, **no `io.kotest` Gradle plugin needed, no KSP
+   needed**. Its framework engine does technically support native, but annotation-based
+   configuration (`@EnabledIf`, `@Tags`) **silently fails** on non-JVM platforms — because Kotlin
+   doesn't expose annotations at runtime there. Very hard to diagnose once you hit it.
+
+⚠️ **Turbine 1.2.1's iOS klib was built against Kotlin stdlib 2.1.21 / coroutines 1.10.2**, three
+minors behind our 2.4.10. Klib compatibility within the 2.x line is usually fine, but **write a
+smoke test early** to confirm it — don't wait until mid-project to find out. (Turbine itself isn't
+dead, it just has only had dependency bumps since 2025-06, no feature updates.)
+
+**Don't use assertk**: still stuck at 0.28.1 (2024-04), and its iOS klib declares stdlib 1.9.21 —
+the 1.9→2.4 native klib gap tends to surface as cryptic errors.
+
+## Known unresolved risks
+
+1. **KSP 2.3.10 lags behind Kotlin 2.4.10.** Choosing SQLDelight already sidesteps the main impact
+   surface, but if any KSP-based library gets introduced later (Room, koin-annotations, certain
+   Mokkery configurations), verify this combination can actually build first.
+2. **KMP + Gradle configuration cache** has had long-standing compatibility issues with
+   Kotlin/Native tasks (KT-44900); neither side has declared full support. If you hit weird build
+   failures, try disabling it first.
+3. Metro's contribution-hint generation on native/Wasm reportedly needs Kotlin 2.3.20-Beta1+ per
+   its docs — this hasn't been directly confirmed as the current state; re-check if we ever migrate
+   to Metro.
+
+## Environment requirements
+
+- **Apple Silicon Mac** (iosX64 has been removed; Intel machines can't run the iOS simulator).
+- JDK 17+ — this machine has 21, confirmed working.
+- Android SDK `platforms;android-37.0` — already installed.
+- **Full Xcode** — **this machine currently only has the Command Line Tools installed, not full
+  Xcode.** Scope of impact (tested): `linkDebugFrameworkIosSimulatorArm64` and running the
+  simulator are unavailable; `compileKotlinIosSimulatorArm64` **is unaffected and runs fine**.
+- Android Studio + KMP plugin (for in-IDE run configurations; not needed for command-line builds).
+
+## What's still unverified
+
+Honest record of what's "actually tested" versus still just "should be fine per the docs":
+
+**Actually tested and passing**:
+- Android builds an APK; iOS klib compiles (including the SQLDelight native driver).
+- 35 unit tests all green (domain calculations + schema/constraint validation on real SQLite).
+- **The full SQLDelight pipeline**: code generation, bidirectional enum adapters, CHECK constraints
+  genuinely block bad writes, idempotent seeding, carry-forward queries, per-day upsert — all run
+  against real SQLite (JDBC driver).
 - Compose / lifecycle / navigation / Koin / coroutines / serialization / datetime / SQLDelight
-  在 `iosSimulatorArm64` 上的依赖解析
+  dependency resolution on `iosSimulatorArm64`.
 
-**Vico / Koin / navigation-compose 已实跑验证**（Android 模拟器）：图表带轴渲染正常、
-Koin 装配成功、底部导航切换正常、SQLDelight 写入到 UI 刷新的链路通。
+**Vico / Koin / navigation-compose actually run and verified** (Android emulator): charts with
+axes render correctly, Koin wiring succeeds, bottom navigation switching works, the
+SQLDelight-write-to-UI-refresh pipeline works end to end.
 
-Vico 3.x 的两个实测细节：
-- 坐标确认为 `com.patrykandpatrick.vico:compose-m3:3.2.3`，iOS klib 存在（已解析验证）
-- **`lineSeries` 已废弃，用 `lineModel`**。API 是从 sources jar 里查的 ——
-  这个库的坐标和 API 都改过，不要凭印象写
+Two things confirmed by testing about Vico 3.x:
+- Coordinate confirmed as `com.patrykandpatrick.vico:compose-m3:3.2.3`; the iOS klib exists
+  (resolution verified).
+- **`lineSeries` is deprecated, use `lineModel`.** The API was looked up from the sources jar —
+  this library's coordinates and API have changed before; don't write it from memory.
 
-**Ktor 已实跑验证**（Android 真实网络请求）：3.5.1 + OkHttp（Android）/ Darwin（iOS）引擎，
-两端编译通过，Android 上实际拉到了汇率。测试用 `ktor-client-mock` 的 MockEngine，
-**不打真网络**。
+**Ktor actually run and verified** (real Android network requests): 3.5.1 + OkHttp (Android) /
+Darwin (iOS) engines, compiles on both platforms, actually fetched exchange rates on Android.
+Tests use `ktor-client-mock`'s MockEngine, **no real network calls**.
 
-**汇率数据源：Frankfurter（api.frankfurter.dev）**，ECB 官方数据、无需 API key、
-**支持历史日期** —— 最后这点是决定性的，因为领域模型要求"折算历史净值用当时的汇率"。
-实测确认两件事：
-- **周末/节假日返回实际营业日**：请求 2026-07-26（周日）时响应里是 `"date":"2026-07-24"`。
-  所以**必须存响应里的 date，不能存请求的日期**，否则汇率被归到 ECB 从未发布的那天。
-- **只有 30 种币种，TWD 不在其中。** 不支持的币种会显示"无法估值"，
-  **不会静默按 1:1 折算**（有测试锁着）。
+**FX rate data source: Frankfurter (api.frankfurter.dev)**, official ECB data, no API key needed,
+**supports historical dates** — this last point is the decisive one, since the domain model
+requires "convert historical net worth using the exchange rate at that time." Two things confirmed
+by testing:
+- **Weekends/holidays return the actual business day.** Requesting 2026-07-26 (a Sunday) returns
+  `"date":"2026-07-24"` in the response. So **you must store the date from the response, not the
+  requested date**, otherwise the rate gets filed under a day the ECB never published one for.
+- **Only 30 currencies are supported; TWD is not among them.** Unsupported currencies show "cannot
+  be valued" — **it will never silently fall back to a 1:1 conversion** (there's a test locking
+  this in).
 
-**DataStore 没有引入** —— 见下方「刻意的偏离」。
+**DataStore was not introduced** — see "Deliberate deviations" below.
 
-**行情源：腾讯财经 `qt.gtimg.cn`（非官方）**
+**Quote source: Tencent Finance `qt.gtimg.cn` (unofficial)**
 
-实测对比（2026-07-29）后选的，其余三个都不可用：
+Chosen after comparative testing (2026-07-29); the other three options were all unusable:
 
-| 源 | 无需 key | 实测结果 |
+| Source | No key needed | Test result |
 |---|---|---|
-| **腾讯 `qt.gtimg.cn`** | ✅ | **200，可用**，A股/港股/美股都有，支持批量 |
-| 新浪 `hq.sinajs.cn` | ✅ | 403（带 Referer 仍拒） |
-| 天天基金 | ✅ | 返回 HTML 而非数据 |
-| Yahoo 非官方 | ✅ | 429 限流 |
-| Alpha Vantage / Twelve Data / Finnhub | ❌ | 需注册；免费档主要覆盖美股 |
+| **Tencent `qt.gtimg.cn`** | ✅ | **200, works**, covers A-shares/HK/US stocks, supports batch requests |
+| Sina `hq.sinajs.cn` | ✅ | 403 (still rejected even with a Referer) |
+| Tiantian Fund | ✅ | Returns HTML instead of data |
+| Yahoo unofficial | ✅ | 429 rate-limited |
+| Alpha Vantage / Twelve Data / Finnhub | ❌ | Require registration; free tiers mainly cover US stocks |
 
-⚠️ **非官方接口，风险明确接受**（产品定位自用/小范围）：无文档、无 ToS 保障、
-可能随时变更。失效时资产显示「无法估值」，不会静默算错 —— 由 `QuoteSource` 的契约保证。
+⚠️ **Unofficial API, risk explicitly accepted** (product is positioned for personal/small-scale
+use): no documentation, no ToS guarantee, could change at any time. When it fails, assets show
+"cannot be valued" instead of silently computing something wrong — this is guaranteed by the
+`QuoteSource` contract.
 
-两个实现细节：
-- **报文是 GBK。** Kotlin/Native 没有内置 GBK 解码器。做法是按 **Latin-1 逐字节读入**，
-  ASCII 的价格/代码字段完全无损，只有中文名称乱码（而我们不用那个字段）。
-  **不要改成 UTF-8 解码** —— GBK 字节不是合法 UTF-8，替换字符可能吃掉相邻的 `~`
-  分隔符导致字段错位。有一条用真实 GBK 字节的测试锁着。
-- **币种由代码前缀决定**（`hk`→HKD、`us`→USD、其余→CNY），创建 QUOTED 资产时
-  **强制对齐资产币种**。不对齐会静默算错：行情价按市场币种计价，而估值按
-  `asset.currency` 折算。
+Two implementation details:
+- **The payload is GBK-encoded.** Kotlin/Native has no built-in GBK decoder. The approach is to
+  read it byte-by-byte as **Latin-1**; the ASCII price/code fields come through with zero loss,
+  only the Chinese name field gets garbled (and we don't use that field anyway). **Do not switch to
+  UTF-8 decoding** — GBK bytes are not valid UTF-8, and replacement characters could swallow an
+  adjacent `~` separator, shifting fields out of alignment. There's a test locked in using real GBK
+  bytes.
+- **Currency is determined by code prefix** (`hk`→HKD, `us`→USD, otherwise→CNY), and is **forced to
+  match the asset's currency** when a QUOTED asset is created. Mismatches would silently corrupt
+  results: the quote price is denominated in the market's currency, while valuation converts using
+  `asset.currency`.
 
-**iOS 已实测（Xcode 26.6 / iOS Simulator 26.5 SDK，2026-07-29）**，清掉了三条长期悬置的风险：
+**iOS actually tested (Xcode 26.6 / iOS Simulator 26.5 SDK, 2026-07-29)**, clearing three
+long-standing risks:
 
-1. **framework 链接通过** —— 之前失败在 `xcrun xcodebuild -version`，装了 Xcode 就好了。
-   Kotlin/Native 自己声明的最低要求是 `minimalXcodeVersion=12.5`（读 `~/.konan` 的
-   konan.properties），那些 `xcode_26.4` 引用是它自己下载的 toolchain，不是对已装 Xcode 的要求。
-2. **SQLDelight 的 NativeSqliteDriver 在真机模拟器上工作** —— `iosTest/NativeDatabaseTest`
-   验了 schema 创建、枚举 adapter 双向、**CHECK 约束**、事务、按天 upsert。
-   CHECK 值得单独验：Android 和 iOS 是不同的 SQLite 构建，拦不拦得住是运行时行为。
-3. **Turbine 的 klib 版本差不是问题** —— 它的 iOS klib 对着 stdlib 2.1.21 编、我们在 2.4.10，
-   现在 `PortfolioFlowTest` 在 iOS 上真正执行了它。
-   ⚠️ 之前这条风险其实一直没被验证：Turbine 是个**声明了却没有任何测试导入**的依赖，
-   而链接器会丢掉没引用的符号 —— 所以连"能编译"都说明不了什么。
-   **加跨平台库之后要确认真有测试用到它，否则编译通过是假的安全感。**
+1. **Framework linking succeeds** — it previously failed at `xcrun xcodebuild -version`; installing
+   Xcode fixed it. Kotlin/Native's own declared minimum is `minimalXcodeVersion=12.5` (read from
+   `~/.konan`'s konan.properties); those `xcode_26.4` references are the toolchain it downloads
+   itself, not a requirement on the Xcode you have installed.
+2. **SQLDelight's NativeSqliteDriver works on the real simulator** — `iosTest/NativeDatabaseTest`
+   verified schema creation, bidirectional enum adapters, **CHECK constraints**, transactions, and
+   per-day upsert. CHECK is worth verifying separately: Android and iOS use different SQLite
+   builds, and whether constraints actually hold is a runtime behavior.
+3. **Turbine's klib version gap turned out not to be a problem** — its iOS klib was built against
+   stdlib 2.1.21 while we're on 2.4.10, and now `PortfolioFlowTest` actually exercises it on iOS.
+   ⚠️ This risk had actually never been verified before: Turbine was a dependency that was
+   **declared but never imported by any test**, and the linker strips unreferenced symbols — so
+   even "it compiles" proved nothing.
+   **After adding a cross-platform library, confirm a test actually uses it — otherwise a
+   successful compile is a false sense of security.**
 
-**iOS App 已在模拟器跑通（2026-07-30）**，过程中撞到三个坑，都记在 `iosApp/project.yml` 的注释里：
+**The iOS App actually runs in the simulator (2026-07-30)**, hitting three snags along the way, all
+recorded in the comments of `iosApp/project.yml`:
 
-1. **链接失败在 `_sqlite3_step`** —— Xcode target 需要显式 `-lsqlite3`。
-   **最容易误判的一点：iOS 单元测试是全过的。** Kotlin/Native 链接自己的测试可执行文件时
-   会继承 SQLiter cinterop 的 linker opts，但静态 framework 交给 Xcode 之后那些 opts
-   不会出现在 App 的链接命令行上。所以「iOS 测试全绿」不等于「App 能链接」。
-2. **`CADisableMinimumFrameDurationOnPhone` 缺失导致启动即崩** ——
-   CMP 的 `PlistSanityCheck` 主动抛 `IllegalStateException`（意思是没这个键 ProMotion
-   机型会被限在 60Hz）。**这个崩溃没有崩溃报告、系统日志里也没有**，因为异常发生在
-   dispatch queue 上；`simctl launch` 只返回一个 PID 然后 App 静静消失。
-   唯一能看到 Kotlin 异常和堆栈的是 `xcrun simctl launch --console`。
-3. 一开始怀疑是 Xcode 16+ 的 debug dylib / Previews 机制，加了 `ENABLE_DEBUG_DYLIB: NO`。
-   **后来实测证明那不是原因**（开着也能启动），已经去掉 —— 留一个错误的解释比没有更糟。
+1. **Linking fails at `_sqlite3_step`** — the Xcode target needs an explicit `-lsqlite3`. **The
+   easiest thing to misjudge: the iOS unit tests all pass.** When Kotlin/Native links its own test
+   executable it inherits SQLiter's cinterop linker opts, but once the static framework is handed
+   to Xcode, those opts don't carry over into the App's link command line. So "iOS tests all green"
+   does not imply "the App can link."
+2. **Missing `CADisableMinimumFrameDurationOnPhone` causes a crash on launch** — CMP's
+   `PlistSanityCheck` proactively throws `IllegalStateException` (meaning: without this key,
+   ProMotion devices would get capped at 60Hz). **This crash produces no crash report and nothing
+   in the system log**, because the exception happens on a dispatch queue; `simctl launch` just
+   returns a PID and the App quietly disappears. The only way to see the Kotlin exception and stack
+   trace is `xcrun simctl launch --console`.
+3. Initially suspected it was the Xcode 16+ debug dylib / Previews mechanism, and added
+   `ENABLE_DEBUG_DYLIB: NO`. **Later testing proved that wasn't the cause** (it launches fine either
+   way), so it was removed — leaving a wrong explanation in place is worse than having none.
 
-工程用 **XcodeGen**：提交 `project.yml`，`.xcodeproj` 和 `Info.plist` 都是生成物。
-这直接消掉了 AGENTS.md 里「pbxproj 冲突极难解」那条约束的根因 ——
-需要 review 的变成一份二十几行的 YAML。
+The project uses **XcodeGen**: `project.yml` is committed, `.xcodeproj` and `Info.plist` are both
+generated artifacts. This directly eliminates the root cause behind the "pbxproj conflicts are
+nearly impossible to resolve" constraint in AGENTS.md — what needs review becomes a twenty-odd-line
+YAML file.
 
-### iOS UI 测试（XCUITest）—— 三个探测出来的事实
+### iOS UI tests (XCUITest) — three facts uncovered by probing
 
-CMP 把整个界面画在 Skia canvas 上，所以第一件事是确认 XCUITest 到底能不能定位元素。
-**能** —— CMP 的 semantics 会映射到 UIAccessibility。但有三个坑，都是实测出来的：
+CMP draws the entire UI onto a Skia canvas, so the first thing to confirm was whether XCUITest can
+even locate elements. **It can** — CMP's semantics map onto UIAccessibility. But there are three
+pitfalls, all found by actually testing:
 
-1. **Compose 的 `OutlinedTextField` 在无障碍树里是 `TextView`，不是 `TextField`。**
-   `app.textFields` 一个都找不到。
-2. **不能靠 `OutlinedTextField` 的 `label` 定位** —— 它只在部分状态下映射成无障碍 label，
-   聚焦后就没了（读屏用户也会听到空白）。所以给关键输入框加了显式
-   `Modifier.semantics { contentDescription = ... }` —— 这同时是真实的无障碍改善。
-3. **Compose 把 `contentDescription` 和可见 label 拼接**成
-   `'field-asset-name, 名称，如「招行活期」'`，所以 XCUITest 要**前缀匹配**，不能精确匹配。
+1. **Compose's `OutlinedTextField` shows up in the accessibility tree as a `TextView`, not a
+   `TextField`.** `app.textFields` finds none of them.
+2. **You can't rely on `OutlinedTextField`'s `label` for locating it** — it only maps to an
+   accessibility label in some states, and disappears once focused (screen-reader users would also
+   hear nothing). So key input fields got an explicit `Modifier.semantics { contentDescription = ... }`
+   added — which is also a genuine accessibility improvement in its own right.
+3. **Compose concatenates `contentDescription` with the visible label** into something like
+   `'field-asset-name, name, e.g. "CMB checking"'`, so XCUITest has to do **prefix matching**, not
+   exact matching.
 
-**滚动之后点击有两个坑，都实测踩过（表现都是"点了没反应"，比"找不到元素"难查）：**
+**Tapping after scrolling has two pitfalls, both actually hit** (both manifest as "tapped and
+nothing happened," which is harder to debug than "element not found"):
 
-1. **`isHittable` 为 true 不代表点得到。** 卡在屏幕边缘的元素 `isHittable` 仍是 true，
-   但 `tap()` 打的是它的**中心点**，而那个点在可视区外。判据要改成
-   「元素整个落在窗口内」，上边还要再留出 TopAppBar 的高度 ——
-   否则滚到顶部的元素会被 app bar 挡住，tap 打在 app bar 上。
-2. **惯性滚动没停时元素还在动**，滚完立刻 tap 会打偏。每次 swipe 后等 0.5s。
+1. **`isHittable` being true doesn't mean it's actually tappable.** An element stuck at the edge of
+   the screen still reports `isHittable` as true, but `tap()` hits its **center point**, which may
+   be outside the visible area. The check needs to become "the element lies entirely within the
+   window," with extra margin reserved at the top for the TopAppBar's height — otherwise an element
+   scrolled to the top gets covered by the app bar, and the tap lands on the app bar instead.
+2. **Inertial scrolling that hasn't stopped yet means the element is still moving** — tapping
+   immediately after a swipe can miss. Wait 0.5s after each swipe.
 
-还有一条结构上的：**一条测试只朝一个方向滚。** 先滚到底找列表末尾的东西、再滚回顶部
-断言第一屏，会和上面第 1 条打架（回到顶部的元素被 app bar 挡住，判据拒绝它，
-然后又往下滚跑掉）。把「末尾的断言」搬到本来就要滚到那里的测试里，比加更多滚动逻辑可靠。
+One more structural point: **a single test should only scroll in one direction.** Scrolling to the
+bottom to find something at the end of the list, then scrolling back to the top to assert on the
+first screen, collides with point 1 above (the element back at the top gets blocked by the app bar,
+the check rejects it, and then it scrolls down again and drifts away). Moving the "assertion about
+the end of the list" into a test that was already going to scroll there anyway is more reliable
+than adding more scroll logic.
 
-另外，**无障碍树只报可见区域内的节点** —— 屏幕外的元素 `exists` 就是 false。
-Android 的 uiautomator 同理（实测：品种列表里负债那一组要滚一屏才出现在 dump 里）。
-所以"元素不存在"的报错第一步该怀疑的是没滚到，而不是没渲染。
+Also, **the accessibility tree only reports nodes within the visible area** — an off-screen
+element's `exists` is simply false. Same for Android's uiautomator (tested: the liabilities group
+in the instrument-type list only shows up in the dump after scrolling a screen down). So the first
+suspicion for an "element doesn't exist" error should be "haven't scrolled there yet," not "wasn't
+rendered."
 
-另外两个操作层面的注意：输完一个字段要**收起键盘**（换行触发 ImeAction.Done），
-否则下一个字段可能在键盘下面、`tap()` 打到键盘上，报错是
-"Neither element nor any descendant has keyboard focus" —— 看起来像找不到元素，
-其实是点错了位置。以及 `-uitest-reset` 启动参数让每个测试从干净数据库开始
-（实现在 Swift 侧，不污染共享的生产代码）。
+Two more operational notes: after typing into a field, **dismiss the keyboard** (trigger
+ImeAction.Done via a newline), otherwise the next field might be under the keyboard and `tap()`
+hits the keyboard instead, producing an error like "Neither element nor any descendant has
+keyboard focus" — which looks like an element-not-found problem but is really a mis-tap. And the
+`-uitest-reset` launch argument gives every test a clean database to start from (implemented on the
+Swift side, doesn't pollute shared production code).
 
-**还没验证**：
-- 港股/美股的端到端（只验了 A 股 sh600519；解析和币种映射有单测覆盖）
-- **iOS 上的交互流程**（添加/更新/归档资产）—— 没有 iOS UI 自动化，Android 侧是实机点过的
-- iOS 真机（非模拟器），需要签名配置
-- **Turbine 的 klib 版本差**（它的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10）——
-  它已进 commonTest 且在 JVM 上编译通过，但 **iOS 测试还没跑过**，风险仍然悬着。需要 Xcode。
-- **SQLDelight 在真实 iOS 上的运行**（NativeSqliteDriver）—— 只验证了能编译，没跑过。
-  测试用的是 JVM 的 JDBC driver；SQL 和约束是同一套，但 driver 不是。
-- Compose UI 测试（`runComposeUiTest` v2 API）完全没碰。
-- iOS 链接和真机/模拟器运行 —— 缺 Xcode。
+**Still unverified**:
+- End-to-end HK/US stock flow (only A-shares sh600519 verified; parsing and currency mapping are
+  covered by unit tests).
+- **The interaction flow on iOS** (add/update/archive an asset) — no iOS UI automation exists yet;
+  the Android side has been manually tapped through on a real device.
+- iOS real device (not simulator) — needs signing configuration.
+- **Turbine's klib version gap** (its iOS klib was built against Kotlin stdlib 2.1.21, we're on
+  2.4.10) — it's already in commonTest and compiles on the JVM, but **the iOS test hasn't run yet**,
+  so the risk is still open. Needs Xcode.
+- **SQLDelight actually running on real iOS** (NativeSqliteDriver) — only compilation has been
+  verified, it hasn't actually run. Tests use the JVM's JDBC driver; the SQL and constraints are the
+  same, but the driver isn't.
+- Compose UI testing (the `runComposeUiTest` v2 API) hasn't been touched at all.
+- iOS linking and running on a real device/simulator — no Xcode available.
 
-### 单价为什么不用 Money
+### Why unit price doesn't use Money
 
-`quote.price` 是 `UnitPrice`（scale 8），不是 `Money`（scale 2）。单价的精度需求比金额高：
-港股低价股报到 3 位小数（腾讯返回 `462.400`），加密货币代币可能是 `0.00001234`。
-用 scale 2 存的话后者会变成 `0.00`，整项资产静默归零。
+`quote.price` is `UnitPrice` (scale 8), not `Money` (scale 2). Unit prices need more precision than
+amounts: low-priced HK stocks quote to 3 decimal places (Tencent returns `462.400`), and crypto
+tokens can be `0.00001234`. Storing at scale 2 would turn the latter into `0.00`, silently zeroing
+out an entire position.
 
-代价是 `份额(8) × 单价(8) → 金额(2)` 要分两步算，朴素写法必定溢出 Long（1e14 × 1e11 = 1e25）。
-见 `UnitPrice.valueAt`。
+The cost is that `shares(8) × unit price(8) → amount(2)` has to be computed in two steps — a naive
+implementation would necessarily overflow a `Long` (1e14 × 1e11 = 1e25). See `UnitPrice.valueAt`.
 
-### 刻意的偏离之二：偏好存 SQLDelight，不用 DataStore
+### Deliberate deviation #2: preferences stored in SQLDelight, not DataStore
 
-基准币种存在 `settings` 表（SQLDelight）而不是 DataStore。理由：目前只需要存一个字符串，
-而 DataStore 要引入新依赖 + okio Path + 两个平台的路径实现，且它的**非 Android 目标
-至今是 Google 官方标注 experimental**。为一个字符串付这个代价不值得，也多担一份 iOS 风险。
+The base currency is stored in the `settings` table (SQLDelight) rather than DataStore. Reason: we
+currently only need to store a single string, while DataStore would require pulling in a new
+dependency + okio Path + platform-specific path implementations on both platforms, and its
+**non-Android targets are still officially marked experimental by Google**. Paying that price for
+one string isn't worth it, and it adds one more iOS risk.
 
-等真有批量偏好（主题、提醒、应用锁配置）再上 DataStore，届时 `settings` 表可以迁过去。
-catalog 里的 datastore 版本先留着。
+Once there are actually batches of preferences (theme, reminders, app-lock config), move to
+DataStore, and the `settings` table can be migrated over at that point. The datastore version stays
+in the catalog for now.
 
-### 一处刻意的偏离：不用 `expect class`
+### A deliberate deviation: not using `expect class`
 
-`DatabaseDriverFactory` 用的是**接口 + 各平台实现类**，不是 `expect class`。
-两个原因：`expect class` 在 Kotlin 2.4 仍是 Beta（KT-61573，会报 warning）；
-而且 Android 实现需要 `Context`、iOS 不需要，构造参数不同的场景用接口更自然。
-后续加平台实现（Keychain/Keystore、生物识别）建议沿用这个模式。
+`DatabaseDriverFactory` uses **an interface plus per-platform implementation classes**, not
+`expect class`. Two reasons: `expect class` is still Beta in Kotlin 2.4 (KT-61573, emits a
+warning); and the Android implementation needs a `Context` while iOS doesn't, so an interface fits
+the differing-constructor-parameters scenario more naturally. When adding more platform
+implementations later (Keychain/Keystore, biometrics), follow this same pattern.
 
 
-## App icon 与品牌色
+## App icon and brand color
 
-品牌色**琥珀棕 `#8A5A18`** —— 呼应「旺」的富足感，同时避开股市红。
-之前没有品牌色 —— 全局一句裸 `MaterialTheme {}`，跑的是 Material 3 自带的默认紫
-（淡紫 FAB、紫色导航指示条都是从那来的）。
+Brand color: **amber-brown `#8A5A18`** — evokes the abundance implied by "旺" (prosperity), while
+avoiding stock-market red.
+There was no brand color before this — the whole app ran on a bare `MaterialTheme {}`, using
+Material 3's default purple (that's where the pale-purple FAB and purple nav indicator came from).
 
-先试过墨蓝 `#1F4E85`，实机上偏寡淡（冷调 + 近乎灰白的底，在一屏彩色图标里没有存在感），
-换成琥珀棕并把图标底色做暖。**换品牌色只需改两处常量**：`Theme.kt` 的 `BrandAmber`
-和 `generate.py` 的 `BRAND`（外加 Android 自适应背景层的 `colors.xml`）。
+We first tried ink blue `#1F4E85`, which felt flat on a real device (cool tone + near-gray-white
+background gave it no presence on a screen full of colorful icons), so we switched to amber-brown
+and warmed up the icon's background color too. **Changing the brand color only requires editing two
+constants**: `BrandAmber` in `Theme.kt` and `BRAND` in `generate.py` (plus the Android adaptive
+background layer's `colors.xml`).
 
-⚠️ 第三色（tertiary）刻意用**冷灰蓝**，不是 M3 从暖色种子自动推出来的绿 ——
-绿色在中文理财语境里读作"跌"，哪怕只是个强调色也别用。
+⚠️ The tertiary color is deliberately **cool gray-blue**, not the green M3 would auto-derive from a
+warm seed color — green reads as "loss" in a Chinese finance-app context, so avoid it even as a mere
+accent.
 
-图标是「四段配置环 + 中心旺字」，**全部尺寸由 `tools/appicon/generate.py` 生成**。
-提交的是脚本和产物两者：脚本是事实来源，PNG 也进仓库，这样构建不依赖 Pillow。
+The icon is "a four-segment allocation ring plus a center 旺 character," with **all sizes generated
+by `tools/appicon/generate.py`**. Both the script and the generated artifacts are committed: the
+script is the source of truth, and the PNGs are also checked in so the build doesn't depend on
+Pillow.
 
-### 为什么必须用脚本而不是手切图
+### Why a script is required instead of manually cropping images
 
-两个平台的几何要求根本不同，手工对齐迟早会错：
+The geometric requirements on the two platforms are fundamentally different, and manual alignment
+is bound to go wrong eventually:
 
-| | iOS | Android 自适应 |
+| | iOS | Android adaptive |
 |---|---|---|
-| 画布 | 满幅 1024×1024 | 108dp 图层 |
-| 可见范围 | 全部（系统套 squircle） | 只有中间 72dp，**保证不裁的只有直径 66dp 的圆** |
-| alpha | **不能有**（带 alpha 会被 App Store 拒） | 前景必须透明 |
-| 圆角 | **自己不能画**，系统会套遮罩 | 由启动器遮罩决定（OEM 各不相同） |
+| Canvas | Full 1024×1024 | 108dp layer |
+| Visible area | All of it (system applies a squircle mask) | Only the middle 72dp, and **only a 66dp-diameter circle is guaranteed uncropped** |
+| Alpha | **Not allowed** (alpha gets the app rejected from the App Store) | Foreground must be transparent |
+| Corner rounding | **Can't draw it yourself** — the system applies a mask | Determined by the launcher's mask (varies by OEM) |
 
-照 iOS 那张满幅图直接拿去当 Android 前景，环会被裁掉一圈。
+Taking the full-bleed iOS image and using it directly as the Android foreground would crop off part
+of the ring.
 
-### 三个实测出来的坑
+### Three pitfalls found through testing
 
-1. **Pixel Launcher 会对自适应图标再缩一次。** 按 66/108 缩进后，本地按 72dp 视口
-   合成出来环几乎贴边（0.938），**但实机上明显更小**。这层缩放是 Launcher3 的图标归一化，
-   不在 `AdaptiveIconDrawable` 规范里，所以本地合成看不出来。
-   顶着安全区放大会在别的 OEM 遮罩下被削 —— 改为**加粗笔画**补视觉重量。
-2. **几何参数要相对环外径给，不能相对画布。** 内径和字号原本写成相对画布，
-   把满幅版留白从 0.80 调到 0.72 会**顺带把笔画改细 20%**，而且很难看出来。
-   现在是 `RING_OUTER`（只管留白）+ `INNER_RATIO`（管粗细）+ `GLYPH_RATIO`。
-3. **换图标后 SpringBoard 会显示占位图标**，可能是深灰底（看着像自动派生的深色变体坏了），
-   也可能是磨砂空白方块。都只是图标缓存没刷新，**排查 iOS 图标问题前先排除这个**。
-   靠得住的验证顺序是：
-   - 先读 Xcode 编译资源目录后**实际产出**的位图：`<app>/AppIcon60x60@2x.png`
-     （120×120，就是 iPhone 主屏那张）。这一步不受缓存影响。
-   - 再看主屏截图。`launch` 然后 `terminate` 会让 SpringBoard 停在该 App 所在那一页；
-     **`simctl` 没法翻主屏页**，而 `launchctl stop com.apple.SpringBoard` 重启后会跳回第一页，
-     所以别用重启 SpringBoard 的办法去找图标。
+1. **Pixel Launcher rescales adaptive icons an additional time.** After insetting to 66/108, the
+   locally composited version against a 72dp viewport put the ring almost flush against the edge
+   (0.938), **but on a real device it was noticeably smaller.** This extra scaling is Launcher3's
+   icon normalization, which is outside the `AdaptiveIconDrawable` spec, so local compositing can't
+   reveal it. Pushing right up against the safe area gets clipped under other OEMs' masks —
+   compensated instead by **thickening the strokes** to restore visual weight.
+2. **Geometry parameters must be given relative to the ring's outer radius, not the canvas.** The
+   inner radius and glyph size were originally expressed relative to the canvas; adjusting the
+   full-bleed version's margin from 0.80 to 0.72 **incidentally thinned the strokes by 20%** as a
+   side effect, and it was hard to notice. It's now `RING_OUTER` (controls margin only) +
+   `INNER_RATIO` (controls thickness) + `GLYPH_RATIO`.
+3. **After changing the icon, SpringBoard shows a placeholder icon** — could be a dark gray
+   background (looking like a broken auto-derived dark variant), or could be a frosted blank
+   square. Both are just an unrefreshed icon cache — **rule this out first** before debugging an iOS
+   icon problem. The reliable verification order is:
+   - First read the bitmap **actually produced** in Xcode's compiled resource directory:
+     `<app>/AppIcon60x60@2x.png` (120×120, the one shown on the iPhone home screen). This step is
+     unaffected by caching.
+   - Then look at a home-screen screenshot. `launch` followed by `terminate` leaves SpringBoard on
+     the page where that app lives; **`simctl` has no way to flip home-screen pages**, and
+     `launchctl stop com.apple.SpringBoard` jumps back to the first page after restarting — so don't
+     try to find the icon by restarting SpringBoard.
 
-字体用 **Hiragino Sans GB W6**（黑体）而不是宋体：宋体的细横在 40px 上直接糊掉，
-实测对比过。PingFang 受系统保护、Pillow 读不了。
+The font is **Hiragino Sans GB W6** (a Gothic/sans face) rather than a Song/serif face: a serif's
+thin horizontal strokes turn to mush at 40px, confirmed by actually comparing the two. PingFang is
+system-protected and Pillow can't read it.
 
-### 配 ColorScheme 必须写全所有角色
+### Configuring a ColorScheme requires writing out every single role
 
-`lightColorScheme()` 没传的参数取**基线默认值**，而基线的 surface 家族是**带紫调的灰**
-（`#F3EDF7` 那一类）。只改 `primary` 的话，Card 和 BottomBar 的底色仍然发紫，
-看起来像换了一半。`Theme.kt` 里逐个角色都写了，包括 `surfaceContainer*` 那一组。
+Parameters not passed to `lightColorScheme()` fall back to **baseline defaults**, and the baseline's
+surface family is **gray with a purple cast** (the `#F3EDF7`-ish kind). Changing only `primary`
+leaves Card and BottomBar backgrounds still tinted purple — it looks like the theme is only
+half-changed. `Theme.kt` spells out every single role explicitly, including the whole
+`surfaceContainer*` group.
 
-**品牌色和涨跌语义色是两件事。** 中国股市红涨绿跌，将来给盈亏上色要另开一组常量，
-不要复用 `primary`/`error`。
+**Brand color and gain/loss semantic colors are two separate things.** Chinese stock markets use
+red-for-up/green-for-down; when coloring gains/losses later, add a separate set of constants —
+don't reuse `primary`/`error`.
 
 
-## 表面为什么从暖米色换成中性白灰
+## Why the surface went from warm off-white to neutral white-gray
 
-第一版品牌色是琥珀棕 + 暖米色表面，反馈是「不够高级」。**主因不在色相，在底色。**
-暖米色底（`#FFFBF5` / `#F7EEE1`）本身就读作「米黄/复古」，而且它抬高了整体亮度，
-让每一个强调色的对比度都变差 —— 第一版有四个大类色低于 3:1 就是这么来的。
+The first version paired amber-brown with a warm off-white surface, and the feedback was "doesn't
+feel premium." **The root cause isn't the hue, it's the background.** A warm off-white background
+(`#FFFBF5` / `#F7EEE1`) inherently reads as "beige/retro," and it also raises the overall brightness,
+which degrades every accent color's contrast — that's exactly how the first version ended up with
+four category colors below 3:1.
 
-参考**有知有行**的 design token（从其站点的计算样式和 CSS 变量里读出来的，不是凭印象）：
+Referencing **Youzhiyouxing** (有知有行)'s design tokens (read directly from their site's computed
+styles and CSS variables, not from memory):
 
-| 角色 | 值 |
+| Role | Value |
 |---|---|
-| 页面 / 卡片 / 区域 | `#FFFFFF` / `#FFFFFF` / `#FAFAFA`、`#F5F5F5` |
-| 文字梯度 | `#262626` → `#5C5C5C` → `#808080` → `#BFBFBF`（**纯灰，无色偏**） |
-| 分隔线 | `#E0E0E0` |
-| 强调 | primary `#21A3FF`；blue `#4287CE`、cyan `#66B5CC`、green `#2EB88A`、gold `#E0B870`、orange `#E5881E`、purple `#595E99`、pink `#F19D79`、red `#E5605C` |
+| Page / card / section | `#FFFFFF` / `#FFFFFF` / `#FAFAFA`, `#F5F5F5` |
+| Text gradient | `#262626` → `#5C5C5C` → `#808080` → `#BFBFBF` (**pure gray, no color cast**) |
+| Divider | `#E0E0E0` |
+| Accents | primary `#21A3FF`; blue `#4287CE`, cyan `#66B5CC`, green `#2EB88A`, gold `#E0B870`, orange `#E5881E`, purple `#595E99`, pink `#F19D79`, red `#E5605C` |
 
-它的"高级感"来自**克制**：中性表面 + 极少量低饱和强调，而不是更多颜色。
-我们照这个思路把表面和文字换成中性，**品牌琥珀棕保留为唯一的暖色强调** ——
-在中性底上它反而更突出，而且图标不用重做。
+Its "premium feel" comes from **restraint**: neutral surfaces plus a very small amount of
+low-saturation accent color, rather than more colors. We adopted the same idea and switched the
+surface and text to neutral, **keeping the brand amber-brown as the sole warm accent** — it stands
+out more against a neutral background, and the icon didn't need to be redone.
 
-## 图表配色：为什么不是手挑的
+## Chart colors: why they weren't picked by hand
 
-大类颜色和偏离度颜色是用 **dataviz 的六项检查 + 验证器**跑出来的，不是凭手感选的。
-色值锁在 `ChartColors.kt`，`ChartColorsTest` 会在有人改动时挂掉，
-重跑命令写在那个测试的注释里。
+Category colors and deviation colors were derived by running **dataviz's six checks plus a
+validator**, not chosen by feel. The values are pinned in `ChartColors.kt`; `ChartColorsTest` will
+fail if anyone changes them, with the rerun command documented in that test's comments.
 
-### 两种职责，两套规则
+### Two responsibilities, two rule sets
 
-| | 职责 | 规则 |
+| | Responsibility | Rule |
 |---|---|---|
-| 五大类 | **分类色**（编码身份） | 固定顺序的五个色相，**顺序不可重排** |
-| 偏离度 | **分歧色**（编码正负） | 两个对立色相 + **中性**中点 |
+| Five asset classes | **Categorical color** (encodes identity) | A fixed-order set of five hues, **order must not be rearranged** |
+| Deviation | **Divergent color** (encodes sign) | Two opposing hues + a **neutral** midpoint |
 
-**顺序本身就是色盲安全机制**，不是审美选择 —— 候选顺序要逐一验证，只在通过的里面挑。
-所以不要重排 `assetClassColors`，也不要给第六个大类"顺手生成"一个颜色：
-生成的颜色不受验证保护。
+**The order itself is the colorblind-safety mechanism**, not an aesthetic choice — candidate orders
+were each individually validated, and only ones that passed were picked from. So don't reorder
+`assetClassColors`, and don't "casually generate" a color for a hypothetical sixth category: a
+generated color isn't protected by validation.
 
-### 必须对着图形真正渲染的底色验
+### Must validate against the actual rendered background color
 
-进度条画在 Card 里，所以底色是 `surfaceContainer`（浅 `#FAFAFA` / 深 `#1C1C1C`），
-**不是**页面底色。用错底色算出来的对比度没有意义。
-浅色按**最不利的 `#FFFFFF`** 验（实际卡片略深一点，只会更好）。
+The progress bar is drawn inside a Card, so its background is `surfaceContainer` (light `#FAFAFA` /
+dark `#1C1C1C`), **not** the page background. Contrast computed against the wrong background is
+meaningless. Light mode is validated against the **worst case `#FFFFFF`** (the actual card is
+slightly darker, which can only help).
 
-### 有知有行的色相要 snap 过才能用
+### Youzhiyouxing's hues need to be snapped before use
 
-直接拿他们的色值当五路分类填色会 FAIL：gold `#E0B870`(L 0.803) 和 pink `#F19D79`(L 0.772)
-**超出亮度区间**，cyan `#66B5CC`(C 0.084) 和 purple `#595E99`(C 0.094) **彩度低于 0.10 下限**
-（会读成灰、失去身份编码能力）。原因很直接：**他们的色是给小面积强调和文字用的**，
-不需要五个色块互相可分。
+Directly using their color values to fill the five categories fails: gold `#E0B870` (L 0.803) and
+pink `#F19D79` (L 0.772) **fall outside the lightness range**, cyan `#66B5CC` (C 0.084) and purple
+`#595E99` (C 0.094) **fall below the 0.10 chroma floor** (they'd read as gray and lose their
+identity-coding power). The reason is straightforward: **their colors are meant for small-area
+accents and text**, which don't need five color blocks to be mutually distinguishable.
 
-按 snap-to-passing 处理 —— **色相角不动**，只挪亮度和彩度。在 7 选 5 的 2520 种排列里
-搜出 **588 组通过**，取离原色最近的一组：五个色总偏离仅 **ΔE 5.8**，其中 green 一个像素没改。
-gold 和 pink 被自动排除（snap 代价最大，各 ΔE 8.7 / 5.7）。
+We applied snap-to-passing — **the hue angle is fixed**, only lightness and chroma are moved. Out
+of 2520 permutations from choosing 5 of 7, **588 passing combinations** were found; we took the one
+closest to the originals: total deviation across all five colors of only **ΔE 5.8**, with green
+unchanged by even a single pixel. Gold and pink were automatically excluded (the snap cost was
+highest for them, ΔE 8.7 / 5.7 respectively).
 
-实测结果（OKLab ΔE ×100，protan/deuteran 模拟，门槛 8 / 15）：
+Test results (OKLab ΔE ×100, protan/deuteran simulation, thresholds 8 / 15):
 
-| | 最差相邻对 CVD | 正常视力最差对 | 色块对比度 |
+| | Worst adjacent pair, CVD | Worst pair, normal vision | Color-block contrast |
 |---|---|---|---|
-| 浅色 | 11.5 | 20.4 | 2 个低于 3:1 → WARN |
-| 深色 | 10.8 | 16.6 | 全部 ≥ 3:1 |
+| Light | 11.5 | 20.4 | 2 below 3:1 → WARN |
+| Dark | 10.8 | 16.6 | All ≥ 3:1 |
 
-浅色那条 WARN **不可豁免**：必须有补偿通道。我们的补偿是**结构性**的 ——
-每一行永远同时有大类名和百分比，而且条形的长度本身可读，不依赖颜色。
-**改版式时不要把标签去掉**，否则这条就真的破了。
+The light-mode WARN **cannot be waived**: it must have a compensating channel. Our compensation is
+**structural** — every row always shows both the category name and the percentage simultaneously,
+and the bar's own length is readable on its own without depending on color. **Don't remove those
+labels when redesigning the layout**, or this compensation genuinely breaks.
 
-### 深色不是浅色的自动翻转
+### Dark mode is not an automatic flip of light mode
 
-同样的五个色相，按深色底**重新取亮度并单独验过**。自动翻转会掉出亮度区间。
+The same five hues were **re-derived for lightness and separately validated** against the dark
+background. An automatic flip would fall outside the lightness range.
 
-### 偏离度的三个选择
+### Three choices for the deviation colors
 
-1. **超配用红**是产品要求。
-2. **低配用蓝而不是绿** —— 绿色在中文理财语境里读作"跌"，用在"低配"上会被理解成亏损。
-3. **达标用中性灰**：分歧配色的中点不能是一个色相，否则"没有偏离"看起来也像一种状态。
+1. **Overweight uses red** — a product requirement.
+2. **Underweight uses blue, not green** — green reads as "down" in a Chinese finance context, so
+   using it for "underweight" would be read as a loss.
+3. **On-target uses neutral gray**: the midpoint of a divergent scheme can't itself be a hue, or
+   "no deviation" would also look like a state.
 
-另外偏离度**不复用 `error`**：超配不是错误，是和计划的差异；涂成错误色会让真正的
-校验失败失去分量。低配的蓝比大类槽 1 的蓝**深一档**，所以和「流动资金」的色块分得开。
+Also, deviation colors **do not reuse `error`**: being overweight isn't an error, it's a difference
+from the plan; painting it as an error color would dilute the weight of an actual validation
+failure. The underweight blue is **one shade darker** than category-slot 1's blue, so it stays
+distinguishable from the "liquid funds" category color block.
 
-这三个是**文字色**，按 WCAG 正文标准验的（≥ 4.5:1；实测浅色 4.89 / 5.34 / 6.69）。
-「超配」的红取自有知有行的 `#E5605C`，但它在白底只有 3.41:1、**正文不合格**，
-所以浅色模式加深到 `#C5453F`；深色底够暗，可以用回原值。
+These three are **text colors**, validated against the WCAG body-text standard (≥ 4.5:1; measured
+4.89 / 5.34 / 6.69 in light mode). "Overweight" red is drawn from Youzhiyouxing's `#E5605C`, but on a
+white background it's only 3.41:1 — **fails for body text** — so light mode darkens it to
+`#C5453F`; the dark background is dark enough that the original value can be reused.
 
-### 净值曲线用品牌色
+### The net-worth chart uses the brand color
 
-只有一条序列，所以用品牌琥珀棕，**不占用大类的分类色** ——
-给它一个分类色会让人以为它和某个大类有关。单序列不需要图例，标题已经说明它是什么。
+There's only one series, so it uses the brand amber-brown, **not one of the category colors** —
+giving it a category color would suggest it's tied to a specific asset class. A single series
+doesn't need a legend; the title already explains what it is.
 
-⚠️ Vico 的类路径极易搞错：`LineCartesianLayer`、`rememberLine`、`Fill` 都在
-`com.patrykandpatrick.vico.compose.*` 下，**没有** `multiplatform` 这一段。
-不确定就去解开 klib 查真实符号，别凭印象写 import。
+⚠️ Vico's class paths are very easy to get wrong: `LineCartesianLayer`, `rememberLine`, `Fill` are
+all under `com.patrykandpatrick.vico.compose.*`, with **no** `multiplatform` segment. If unsure,
+unpack the klib and check the actual symbols — don't write the import from memory.
 
-### 还没做的
+### Not yet done
 
-**盈亏没有上色。** 中国股市红涨绿跌，给盈亏上色是合理的下一步，但要先决定
-红色在这个 App 里的唯一含义 —— 现在红色是"超配"，再让它同时表示"上涨"会冲突。
+**Gains/losses have no color coding yet.** Chinese stock markets use red-for-up/green-for-down, and
+coloring P&L is a reasonable next step, but first we need to decide what red means exclusively in
+this app — right now red means "overweight," and having it also mean "gained" at the same time would
+conflict.
 
 
-## 查 Vico API 必须对着 pinned 的 tag 查
+## Vico API lookups must be done against the pinned tag
 
-第一次查 `HorizontalAxis.ItemPlacer.aligned()` 的参数时用 WebFetch 抓的是
-GitHub `master` 分支的源码，得到的签名带一个 `shiftExtremeLabels` 参数——
-编译报"找不到参数"，因为项目锁定的 3.2.3 版本根本没有这个参数
-（后来才在更新的版本里加的）。
+The first time we looked up the parameters for `HorizontalAxis.ItemPlacer.aligned()`, we used
+WebFetch to pull source from GitHub's `master` branch, and got a signature that included a
+`shiftExtremeLabels` parameter — the build then failed with "no such parameter," because the
+project's pinned 3.2.3 version doesn't have this parameter at all (it was added later, in a newer
+version).
 
-正确做法：
+The correct approach:
 
 ```bash
-# 1. 用项目里锁定的版本号找到对应的 git tag，拿到那个 tag 指向的 commit sha
+# 1. Find the git tag matching the project's pinned version, and get the commit sha it points to
 gh api repos/patrykandpatrick/vico/git/refs/tags | python3 -c "
 import json,sys
 for t in json.load(sys.stdin):
     if 'v3.2.3' in t['ref']: print(t['ref'], t['object']['sha'])"
 
-# 2. 不确定文件路径就搜，别凭经验猜——这个库的目录结构比包名深好几层
+# 2. If unsure of the file path, search for it — don't guess from experience; this library's
+#    directory structure is several levels deeper than its package name suggests
 gh api search/code -X GET -f q='filename:PieChartModel.kt repo:patrykandpatrick/vico'
 
-# 3. 用第 1 步拿到的 sha 作为 ?ref= 去查源码，这才是项目实际链接的那个 API
+# 3. Use the sha from step 1 as ?ref= to look up the source — this is the actual API the project links against
 gh api "repos/patrykandpatrick/vico/contents/<path>?ref=<sha>" --jq '.content' | base64 -d
 ```
 
-`gh api` 比 WebFetch 更可靠：WebFetch 抓到的是页面内容摘要（可能被小模型转述、
-可能抓到默认分支而不是你要的版本），`gh api` 直接给 raw 内容、还能指定 `?ref=`
-精确到 commit。**Vico 相关的坑不只是包路径，版本之间的参数也会变**——
-两条教训是一回事：不要信"看起来像"，去查真正链接的那份源码。
+`gh api` is more reliable than WebFetch: what WebFetch fetches is a summarized page (possibly
+paraphrased by a small model, and possibly fetching the default branch instead of the version you
+actually want), while `gh api` gives you the raw content directly and lets you pin `?ref=` to an
+exact commit. **Vico's pitfalls aren't limited to package paths — parameters change between
+versions too** — both lessons boil down to the same thing: don't trust "looks about right," go
+check the actual source that's actually linked.
 
-## Vico 的 PieChart
+## Vico's PieChart
 
-`com.patrykandpatrick.vico.compose.pie` 下有现成的环形/饼图组件
-（`PieChart` / `PieChartHost` / `PieChartModelProducer` / `pieSeries {}`），
-不需要自己用 Canvas 画。用法和已经在用的折线图（`CartesianChartModelProducer` /
-`lineModel {}`）是同一套模式：
+`com.patrykandpatrick.vico.compose.pie` has ready-made donut/pie chart components
+(`PieChart` / `PieChartHost` / `PieChartModelProducer` / `pieSeries {}`) — no need to hand-draw with
+Canvas. The usage pattern mirrors the line chart we already use (`CartesianChartModelProducer` /
+`lineModel {}`):
 
 ```kotlin
 val modelProducer = remember { PieChartModelProducer() }
@@ -639,11 +779,12 @@ val chart = rememberPieChart(
     sliceProvider = PieChart.SliceProvider.series(
         colors.map { PieChart.Slice(fill = Fill(it)) }
     ),
-    innerSize = PieSize.Inner.fixed(64.dp),  // > 0 就是圆环，0 是实心饼图
+    innerSize = PieSize.Inner.fixed(64.dp),  // > 0 makes it a donut, 0 is a solid pie
 )
 PieChartHost(chart = chart, modelProducer = modelProducer, ...)
 ```
 
-`PieChartModel.Entry` 要求非负（`>= 0f`），负值会在构造时直接抛异常——
-和 [ClassRow](../shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)
-的进度条一个道理，负净敞口画不成一个扇区，传之前要 `coerceAtLeast(0)`。
+`PieChartModel.Entry` requires non-negative values (`>= 0f`) — a negative value throws at
+construction time. Same reasoning as [ClassRow](../shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)'s
+progress bar: a negative net exposure can't be drawn as a slice, so `coerceAtLeast(0)` it before
+passing it in.

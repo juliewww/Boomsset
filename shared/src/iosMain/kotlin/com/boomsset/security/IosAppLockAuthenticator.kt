@@ -21,24 +21,27 @@ import platform.LocalAuthentication.LAPolicyDeviceOwnerAuthentication
 import kotlin.coroutines.resume
 
 /**
- * iOS 侧的应用锁认证。
+ * iOS-side app lock authentication.
  *
- * **不需要 cinterop** —— `LocalAuthentication` 是 Kotlin/Native 的一等 platform library，
- * 直接 `import platform.LocalAuthentication.*` 即可，零 Gradle 配置、零 `.def` 文件。
- * （这一点在 docs/stack.md 里核实过。）
+ * **No cinterop needed** — `LocalAuthentication` is a first-class Kotlin/Native
+ * platform library, so a plain `import platform.LocalAuthentication.*` is enough:
+ * zero Gradle config, zero `.def` file. (Verified in docs/stack.md.)
  *
- * 用 `LAPolicyDeviceOwnerAuthentication` 而不是
- * `LAPolicyDeviceOwnerAuthenticationWithBiometrics`：前者在生物识别失败或未录入时
- * **自动回落到设备密码**。只用后者的话，没录 Face ID 的用户根本没法开应用锁。
+ * Uses `LAPolicyDeviceOwnerAuthentication` rather than
+ * `LAPolicyDeviceOwnerAuthenticationWithBiometrics`: the former **automatically falls
+ * back to the device passcode** when biometrics fail or aren't enrolled. Using only
+ * the latter would leave users without Face ID enrolled completely unable to enable
+ * app lock.
  *
- * ⚠️ `Info.plist` 必须有 `NSFaceIDUsageDescription`，否则首次调用 Face ID 直接崩溃
- * （AGENTS.md 约束 7）。已经在 `iosApp/project.yml` 里配好了。
+ * ⚠️ `Info.plist` must have `NSFaceIDUsageDescription`, otherwise the first Face ID
+ * call crashes outright (AGENTS.md constraint 7). Already configured in
+ * `iosApp/project.yml`.
  */
 class IosAppLockAuthenticator : AppLockAuthenticator {
 
     @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
     override fun capability(): AuthCapability = memScoped {
-        // canEvaluatePolicy 的 NSError 是出参，Kotlin/Native 上要显式分配指针
+        // canEvaluatePolicy's NSError is an out-parameter; on Kotlin/Native the pointer must be explicitly allocated
         val errorPtr = alloc<ObjCObjectVar<NSError?>>()
         val canEvaluate = LAContext()
             .canEvaluatePolicy(LAPolicyDeviceOwnerAuthentication, errorPtr.ptr)
@@ -55,7 +58,7 @@ class IosAppLockAuthenticator : AppLockAuthenticator {
     @OptIn(BetaInteropApi::class)
     override suspend fun authenticate(reason: String): AuthResult =
         suspendCancellableCoroutine { cont ->
-            // 每次新建 LAContext —— 复用会带上上一次的认证状态缓存
+            // Create a new LAContext each time — reusing one would carry over the cached authentication state from the previous attempt
             LAContext().evaluatePolicy(
                 policy = LAPolicyDeviceOwnerAuthentication,
                 localizedReason = reason,
@@ -63,7 +66,7 @@ class IosAppLockAuthenticator : AppLockAuthenticator {
                 if (!cont.isActive) return@evaluatePolicy
                 when {
                     success -> cont.resume(AuthResult.Success)
-                    // 用户主动取消不是错误
+                    // User-initiated cancellation is not an error
                     error?.code == LAErrorUserCancel ||
                         error?.code == LAErrorSystemCancel ||
                         error?.code == LAErrorUserFallback -> cont.resume(AuthResult.Cancelled)

@@ -2,7 +2,7 @@ package com.boomsset.domain
 
 import kotlin.time.Instant
 
-/** 品种（分类第二层）。服务记账归类，可自定义扩展。 */
+/** A subtype (second layer of classification). Serves bookkeeping categorization, user-extensible. */
 data class AssetSubtype(
     val id: Long,
     val name: String,
@@ -13,10 +13,10 @@ data class AssetSubtype(
 )
 
 /**
- * 一项资产或负债。
+ * An asset or liability.
  *
- * [defaultValuationMode] / [defaultQuoteSymbol] 只是**新快照的默认值**，
- * 估值一律看 [Snapshot.mode]。
+ * [defaultValuationMode] / [defaultQuoteSymbol] are only **defaults for new snapshots**;
+ * valuation always looks at [Snapshot.mode].
  */
 data class Asset(
     val id: Long,
@@ -25,7 +25,7 @@ data class Asset(
     val subtypeId: Long,
     val currency: String,
     val isLiability: Boolean = false,
-    /** 是否计入配置比例。关掉它是排除自住房的低成本手段。 */
+    /** Whether it counts toward allocation ratios. Turning this off is a cheap way to exclude a primary residence. */
     val includeInAllocation: Boolean = true,
     val defaultValuationMode: ValuationMode,
     val defaultQuoteSymbol: String? = null,
@@ -35,23 +35,26 @@ data class Asset(
 }
 
 /**
- * 某时点的完整持仓状态。**不可变、只追加**，修正历史是追加新记录。
+ * The complete holdings state at a point in time. **Immutable, append-only** — correcting
+ * history means appending a new record.
  *
- * 用 sealed 而不是「一个类带一堆可空字段」，这样「QUOTED 的快照没有份额」
- * 在类型层面就构造不出来 —— 和 schema 里那条 CHECK 约束是同一个意图的两层防护。
+ * Uses a sealed interface rather than "one class with a pile of nullable fields", so
+ * that "a QUOTED snapshot has no quantity" is simply unconstructible at the type
+ * level — the same intent as the CHECK constraint in the schema, as a second layer of
+ * defense.
  */
 sealed interface Snapshot {
     val id: Long
     val assetId: Long
     val asOf: Instant
 
-    /** 自身币种下的**总成本**。null = 用户没填，不参与盈亏统计。均价是派生值，不存。 */
+    /** **Total cost** in the asset's own currency. Null = the user didn't enter one, excluded from P&L stats. Average cost is a derived value and isn't stored. */
     val costBasisMinor: Money?
     val recordedAt: Instant
 
     val mode: ValuationMode
 
-    /** 用户直接填市值。 */
+    /** The user enters the market value directly. */
     data class Manual(
         override val id: Long,
         override val assetId: Long,
@@ -64,10 +67,12 @@ sealed interface Snapshot {
     }
 
     /**
-     * 按份额记，市值 = 份额 × 行情单价。
+     * Recorded by quantity; market value = quantity × quoted unit price.
      *
-     * [quoteSymbol] 记在快照上而不是资产上：股票退市转 MANUAL 后，
-     * 这些历史快照仍需知道该用哪个代码查历史行情。顺带也兼容了代码变更。
+     * [quoteSymbol] is recorded on the snapshot rather than the asset: after a stock is
+     * delisted and converted to MANUAL, these historical snapshots still need to know
+     * which symbol to use when looking up historical quotes. This also happens to
+     * accommodate symbol changes.
      */
     data class Quoted(
         override val id: Long,
@@ -82,26 +87,26 @@ sealed interface Snapshot {
     }
 }
 
-/** 市场行情。公开数据，与用户无关。同一 symbol 同一天只有一条。 */
+/** Market quote. Public data, unrelated to any user. At most one per symbol per day. */
 data class Quote(
     val symbol: String,
     val asOfDay: String,
-    /** 单价用 scale-8 定点，不用 Money —— 见 [UnitPrice] 里关于低价股和代币的说明。 */
+    /** Unit price uses scale-8 fixed point, not Money — see [UnitPrice] for the note about low-priced stocks and tokens. */
     val price: UnitPrice,
     val currency: String,
     val fetchedAt: Instant,
 )
 
-/** 目标配置。允许多套并存，其中一套 [isActive]。 */
+/** A target allocation. Multiple can coexist, with exactly one [isActive]. */
 data class TargetAllocation(
     val id: Long,
     val name: String,
     val isBuiltIn: Boolean,
     val isActive: Boolean,
-    /** 各大类目标比例，单位**基点**（100% = 10000）。 */
+    /** Target ratio per top-level class, in **basis points** (100% = 10000). */
     val targetsBp: Map<AssetClass, Int>,
 ) {
-    /** 一套配置的比例之和必须是 10000。UI 保存前要校验。 */
+    /** The ratios in one allocation must sum to 10000. The UI must validate this before saving. */
     val sumBp: Int get() = targetsBp.values.sum()
     val isValid: Boolean get() = sumBp == TOTAL_BP
 

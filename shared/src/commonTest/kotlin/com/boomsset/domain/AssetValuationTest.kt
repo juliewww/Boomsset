@@ -41,7 +41,7 @@ class AssetValuationTest {
         )
 
     @Test
-    fun `默认排除已归档资产`() {
+    fun `archived assets are excluded by default`() {
         val data = PortfolioData(
             assets = listOf(asset(1), asset(2, archived = true)),
             snapshots = listOf(manual(1, 1, 100_00), manual(2, 2, 200_00)),
@@ -55,7 +55,7 @@ class AssetValuationTest {
     }
 
     @Test
-    fun `没有快照的资产被标记而不是当成零`() {
+    fun `an asset with no snapshot is flagged rather than treated as zero`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = emptyList(),
@@ -66,12 +66,13 @@ class AssetValuationTest {
         val row = PortfolioSeriesCalculator.currentAssetValuations(data, cny, today, zone).single()
         row.hasNoSnapshot shouldBe true
         row.baseValue.shouldBeNull()
-        // hasNoSnapshot 和 isUnpriced 是两件不同的事：前者是没录过，后者是录了但估不出来
+        // hasNoSnapshot and isUnpriced are two different things: the former means it was
+        // never recorded, the latter means it was recorded but can't be valued
         row.isUnpriced shouldBe false
     }
 
     @Test
-    fun `缺汇率的外币资产标记为无法估值`() {
+    fun `a foreign currency asset missing an exchange rate is flagged as unpriced`() {
         val data = PortfolioData(
             assets = listOf(asset(1, currency = "USD")),
             snapshots = listOf(manual(1, 1, 100_00)),
@@ -81,12 +82,12 @@ class AssetValuationTest {
 
         val row = PortfolioSeriesCalculator.currentAssetValuations(data, cny, today, zone).single()
         row.isUnpriced shouldBe true
-        row.localValue shouldBe Money(100_00)   // 自身币种下是知道的
-        row.baseValue.shouldBeNull()            // 但折算不出来
+        row.localValue shouldBe Money(100_00)   // known in its own currency
+        row.baseValue.shouldBeNull()            // but can't be converted
     }
 
     @Test
-    fun `填了成本的资产带盈亏`() {
+    fun `an asset with a cost basis carries a gain or loss`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, value = 125_000_50, cost = 120_000_00)),
@@ -99,7 +100,7 @@ class AssetValuationTest {
     }
 
     @Test
-    fun `QUOTED 资产的成本均价是派生值`() {
+    fun `a QUOTED asset's average cost is a derived value`() {
         val stock = asset(1, AssetClass.EQUITY)
         val data = PortfolioData(
             assets = listOf(stock),
@@ -110,7 +111,7 @@ class AssetValuationTest {
                     asOf = LocalDate(2026, 7, 1).endOfDayIn(zone),
                     quantity = Quantity.ofUnits(100),
                     quoteSymbol = "X",
-                    costBasisMinor = Money(105_000),  // 总成本 1050 元
+                    costBasisMinor = Money(105_000),  // total cost 1050 yuan
                     recordedAt = epoch,
                 ),
             ),
@@ -119,13 +120,13 @@ class AssetValuationTest {
         )
 
         val row = PortfolioSeriesCalculator.currentAssetValuations(data, cny, today, zone).single()
-        // 1050 元 / 100 份 = 10.50 元/份
+        // 1050 yuan / 100 shares = 10.50 yuan/share
         row.unitCost shouldBe Money(1050)
-        row.baseValue shouldBe Money(150_000)  // 100 × 15.00 元
+        row.baseValue shouldBe Money(150_000)  // 100 x 15.00 yuan
     }
 
     @Test
-    fun `MANUAL 资产没有成本均价概念`() {
+    fun `MANUAL assets have no concept of an average cost`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, 100_00, cost = 90_00)),
@@ -133,13 +134,13 @@ class AssetValuationTest {
             fxRates = emptyList(),
         )
 
-        // 房子没有"份额"，均价无意义
+        // A house has no "shares", so average cost is meaningless
         PortfolioSeriesCalculator.currentAssetValuations(data, cny, today, zone)
             .single().unitCost.shouldBeNull()
     }
 
     @Test
-    fun `归档后的资产可以显式包含进来`() {
+    fun `an archived asset can be explicitly included`() {
         val data = PortfolioData(
             assets = listOf(asset(1, archived = true)),
             snapshots = listOf(manual(1, 1, 100_00)),

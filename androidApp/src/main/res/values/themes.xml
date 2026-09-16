@@ -1,21 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      Compose 自己管主题，这里只需要一个宿主主题 —— 但**开屏必须在这里配**。
+      Compose manages the theme itself, so this only needs to be a host theme — but the
+      **splash screen must be configured here**.
 
-      Android 12+ 的系统开屏是自动的：它拿 `android:icon` 当图标、拿
-      `android:windowSplashScreenBackground` 当底（API 31+）。**不配的话**它退回
-      `windowBackground`，而 `Theme.Material.Light` 的 windowBackground 是平台的
-      浅灰 —— 既不是我们的暖底，也**不跟随深色模式**（深色模式下先闪一片浅灰，
-      再切进深色界面）。
+      The Android 12+ system splash screen is automatic: it takes `android:icon` as the icon and
+      `android:windowSplashScreenBackground` as the background (API 31+). **If not configured**,
+      it falls back to `windowBackground`, and `Theme.Material.Light`'s windowBackground is the
+      platform's light gray — neither our warm background nor **dark-mode aware** (dark mode would
+      briefly flash light gray before switching to the dark UI).
 
-      所以两个都要给：
-      * `windowBackground` —— 覆盖 API 31 以下，也避免开屏之前那一帧闪平台色
-      * `windowSplashScreenBackground`（在 values-v31/ 里）—— API 31+ 的开屏底
+      So both need to be provided:
+      * `windowBackground` — covers below API 31, and also avoids a flash of the platform color
+        in the frame before the splash screen appears
+      * `windowSplashScreenBackground` (in values-v31/) — the splash background for API 31+
 
-      颜色取 `@color/splash_bg`，和 Theme.kt 的 `surface` 同值，
-      **深浅两套在 values/ 和 values-night/ 的 colors.xml 里**，所以开屏
-      和启动后的第一屏是连续的，不会跳色。
+      The color is `@color/splash_bg`, matching Theme.kt's `surface`, with **light/dark variants
+      in values/ and values-night/'s colors.xml** — so the splash screen and the first screen
+      after launch are continuous, with no color jump.
     -->
     <style name="Theme.Boomsset" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/splash_bg</item>

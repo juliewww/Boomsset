@@ -1,23 +1,28 @@
--- 市场行情。**公开数据，与用户无关。**
+-- Market quotes. **Public data, unrelated to the user.**
 --
--- 打开 App 刷新只写这里，不写 snapshot —— 否则一天开十次 App 就给每个资产写十条
--- 持仓记录，快照表会爆。见 docs/domain.md「行情 ≠ 快照」。
+-- Refreshing on app open only writes here, never to snapshot -- otherwise opening the app ten
+-- times a day would write ten holding records for every asset, and the snapshot table would
+-- explode. See docs/domain.md "Quote != Snapshot".
 --
--- 主键是 (symbol, as_of_day)，所以「同一 symbol 同一天只留一条」由数据库保证，
--- 按天 upsert 用 INSERT OR REPLACE 就够，不需要应用层去查重。
+-- The primary key is (symbol, as_of_day), so "only one row per symbol per day" is guaranteed by
+-- the database; a daily upsert via INSERT OR REPLACE is enough, no need for the app layer to
+-- check for duplicates.
 CREATE TABLE quote (
     symbol      TEXT NOT NULL,
-    -- ISO 'YYYY-MM-DD'（用户本地时区的日期）。用文本是为了可读且字典序即时间序。
+    -- ISO 'YYYY-MM-DD' (date in the user's local time zone). Stored as text so it stays
+    -- human-readable while lexicographic order still matches chronological order.
     as_of_day   TEXT NOT NULL,
-    -- scale-8 定点单价。不是分！低价股和代币需要 2 位小数以上的精度。
+    -- scale-8 fixed-point unit price. Not cents! Low-priced stocks and tokens need more than
+    -- 2 decimal places of precision.
     price_scaled INTEGER NOT NULL,
     currency    TEXT NOT NULL,
     fetched_at  INTEGER NOT NULL,
     PRIMARY KEY (symbol, as_of_day)
 );
 
--- 结转：取某 symbol 在某日之前最近的一条行情。
--- 取价失败时靠它拿到 stale 价格，而不是把资产当成 0。
+-- Carry-forward: fetch the most recent quote for a symbol on or before a given day.
+-- When a price fetch fails, this is what falls back to a stale price instead of treating the
+-- asset as worth 0.
 selectLatestOnOrBefore:
 SELECT * FROM quote
 WHERE symbol = :symbol AND as_of_day <= :day

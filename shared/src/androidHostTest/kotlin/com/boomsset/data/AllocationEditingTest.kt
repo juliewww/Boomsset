@@ -16,8 +16,9 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 /**
- * 目标配置的编辑走真实 SQLite 验证 —— 光单测证明不了事务、唯一索引和
- * 「只能删自定义」这类约束真的生效。
+ * Editing a target allocation is verified against real SQLite — a plain unit test
+ * can't prove that transactions, unique indexes, and constraints like "only custom
+ * ones can be deleted" actually take effect.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AllocationEditingTest {
@@ -36,7 +37,7 @@ class AllocationEditingTest {
     }
 
     @Test
-    fun `切换生效配置后只有一套是 active`() = runTest {
+    fun `only one allocation is active after switching the active one`() = runTest {
         val (_, r) = repo()
         val all = r.observeAllocations().first()
         all shouldHaveSize BUILT_IN_PRESETS.size
@@ -50,7 +51,7 @@ class AllocationEditingTest {
     }
 
     @Test
-    fun `保存目标比例后能读回`() = runTest {
+    fun `saved target ratios can be read back`() = runTest {
         val (_, r) = repo()
         val allocation = r.observeAllocations().first().first()
 
@@ -69,11 +70,11 @@ class AllocationEditingTest {
     }
 
     @Test
-    fun `不闭合的比例被拒绝写入`() = runTest {
+    fun `ratios that do not sum to 100 percent are rejected on write`() = runTest {
         val (_, r) = repo()
         val allocation = r.observeAllocations().first().first()
 
-        // 加起来只有 50%，存进去会让偏离度全错且不报错 —— 必须拒绝
+        // Only sums to 50% — writing it in would make every deviation wrong without any error — must be rejected
         assertFails {
             r.saveAllocationTargets(
                 allocation.id,
@@ -83,24 +84,24 @@ class AllocationEditingTest {
     }
 
     @Test
-    fun `保存时先清旧条目 不残留`() = runTest {
+    fun `old entries are cleared before saving, leaving no leftovers`() = runTest {
         val (_, r) = repo()
         val allocation = r.observeAllocations().first().first()
 
-        // 只给两个大类，其余为 0
+        // Only two asset classes given, the rest should be 0
         r.saveAllocationTargets(
             allocation.id,
             mapOf(AssetClass.LIQUID to 5000, AssetClass.EQUITY to 5000),
         )
 
         val reloaded = r.observeAllocations().first().first { it.id == allocation.id }
-        // 旧的 FIXED_INCOME / ALTERNATIVE / PROTECTION 条目必须没了，否则合计会超 100%
+        // The old FIXED_INCOME / ALTERNATIVE / PROTECTION entries must be gone, otherwise the sum would exceed 100%
         reloaded.sumBp shouldBe TargetAllocation.TOTAL_BP
         reloaded.targetsBp.keys shouldBe setOf(AssetClass.LIQUID, AssetClass.EQUITY)
     }
 
     @Test
-    fun `新建自定义配置`() = runTest {
+    fun `create a custom allocation`() = runTest {
         val (_, r) = repo()
         val id = r.createAllocation(
             "我的",
@@ -117,7 +118,7 @@ class AllocationEditingTest {
     }
 
     @Test
-    fun `内置配置删不掉 自定义可以删`() = runTest {
+    fun `built-in allocations cannot be deleted, custom ones can`() = runTest {
         val (_, r) = repo()
         val builtIn = r.observeAllocations().first().first { it.isBuiltIn }
         val customId = r.createAllocation("临时", mapOf(AssetClass.LIQUID to 10_000))
@@ -126,15 +127,16 @@ class AllocationEditingTest {
         r.deleteAllocation(customId)
 
         val after = r.observeAllocations().first()
-        // 内置还在，自定义没了
+        // Built-in is still there, custom is gone
         after.any { it.id == builtIn.id } shouldBe true
         after.any { it.id == customId } shouldBe false
     }
 
     @Test
-    fun `编辑目标比例会让数据流重新发射`() = runTest {
-        // 回归测试：原来 observeActiveTarget 只监听 allocation 表，
-        // 写 items 表不触发发射，配置页看不到改动
+    fun `editing target ratios makes the data flow re-emit`() = runTest {
+        // Regression test: observeActiveTarget used to only listen to the allocation
+        // table; writing to the items table didn't trigger an emission, so the
+        // allocation page couldn't see the change
         val (_, r) = repo()
         val before = r.observeActiveTarget().first()!!
 

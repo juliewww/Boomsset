@@ -50,7 +50,7 @@ class AssetEditingTest {
     }
 
     @Test
-    fun `改名和改大类会落库`() = runTest {
+    fun `renaming and reclassifying persist to the database`() = runTest {
         val r = repo()
         val id = r.newAsset()
         val subtypeId = r.observeSubtypes().first().first { it.assetClass == AssetClass.EQUITY }.id
@@ -73,8 +73,8 @@ class AssetEditingTest {
     }
 
     @Test
-    fun `改元信息不动任何快照`() = runTest {
-        // 这是这个功能的核心保证：改归类不改金额
+    fun `editing metadata does not touch any snapshot`() = runTest {
+        // This is the core guarantee of this feature: reclassifying does not change amounts
         val r = repo()
         val id = r.newAsset()
         val before = r.observePortfolio().first().snapshots
@@ -93,31 +93,31 @@ class AssetEditingTest {
         r.observePortfolio().first().snapshots shouldBe before
     }
 
-    // ---------- 编辑策略 ----------
+    // ---------- Edit policy ----------
 
     @Test
-    fun `只有一条快照时币种可改`() {
+    fun `currency can be changed when there is only one snapshot`() {
         AssetEditPolicy.canChangeCurrencyAndLiability(1) shouldBe true
         AssetEditPolicy.canChangeCurrencyAndLiability(0) shouldBe true
     }
 
     @Test
-    fun `有历史后币种不可改`() {
-        // 改币种会让全部历史金额被当成另一种货币重新折算 —— 数字不变含义全变
+    fun `currency cannot be changed once there is history`() {
+        // Changing currency would reinterpret every historical amount as a different currency — the numbers stay the same but the meaning changes entirely
         AssetEditPolicy.canChangeCurrencyAndLiability(2) shouldBe false
         AssetEditPolicy.canChangeCurrencyAndLiability(50) shouldBe false
     }
 
     @Test
-    fun `锁住时给出可读的原因`() {
+    fun `gives a readable reason when locked`() {
         val reason = AssetEditPolicy.lockedReason(3)
         (reason.contains("3 条") && reason.contains("重新解读")) shouldBe true
     }
 
-    // ---------- 归档 / 取消归档 ----------
+    // ---------- Archive / unarchive ----------
 
     @Test
-    fun `取消归档只清标记 不删归零快照`() = runTest {
+    fun `unarchiving only clears the flag, does not delete the zeroing snapshot`() = runTest {
         val r = repo()
         val id = r.newAsset()
         nowMs = 2_000
@@ -125,7 +125,7 @@ class AssetEditingTest {
 
         val afterArchive = r.observePortfolio().first()
         afterArchive.assets.first { it.id == id }.isArchived shouldBe true
-        // 归档追加了一条 0 值快照
+        // Archiving appended a zero-value snapshot
         afterArchive.snapshots.count { it.assetId == id } shouldBe 2
 
         nowMs = 3_000
@@ -133,15 +133,16 @@ class AssetEditingTest {
 
         val afterUnarchive = r.observePortfolio().first()
         afterUnarchive.assets.first { it.id == id }.isArchived shouldBe false
-        // 那条 0 值快照仍在 —— 它是真实记录，不该被撤销。
-        // 所以取消归档后资产会显示 0，需要用户再更新一次估值。
+        // That zero-value snapshot is still there — it's a real record and shouldn't be
+        // undone. So after unarchiving, the asset shows 0 until the user records a new
+        // valuation.
         afterUnarchive.snapshots.count { it.assetId == id } shouldBe 2
     }
 
-    // ---------- 自定义品种 ----------
+    // ---------- Custom subtypes ----------
 
     @Test
-    fun `新增自定义品种`() = runTest {
+    fun `add a custom subtype`() = runTest {
         val r = repo()
         val before = r.observeSubtypes().first().size
 
@@ -152,7 +153,7 @@ class AssetEditingTest {
         val created = after.first { it.id == id }
         created.name shouldBe "私募基金"
         created.assetClass shouldBe AssetClass.EQUITY
-        // 自定义的不是内置 —— 内置的删不掉，自定义的可以
+        // Custom is not built-in — built-in can't be deleted, custom can
         created.isBuiltIn shouldBe false
     }
 }

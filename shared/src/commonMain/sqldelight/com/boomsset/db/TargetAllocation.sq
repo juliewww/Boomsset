@@ -1,7 +1,8 @@
 import com.boomsset.domain.AssetClass;
 import kotlin.Boolean;
 
--- 目标配置。**允许多套并存**（"我现在 vs 稳健 vs 激进"），其中一套 is_active。
+-- Target allocation. **Multiple presets can coexist** ("current me" vs "conservative" vs
+-- "aggressive"), with one of them marked is_active.
 CREATE TABLE target_allocation (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL,
@@ -12,8 +13,9 @@ CREATE TABLE target_allocation (
 
 CREATE UNIQUE INDEX target_allocation_builtin_name ON target_allocation(name) WHERE is_built_in = 1;
 
--- 目标比例用**基点**（basis point）存：100% = 10000，30% = 3000。
--- 用整数避免小数百分比的精度问题，校验就是「一套之和 = 10000」。
+-- Target percentages are stored in **basis points**: 100% = 10000, 30% = 3000.
+-- Using integers avoids precision issues with fractional percentages; validation is simply
+-- "the sum for one preset = 10000".
 CREATE TABLE target_allocation_item (
     allocation_id      INTEGER NOT NULL REFERENCES target_allocation(id) ON DELETE CASCADE,
     asset_class        TEXT AS AssetClass NOT NULL,
@@ -31,7 +33,7 @@ SELECT * FROM target_allocation WHERE is_active = 1 LIMIT 1;
 selectItems:
 SELECT * FROM target_allocation_item WHERE allocation_id = ?;
 
--- 校验用：一套配置的比例之和，应当等于 10000
+-- For validation: the sum of percentages in one preset should equal 10000
 sumOfItems:
 SELECT COALESCE(SUM(target_percent_bp), 0) FROM target_allocation_item WHERE allocation_id = ?;
 
@@ -54,8 +56,8 @@ UPDATE target_allocation SET is_active = 1 WHERE id = ?;
 deleteAllocation:
 DELETE FROM target_allocation WHERE id = ? AND is_built_in = 0;
 
--- 一次拿全部 item，避免按 allocation 逐条查（N+1），
--- 也让「items 变化」能进入数据流触发 UI 刷新。
+-- Fetch all items at once, avoiding per-allocation queries (N+1),
+-- and letting "items changed" flow into the data stream to trigger UI refreshes.
 selectAllItems:
 SELECT * FROM target_allocation_item;
 

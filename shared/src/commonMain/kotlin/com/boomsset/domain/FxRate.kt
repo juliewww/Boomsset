@@ -3,12 +3,13 @@ package com.boomsset.domain
 import kotlin.jvm.JvmInline
 
 /**
- * 汇率，定点整数，scale = 8。同样不用 Double —— 它会参与净值累加。
+ * An exchange rate, as a fixed-point integer, scale = 8. Also doesn't use Double — it
+ * participates in net worth accumulation.
  */
 @JvmInline
 value class ExchangeRate(val scaled: Long) {
 
-    /** 把 [amount] 从 base 币种折算到 quote 币种。 */
+    /** Converts [amount] from the base currency to the quote currency. */
     fun convert(amount: Money): Money =
         Money(FixedPoint.multiply(amount.minorUnits, scaled, ONE))
 
@@ -16,16 +17,17 @@ value class ExchangeRate(val scaled: Long) {
         const val SCALE: Int = 8
         const val ONE: Long = 100_000_000L
 
-        /** 同币种，1:1。 */
+        /** Same currency, 1:1. */
         val IDENTITY = ExchangeRate(ONE)
     }
 }
 
 /**
- * 某一天的汇率。
+ * The exchange rate on a given day.
  *
- * **折算历史净值必须用当时的汇率**，不是今天的 —— 否则汇率波动会污染历史曲线，
- * 让用户看到自己从没经历过的涨跌。
+ * **Converting a historical net worth value must use the rate from that day**, not
+ * today's rate — otherwise exchange-rate fluctuations would pollute the historical
+ * curve, showing the user swings they never actually experienced.
  */
 data class FxRate(
     val base: String,

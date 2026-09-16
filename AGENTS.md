@@ -1,907 +1,891 @@
-# AGENTS.md — 旺资（Boomsset）
-
-## 项目状态
-
-**核心循环已闭环（Android 实机验证过）。** 三个页面：净值曲线 / 资产配置 / 资产列表。
-添加资产 → 定期更新估值 → 归档，全流程可用。**247 个单元测试全绿。**
-
-实跑验证过（含直接查 SQLite 确认）：更新是**追加快照**而非改写（成本正确结转），
-归档追加 0 值快照且历史一字未改，配置比例加总 100%。
-
-**行情与多币种都已打通（实机验证）：**
-- 汇率：Ktor + Frankfurter（ECB，无需 key，**支持历史日期**）。实测 $1000 → ¥6,771.30
-- 行情：Ktor + 腾讯财经 `qt.gtimg.cn`（**非官方接口**，无需 key，A 股/港股/美股）。
-  实测 100 股 sh600519 @1334.05 → ¥133,405.00，盈亏 +11.17%
-- 基准币种可切换且持久化；切换只改展示口径，快照一条都不会被改写
-- **历史汇率会按区间回补**（模拟器验证：`fx_rate` 从 1 行变 20 行，覆盖
-  2026-08-07…09-03，即持仓期全程）。查的是 Frankfurter 的 `/v1/{start}..{end}`，
-  一次拿一整段。判据在 `RateRefresher.requiredRanges`，见下方教训 15
-
-⚠️ **已知问题：Quote 还没有做历史回补，汇率做了。** `refreshQuotes` 只拉今天的价，
-而估值取「该时点前最近的一条」—— 所以一只持有三个月的股票，历史时点上取不到价、
-判成「无法估值」，那些点的净值算成 0（**基准币种是 CNY 也一样**，和汇率无关）。
-修法同构（腾讯的日 K 接口另有 endpoint），但腾讯是非官方接口、报文和取值口径都要重新摸，
-所以没有跟着汇率一起改。**动净值曲线的准确性之前先看这条。**
-
-⚠️ **腾讯接口是非官方的**：没有文档和 ToS 保障，可能随时失效。产品定位自用/小范围，
-这个风险是明确接受的。失效时的表现是资产显示「无法估值」，**不会静默算错**。
-报文是 GBK 编码，用 Latin-1 逐字节读入以保住 ASCII 的价格字段 —— 别改成 UTF-8 解码。
-
-**目标配置可编辑（实机验证）：** 多套预设可切换对比、比例可改、内置的可「恢复默认」
-但不可删除。**保存强制之和为 100%** —— 不闭合的配置会让偏离度全错且不报错。
-
-**资产元信息可编辑（实机验证）：** 改名/大类/品种/是否计入配置随时可改；
-**币种和负债标记只在资产仅有一条快照时可改** —— 它们会追溯性地重新解释全部历史快照
-（金额数字不变但含义变了），判据在 `AssetEditPolicy`。品种可自定义添加，归档可取消。
-
-**iOS 已验证（Xcode 26.6 + iOS Simulator 26.5 SDK）：** framework 链接通过、
-**158 个 iOS 模拟器测试全绿**，其中包含专门验 `NativeSqliteDriver` 的 `NativeDatabaseTest`
-（schema 创建、枚举 adapter、CHECK 约束、事务、按天 upsert）和用到 Turbine 的
-`PortfolioFlowTest`。
-
-**iOS App 已在模拟器里跑起来（实测）：** 共享 Compose UI 正常渲染、Koin 启动成功、
-SQLDelight 的 native driver 在真实 App 里创建并 seed 了数据库。
-`iosApp/` 用 **XcodeGen** 生成工程 —— 提交的是 `project.yml`，`.xcodeproj` 和 `Info.plist`
-都是生成物且已 gitignore。见 iosApp/README.md。
-
-**行情有手动兜底（实机验证）：** 每条 QUOTED 资产显示行情日期，超过 3 天标记过期；
-用户可手填单价覆盖。**这是腾讯接口失效时唯一的补救手段** —— 没有它，取不到价的资产
-会永久显示「无法估值」。手填的价写进同一张 `quote` 表，所以当天一次成功的自动刷新会
-覆盖它（有意如此：真取到市场价当然比手填准）。
-
-**应用锁已做（Android 实机验证）：** 生物识别/锁屏密码二选一，
-开启前必须先认证成功、解锁状态**不持久化**（回后台或重启都要重验）。
-锁着时**完全不组合**受保护内容而不是盖遮罩 —— 后者会进任务切换截图、也可能一瞬间露出来。
-
-**品牌色与 app icon 已做。⚠️ 当前值是深紫檀 `#5D3270`** —— 定义在
-[Theme.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt)，跟随系统深浅色。
-下面几段按时间顺序记录了 `#8A5A18` → `#BD4D03` → `#918163` → `#986E00` → `#955E00`
-→ `#D3BC7D` → `#5D3270` 的多次改版和各自被否的理由，
-**读到旧色号的段落时注意那是历史，不是现状。**
-图标是「破环而出」（配置环 + 三根上升柱，最高一根穿出环外），**环用的就是 App 里五个大类的原色**，全部尺寸由
-[tools/appicon/generate.py](tools/appicon/generate.py) 生成 ——
-**那是唯一事实来源，res/ 和 Assets.xcassets 里的 PNG 是产物，别手改。**
-改了它的常量必须跑 [tools/appicon/validate.py](tools/appicon/validate.py)。
-
-在此之前全局只有一句裸 `MaterialTheme {}`，界面跑的是 Material 3 自带的**默认紫** ——
-那不是设计决策，只是没人配过。配 ColorScheme 时**必须逐个角色写全**：没传的参数取基线默认值，
-而基线的 surface 家族是带紫调的灰，只改 primary 会让 Card 和 BottomBar 仍然发紫。
-
-**Android 真机验证过（Xiaomi 15 Pro / Android 16 / HyperOS 3）：** 启动无崩溃、
-主题与空态正确、状态栏图标对比度 10.20:1；应用锁在**有真实生物识别的设备**上
-`capability()` 返回 AVAILABLE（模拟器只有 PIN，没验过这条路径）。
-⚠️ **`adb` 命令里的设备参数不要写成一个变量**（`D="-s xxx"` 后 `$D`）——
-zsh 不对未加引号的变量做分词，会被当成单个参数，报 `-s requires an argument`。
-
-**空状态已可用（两端实机验证）：** 净值页给出三步上手指引，并说明「记快照不记流水」
-（不说清楚，用户会按记账 App 的预期去用）。**配置页零资产时照样能用** ——
-显示目标比例本身，预设可切换、比例可编辑。
-
-**净值曲线不再显示"没有数据"的时段、资产配置多了饼图（两端实机验证）：**
-按季/按年看时，账号才用了几个月，原来固定取 12 个周期、前面一大截是"资产还不存在"
-的 0 值点。现在有一个 `trimBeforeFirstSnapshot` 开关（默认关，不改变已有测试锁定的
-结转语义），UI 侧打开后只保留第一条快照之后的取样点。判据是**取样点结束时刻是否早于
-最早快照时刻**，不是"净值是不是 0"——账户清零之后的真实 0（比如全部资产归档）
-不该被这条规则当成"没数据"抹掉。
-
-同时用 Vico 的 `HorizontalAxis.ItemPlacer.aligned(spacing, offset)` 让 x 轴标签
-按点数动态稀疏，不再是"每个点都放一个标签"挤到重叠截断（实测过"10月/11月/12月"
-被截断成"10…/11…/12…"）；`offset` 特意算成"让最后一个下标对齐"，保证最新的点
-永远在最右边有标签，不会因为点数不是 spacing 的整数倍而漏标。
-
-配置页加了环形占比图（Vico 的 `PieChart`／`PieChartHost`，同一个包早就在用于折线图），
-和 [ClassRow](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)
-的进度条共用 [chartColors](shared/src/commonMain/kotlin/com/boomsset/ui/theme/ChartColors.kt)
-那五个固定顺序的大类色 —— 圆环没有另配一份图例文字，名称和百分比下面的卡片已经写了，
-再写一遍是重复信息（配置页第一版就因为重复"对比目标"被反馈过，教训直接搬过来）。
-
-⚠️ **查 Vico API 一定要对着 pinned 的 tag 查，不能信 GitHub 默认分支。**
-第一次查 `HorizontalAxis.ItemPlacer.aligned()` 的参数时用 WebFetch 抓的是
-`master` 分支，得到一个"新版本才有的参数"（`shiftExtremeLabels`），编译报
-"找不到参数"。用 `gh api repos/.../git/refs/tags` 按项目锁定的版本号找到对应
-commit sha，再用 `gh api repos/.../contents/<path>?ref=<sha>` 查源码，才是这个
-项目实际链接的那个 API。Vico 的 pie chart 相关文件路径也是先用
-`gh api search/code` 搜出来的真实路径，没有凭经验猜（猜的话大概率猜错，
-这个库的目录结构比包名深好几层）。
-
-**品牌色再调亮（两端验证）：** `#8A5A18` → `#BD4D03`，反馈是原色不够"积极向上"。
-直接沿旧色相拉高亮度彩度不可行——候选在 sRGB 里会被裁剪，裁剪本身会偷偷改变色相角，
-最后撞上图表「权益类」橙 `#E58A26`（配置页 FAB 和权益类那根条会挨在一起）。
-改成往红偏约 25° 色相角，用 dataviz 验证器确认分离度 ΔE 16.2（门槛 15）。
-细节和求解过程见 [Theme.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt) 的注释。
-图标同步换成新色，环的四阶台阶按「相对 BRAND 的偏移量」重新算，不是手调。
-
-**表面是中性白灰，不是暖米色（实机验证）：** 「不够高级」的主因不在色相、在底色 ——
-暖米色底本身就读作「米黄/复古」，还让所有强调色的对比度变差。
-现在表面和文字梯度取自**有知有行**的 design token，品牌琥珀棕是**唯一**的暖色强调。
-图标保持暖色不变（图标和 app 表面无关，不用重做）。
-
-**⚠️ 上面两段已被下面这轮取代**（纯中性白灰 + `#BD4D03` 都不再是现状），
-但结论「暖米色底会读作米黄/复古」仍然有效 —— 现在的暖底彩度只有 0.013，远低于当时那版。
-
-**改成莫兰迪暖色：`#BD4D03` → 橄榄金 `#918163`（Android 模拟器 API 34 验证）。**
-反馈是"不够好看"。问题不在色相，**在角色分配**：`#BD4D03` 的 OKLCH 彩度是 **0.160**，
-而它坐在 `primary` 上 —— FAB、导航指示、开关、净值柱全归它。高彩度橙做大面积填充，
-在中文 App 语境里就是电商那一档的读感。现在彩度降到 **0.047**，彩色全部让给数据。
-
-中间试错的两条路都留下了可复用的判据：
-
-* **"深墨锚定"（primary L 0.33 + 深色 hero 卡片）被否，理由是太暗。** 但它暴露的
-  依赖关系是真的：`primaryContainer` 在本项目里**只有净值页 hero 卡片一个消费者**
-  （`NetWorthScreen` 那张 Card），改它等于改那张卡片，不用动 UI 代码。
-* **冷色被否，但原因是可计算的**：五个大类色里**四个是冷色**，在亮度轴上把冷色区
-  分段占满了（当时的保障类紫 L.48、流动资金蓝 L.60、固定收益绿和另类实物青 L.70）。
-  冷色 primary 的可用窗口只剩 **L ≤ 0.42**，必然比暖色深一档；暖色能做到 **L 0.61**。
-  **想要更亮的冷色，唯一的办法是先动「保障类紫」** —— 它是卡住 L 0.48 的那个。
-  （⚠️ 后来真的动了，见下方"品牌色改深紫檀"那段：保障类已从紫挪到金黄 `#977E00`。）
-
-现在的三条硬判据（改色值要重新验，方法同 ChartColorsTest 的注释）：
-1. **与五个大类图表色的最小 ΔE ≥ 15**（实测 15.2）。旧的 `#BD4D03` 对权益类橙只有 16.2，
-   一直贴着门槛 —— 换色不只是好看，是把一个勉强及格的项拉开。
-2. **primary 对页面底 ≥ 3:1**（实测 3.70），低于它 FAB 会糊进背景。
-3. **`onPrimary` 对 primary ≥ 4.5:1**。⚠️ primary 亮到 L 0.61 之后**白字只有 3.86:1、
-   不合格**，所以 `onPrimary` 是深棕不是白 —— 莫兰迪体系普遍如此，**亮到有阳光感的
-   颜色压不住白字**。别想当然填 `Color.White`。
-
-中性面不再是纯灰：亮度阶保留，加上 H=82 的微量彩度（近白面 0.008、中灰 0.013、
-深色文字 0.020），正文对比度几乎没变（13.1:1）。
-
-**涨跌色跟着改了，而且从「一组固定值」变成「按深浅两组」**（见
-[GainLossColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/GainLossColors.kt)）。
-判据是**对它实际压在的每一块底**都有 ≥4.5:1。现在由 `BoomssetTheme` 通过
-`LocalGainLossColors` 提供，和 `LocalChartColors` 同一套做法。**红涨绿跌一个字没改。**
-
-⚠️ **「最不利的底」在深浅两个模式里不是同一个，这里踩过坑。**
-浅色模式下 hero 卡片（`primaryContainer`）比页面底**深**，所以它最不利
-（旧值 `#C5453F` 压上去只有 3.34:1）；**深色模式下 hero 卡片反而比页面底浅**，
-同样是最不利的那个 —— 但第一版深色值只对着 `surfaceContainer` 验过，
-结果压在深色 hero 卡片（`#5E4200`）上**只有 2.50:1**，
-**真机切到深色模式才看出来**。通则：改这两个色值时把**三种底逐个验一遍**
-（页面底 / 普通卡片 / hero 卡片），别假设哪个最不利。
-
-**莫兰迪那版又被否了：「太沉闷」→ 暖金 `#986E00`（Android 模拟器 API 34 验证）。**
-低彩度换来的克制，代价是**所有靠颜色表示状态的地方都变弱**（底部导航的选中态因此
-比未选中还淡，见下文）。现在彩度回到 **0.120**，但亮度压到 **L 0.565** ——
-关键是**往深走反而能放更多彩度**：「权益类」橙坐在 L 0.715，离得远了 ΔE 自然拉开
-（16.0，比莫兰迪版的 15.2 还宽）。**白字也终于合格**（4.60:1）——
-莫兰迪版亮到 L 0.61，白字只有 3.86:1，只能用深棕。
-⚠️ 想更金就得更深：`#AC8137`（L 0.63）对权益类只有 ΔE 10.3，直接不合格。
-
-**图标环改用 App 五个大类的原色（`ChartColors` 的浅色值，一个像素没改）。**
-图标上的环就是配置页上那五个色块，同一个「蓝色 = 流动资金」两处都成立；
-`validate.py` 会逐色核对，对不上直接 FAIL。
-**代价是放弃了「亮度单调递增」这条判据** —— 原色里最亮的三个（固收 0.699 /
-另类 0.715 / 权益 0.715）几乎持平，亮度轴上没有梯度可用。兜底的是色盲分离度
-（相邻最小 ΔE 10.2，门槛 8）。⚠️ **底色是被这组色逼出来的**：要让五个原色都对底
-≥1.8:1，底色只能取 **L ≤ 0.30 或 L ≥ 0.95**，所以从麦金 `#D7B984` 换成了
-近白暖奶油 `#FBF2E3`。柱子是品牌金的三阶，**中间那根就是 `BrandGold`**。
-
-**开屏（Android 12+ 的系统 splash）此前从没配过。** 宿主主题是
-`android:Theme.Material.Light.NoActionBar`，不配 `windowSplashScreenBackground`
-就退回平台的浅灰 `windowBackground` —— 既不是我们的暖底，**也不跟随深色模式**
-（深色下会先闪一片浅灰）。现在 `values/`+`values-v31/`+`values-night/` 三处给齐，
-色值 = `Theme.kt` 的 `surface`，所以开屏和第一屏之间不跳色。
-
-**净值图表的柱子去掉了 `alpha = 0.5f`。** 那是柱子和折线叠画那一版的遗留
-（半透明才能让折线透出来），折线删掉之后它只剩"把柱子变淡"这一个效果 ——
-实测柱子对页面底只有 **1.95:1**，而柱子是这一页的主数据标记。实色是 4.41:1。
-⚠️ 这个 alpha 一直都偏低（配 `#BD4D03` 是 2.08:1、配 `#918163` 更是 1.77:1），
-**只是从来没人量过** —— 换品牌色时顺手量一遍所有"带 alpha 的品牌色"是值得的。
-
-**app icon 重做成「破环而出」，并且改成多色相（Android 模拟器验证产物）。**
-反馈是"不仅要表现配置，还有管理、钱越来越多"以及"都是一个色系太无趣"。
-现在是：五段配置环（配置）+ 环把它们收拢成柱子的底盘（管理）+ 三根上升柱、
-最高一根**穿出环外**（钱越来越多）。底色是暖陶砖 `#CBAD76`，彩度 0.080 ——
-**比 UI 高**，因为图标不受任何碰撞约束（永远不和图表同屏），阳光感主要来自这里。
-
-图标这一轮踩到的三个坑都写进了 `generate.py` 的注释，这里只记通则：
-
-1. **手算的包围半径错了 27%**，自适应前景超出 66/108 安全圆 —— 最远的点是**最右那根
-   柱的右上角**，不是柱顶。所以 `validate.py` **逐像素读生成物**验这条，不看常量。
-2. **柱子周围的间隙在透明前景上必须真的掏成透明**，不能填底色 —— Android 13+ 的
-   主题图标只取 alpha 当剪影，填底色会让柱子和环重新粘成一块。因此自适应背景层
-   必须是**和 FIELD 同色的实色**（原来是米白渐变，是旧设计的残留）。
-3. **PIL 的 `rounded_rectangle` 要求高度 ≥ 2r + 2**，只满足 2r 仍会抛
-   "y1 must be greater than or equal to y0"。最短那根柱**只在 mdpi（48px）那一档**
-   崩，其余尺寸全正常 —— 所以圆角统一走 `_radius()` 夹一下。
-
-**FAB 要显式给 `primary`，不能用 M3 默认值。** 默认是 `primaryContainer`，
-莫兰迪配色下它是淡沙色，压在同样暖米白的页面底上**只有 1.3:1，加号几乎看不见**
-（模拟器实测）。`primary` 是 3.70:1。见 [App.kt](shared/src/commonMain/kotlin/com/boomsset/ui/App.kt)。
-通则：**换 primaryContainer 的明度时要把所有"默认吃这个角色"的组件过一遍**，
-它在本项目里有两个消费者 —— 净值 hero 卡片（显式）和 FAB（M3 默认，容易漏）。
-
-**底部导航的选中态不能用 `primary` 上色（实机反馈"选中效果太浅"）。**
-`primary` 是 L 0.61 的橄榄金，压在导航栏底上只有 **3.41:1**，而未选中的
-`onSurfaceVariant` 有 **5.26:1** —— **选中态反而比未选中更淡。**
-旧的高彩度橙 `#BD4D03` 靠彩度撑住"有颜色 = 选中"这个读法，换成低彩度品牌色之后它就塌了。
-现在选中态走**三个通道**：文字 `onPrimaryContainer` 深棕（12.72:1）+ `SemiBold`，
-加上文字上方的指示条换成 `primary`（3.41:1，过了 UI 元件"看得见"的 3:1 门槛）。
-指示条的默认色 `secondaryContainer` 压在导航栏底上**只有 1.05:1**，等于不存在 ——
-"选中效果太浅"这条反馈有一半原因在它身上。
-⚠️ 这一栏 `icon = {}` 没有图标，所以指示条是**实心色块**、它的有无本身就是选中态；
-**将来加图标的话要把 `selectedIconColor` 改成 `onPrimary`**，否则图标会糊在色块上。
-
-⚠️ **这是一条通则，不只是导航栏：把高彩度 primary 换成低彩度之后，
-所有"靠颜色表示状态"的地方都要重新量对比度** —— 高彩度色即使亮度不占优也能靠
-彩度跳出来，低彩度色不行。查法是**把选中态和未选中态的对比度都算出来比大小**，
-不能只看"选中态有没有上品牌色"。
-
-✅ **已在小米 15 Pro（Android 16 / SDK 36 / HyperOS 3）真机上验过**：净值页
-（含真实数据的 hero 卡片和实色金柱）、配置页、资产页、底部导航、开屏底色、
-**深浅两种模式**，以及真机启动器里的图标 —— 它没有被 HyperOS 的「图标统一」
-套进生成的底，图形占比和邻居相当（**在 Pixel 模拟器上看到的"被再缩一次"
-在这台上没有复现**，OEM 之间的缩放策略不同，别拿一台的结果外推）。
-SDK 36 也顺带确认了强制 edge-to-edge 下状态栏图标的明暗是对的（教训 9）。
-⚠️ **仍然没验到的：**
-**iOS 一概没验**（本机只有 Command Line Tools，`xcodebuild` 起不来，
-`compileKotlinIosSimulatorArm64` 过了但链接和渲染证明不了）。
-
-**⚠️「保障类」已从紫改成金黄 `#977E00`（浅）/ `#9B8100`（深）。** 原因是品牌色要用紫，
-而品牌色和五个大类色必须 ΔE ≥ 15 —— 保障类占着紫，品牌紫就站不下。
-挪的方向是**算出来的**：先试过挪到洋红（H340），错了 —— 洋红反而堵住 H300~330 的紫、
-逼它把彩度提到 0.19（太艳）。必须挪到**离紫最远的一侧**，紫的彩度下限才从 0.135
-掉到 0.060。两套配色都重跑过 dataviz 验证器，六项全过。
-⚠️ 这条**会重建用户认知** —— 真机上"紫色 = 保障类"已经跑过一段时间。
-
-⚠️ **搜索时我自己加过一条"任意两色 ΔE ≥ 10"，那不是项目的判据。**
-官方验证器只查**相邻对**；现有配色的全对最小只有 8.3，照样通过。
-用比现状还严的判据去搜，会得出"零解"这种假结论 —— **加约束前先拿现状验一遍**。
-
-**图表配色成体系（两端实机验证，浅深两色）：** 五大类各有颜色，**顺序固定不可重排** ——
-顺序本身是色盲安全机制。偏离度用分歧色：超配红、低配蓝、达标中性灰。
-三个页面（净值/配置/资产）共用同一套大类色，「蓝色=流动资金」在哪一页都成立。
-⚠️ **色值不是手挑的**：色相取自有知有行，但**必须经过 snap-to-passing**（色相角不动、
-挪亮度和彩度到合规）—— 他们的原值是给小面积强调用的，当五路分类填色时 gold/pink 亮度超界、
-cyan/purple 彩度不足。在 2520 种组合里搜出 588 组通过，取离原色最近的（总偏离仅 ΔE 5.8）。
-改色值必须重跑验证器，
-方法和命令写在 [ChartColorsTest](shared/src/commonTest/kotlin/com/boomsset/ui/theme/ChartColorsTest.kt) 的注释里。
-浅色模式下有几个大类色低于 3:1 的色块对比度，**必须靠"色块旁边永远有名字 + 百分比"补偿** ——
-改版式时别把那些标签去掉。
-
-**添加资产是独立页面（两端实机验证）：** 不是对话框 —— 对话框放不下这个表单，
-键盘一弹只剩两三行。**第一步选品种、不选大类**：用户不知道支付宝算哪一类，
-所以反过来做 —— 选「支付宝」，大类和默认估值方式从内置品种表带出来，
-大类只作为结果显示。负债品种（房贷/车贷/信用卡/消费贷）单独成组，选了自动打开负债开关。
-币种是**下拉**而不是一排 chip（它几乎从不改，不该占表单最显眼的位置）。
-
-**iOS 交互流程已验证（XCUITest，10 个测试全绿）：** 空状态、tab 切换、添加资产后
-净值和盈亏正确、更新弹窗的预填能被解析、配置比例、应用锁能力提示，
-以及**零资产时目标配置入口可达**、空状态指引、添加流程按品种选、负债品种预设负债标记。
-跑法：`cd iosApp && xcodebuild test -scheme iosApp -destination "id=<UDID>"`。
-
-⚠️ 另有 **2 条净值页图表控件的测试尚未跑过**（`testChartPeriodIsADropdown`、
-`testChartModeAndStyleSwitchesStayUsable`）——写它们的那台机器只有 Command Line Tools，
-`xcodebuild` 起不来。它们覆盖的是周期下拉（含教训 14 那条"切到粗粒度会崩"的方向）
-和两个开关的四种组合（含教训 10 那条"一个点画不出趋势图要明说"）。
-里面有两处**元素类型是猜的**、必须实跑才能确认：Compose 的 `Switch` 和 `DropdownMenuItem`
-在 iOS 无障碍树里落成什么类型（`toggle()` / `menuItem()` 两个 helper 因此逐个类型试）。
-第一次有 Xcode 的机器上跑，**做好这两条要改选择器的准备**。
-
-**根据真机使用反馈做的第二轮 UI 打磨（两端实机/模拟器验证）：**
-- 净值曲线改成**柱状图+折线图**组合，不再是纯折线 —— 见下方教训 10；
-  只有 1 个点时那根柱子原本会撑满整条 x 轴，用幽灵系列窄化成正常宽度 —— 见教训 13
-- **加号（添加资产）从净值页挪到资产页**：净值页是只读的趋势概览，添加资产是资产页在做的事，
-  放错页面会让用户在错的地方找入口。空状态提示文案跟着一起改了（不再说"去净值页点加号"）
-- 底部导航选中态**文字也要变成品牌色**，不能只靠一个浅灰指示条 —— 那条太不明显，看不出选中了哪个
-- 净值页加了一点暖色：概览卡片换成 `primaryContainer` 浅色底，涨跌数字上了色
-  （见 [GainLossColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/GainLossColors.kt)，
-  中国股市语境**红涨绿跌**）。这组色当时是**复用已验证的 M3 角色色而不是新起一组 hex**，
-  因为验证器脚本没有提交到仓库、那轮时间也不允许重建。
-  ⚠️ **这条已经不成立了**：莫兰迪那轮把涨跌色单独解了出来（按浅/深两组，判据是对
-  hero 卡片 ≥4.5:1），验证器也补进了仓库（[tools/appicon/validate.py](tools/appicon/validate.py)
-  是图标那套，色彩数学同源）。现值见 `GainLossColors.kt`
-- 配置页：净敞口的金额加了显式 **+/−** 符号（之前只有负数才看得出符号）；
-  "对比哪套目标"和内置预设的长段说明文字收进了点开才看的 **(i) 图标 tooltip**；
-  "编辑比例/恢复默认/删除"从常驻按钮改成**长按当前目标**才展开
-  （[AllocationScreen.kt](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)
-  的 `InfoTooltip`/`AllocationPicker`）
-- 配置页的环形图**扇区可点**，点开显示那一类的名称和金额，再点一次收起 ——
-  Vico 的 `PieChart` 没有点击回调，命中检测是手写的角度/半径计算，
-  见 [AllocationDonut.kt](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationDonut.kt)
-- 资产页删掉了顶部常驻的"点更新估值记快照"提示；每行原来常驻的"更新估值/改名称分类/归档"
-  三个按钮改成**左滑**才露出来，用 material3 自带的 `SwipeToDismissBox`（不是真的 dismiss，
-  划开不移除数据，只是露出背后的按钮）。**卡片本身仍然整张可点直接打开更新对话框** ——
-  这是刻意保留的，见下方教训 11
-- 添加资产第二步表单（按份额取行情时的「持有份额」「总投入成本」）键盘弹出会挡住字段，
-  补了 `Modifier.imePadding()` —— 见下方教训 12
-
-**净值页可以藏起金额了（眼睛图标，Android 模拟器 API 34 验证，浅深两色）：**
-概览卡片右上角一个眼睛，点一下把**这一页的绝对金额**换成固定长度的 `••••••`
-（[AmountVisibility.kt](shared/src/commonMain/kotlin/com/boomsset/ui/AmountVisibility.kt)），
-**百分比和比率照常显示** —— 增长率、收益率、负债率单看都推不出身价，而它们正是这一页的价值；
-全藏起来等于把净值页关掉。日期、覆盖资产项数、柱子的形状也都留着（形状是相对量）。
-
-三个决定值得记：
-
-* **状态持久化**（settings 表，键 `amounts_hidden`），不是 UI 的 `remember`。
-  这个开关的用途是"人还在旁边"，那期间用户很可能翻去配置页再回来；
-  重启就复位的话，每次打开 App 都要抢在别人看见之前再点一次，等于没这个功能。
-* **图表纵轴刻度必须一起藏。** 只藏卡片的话纵轴上还写着"240万"，
-  顶上那个占位符就成了摆设 —— **一个只挡住一半的隐私开关比没有更糟**，用户以为已经藏好了。
-* **占位符固定长度**，不按位数生成。`"•".repeat(digits)` 会让七位数和四位数一眼分得开，
-  等于把"大概多少钱"漏出去，而那就是要藏的东西。有测试锁着
-  （[AmountVisibilityTest](shared/src/commonTest/kotlin/com/boomsset/ui/AmountVisibilityTest.kt)）。
-
-⚠️ **只做了净值页。** 资产列表和更新记录里的金额照常显示 —— 需求说的是首页。
-
-⚠️ **藏纵轴 = `label = null`，但必须连 `itemPlacer` 一起换**，见
-[NetWorthChart.kt](shared/src/commonMain/kotlin/com/boomsset/ui/networth/NetWorthChart.kt)
-的 `rememberAmountAxis`。两个 placer 在"没有标签"时都走**特例分支**：默认的 `step()`
-跳过防重叠、直接拿 `10^(floor(log10(maxY))-1)` 当步长，净值 238 万时就是 10 万一条 ——
-**23 条横向网格线，柱子被条纹糊掉**（模拟器截图才看出来，编译和单测全绿）。
-换成 `count()` 才对：它在标签高度为 0 时只返回两端，横线整个消失，而这正是想要的。
-**通则：把某个组件设成 null 之前，先查清楚谁在拿它的尺寸算别的东西。**
-
-图标是**手画的 Canvas**，没引图标依赖（项目里"＋""ⓘ""▾"都是字形，但眼睛没有能用的字形：
-👁 是彩色 emoji、吃不到主题色，"划掉的眼睛"连码点都没有）。踩到的三件事都写进了那个文件：
-1. **斜杠画错过一版，只有装到设备上放大才看出来**（实机反馈"图标显示有误"）：
-   短斜线两端正好停在眼眶曲线上、中段又和瞳孔粘成一坨，读不出"被划掉"。
-   要**贯穿到角** + 用 `BlendMode.Clear` 擦出一条缝（配 `CompositingStrategy.Offscreen`，
-   否则 Clear 会去擦卡片底色），**并且隐藏态不画瞳孔** —— 斜杠正好穿过正中间，
-   两个都画会把瞳孔擦成左右两个碎点。
-2. **`IconButton` 的无障碍语义要整个自己声明**（`clearAndSetSemantics` + `role` + `onClick`）。
-   它把 `clickable` 装在内部，所以外面挂的语义节点是可点节点的**祖先**：只挂 `contentDescription`
-   会得到两个节点（28dp 那个有名字但点不动、48dp 可点的没名字），`mergeDescendants = true`
-   能并成一个但 `clickable` 仍是 false。逐个方案都拿 `uiautomator dump` 核对过才定下来 ——
-   不核对根本看不出来。（`LabeledSwitch` 那边不受影响：`Switch` 的 `clickable` 就在它自己那层。）
-3. Canvas 画的图形**不产生无障碍节点**，也没有自动化覆盖（同 `AllocationBar` 那根竖线）——
-   改画法必须实机看一眼。
-
-**净值页的「查看币种」改成下拉（Android 模拟器 API 34 验证）：** 原来是 9 个 `FilterChip`
-排开，加上标签和一行说明，在手机上占三四行（反馈："位置占比太大"）。现在收成一行：
-标签 + `OutlinedButton`("CNY ▾") + `DropdownMenu`，说明收进 (i) tooltip。默认仍是 CNY
-（`DEFAULT_BASE_CURRENCY`，本来就是）。
-**没用 `ExposedDropdownMenuBox`** —— 那套是给文本输入框用的，会带进一个 56dp 高的
-`OutlinedTextField`，正好和"省空间"相反；添加资产页的 `CurrencyDropdown` 用它是对的
-（那里本来就是表单）。菜单展开会**盖住按钮自己**，所以当前币种在菜单里用 `trailingIcon` 打勾
-标出来（不是只换颜色 —— 颜色单独承载状态对色弱用户不成立）。
-配置页的 `InfoTooltip` 提到了 [InfoTooltip.kt](shared/src/commonMain/kotlin/com/boomsset/ui/InfoTooltip.kt)
-两页共用，同时改成 `isPersistent = true` —— 见下方教训 15。
-实测切 USD 折算正确（¥100,000 → $14,883，Frankfurter 实时汇率）、切回 CNY 原值不变。
-
-**净值页顶部卡片重做（Android 模拟器 API 34 验证，360dp / 411dp 两种宽度都看过）：**
-反馈是"总资产信息位置占比太大"，附了一张家庭记账类 App 的顶部卡片做参考。
-原来是四五行整句（"净值增长 +2.10%（含新增投入）"…），每行都要读完整句才知道那个数是什么，
-而且**缺三样最该有的东西**：数据是哪天记的、增长是相比什么时候、总资产/总负债/负债率。
-现在分三段：净值 + 记录日期 → 总资产/总负债分格 → 净值增长/浮动盈亏整行。
-
-新增的派生值都放在**领域层的纯函数**里（`NetWorthPoint.liabilityRatioBp`、
-`NetWorthSeries.growthAbsolute/baselineDate/hasBaseline`、
-`PortfolioSeriesCalculator.lastRecordedDate`），UI 只负责格式化 —— 定义和取舍写进了
-[docs/domain.md](docs/domain.md)（负债率分母为什么是总资产、新鲜度为什么排除归档快照）。
-
-**两段用了不同的排布，这不是随手写的**：短标签短数值（总资产/总负债）适合分格；
-"净值增长（含新增投入）"这种十来个汉字的标签并排时每格只剩 120dp，
-**标签和数值会一起断行**（360dp 实测：标签断成两行、金额断在 " · " 后面吊着一个分隔点，
-而且两个标签断行行数不同会让下面的数值一高一低）。整行版把 `weight(1f)` 给**标签**：
-Row 先按完整宽度量没有 weight 的子项，所以**数值永远完整**，不够宽只折标签。
-负债率不单独占一格，跟在总负债下面当注脚（它本来就是这两个数除出来的）。
-
-**顺手修掉两个字符串里的 Markdown 星号**：`Text` 不解析 `**加粗**`，
-tooltip 气泡和"无法估值"提示里的星号一直是原样显示给用户的（截图确认）。
-
-**配置页：条形上标出目标位置、偏离度折算成钱（Android 模拟器 API 34 验证，浅深两色）：**
-反馈两条 ——「进度条只画了当前占比，看不出目标在哪」、「超配 31% 并不等于知道该动多少钱」。
-`LinearProgressIndicator` 画不出第二个点位（只有 `progress` 一个入参），换成手写的
-[AllocationBar](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationBar.kt)：
-圆角轨道 + 填充（当前）+ 一根竖线（目标）。**横轴恒定 0–100%、不按行自适应** ——
-这一页的全部意义是五行互相比较；竖线带一圈表面色描边，否则压在同色填充上看不见
-（权益类 76% / 目标 40% 那根正好落在填充内部）。
-
-金额是 `AllocationView.rebalanceAmount()`，口径**内部调仓、总净资产不变**
-（卖超配买低配），由此有一条能断言的不变量：**全部大类加总为 0**。
-另一个口径「只投新钱」的算式和为什么没选它写在那个函数的 KDoc 里。
-**不要从 `deviationBp` 反算** —— 它是从已截断到整基点的 `shareBp` 减出来的，
-1 基点乘上净资产就是真金白银（随机对照跑到过 ¥99,876 的差），
-`目标额 − 净敞口` 只截断一次。基点换算的溢出闸门统一成了 `fitsBpMath()`，
-`shareBp`／`rebalanceAmount`／`liabilityRatioBp` 三处共用。
-
-⚠️ **那根竖线没有自动化覆盖**：Canvas 画的图形不产生无障碍节点，而项目里至今没有
-Compose UI 测试（`compose-ui-test` 在 libs.versions.toml 声明了但从没被引入）。
-改 `AllocationBar` 必须手动在真机/模拟器上看一眼 —— 和左滑手势那条缺口同类。
-
-**净值页图表：折线删了，加了两个开关（Android 模拟器 API 34，四种组合逐个走查）：**
-折线和柱子画的是同一份数据，折线是重复信息，删掉。现在图表形态由两个正交的开关决定：
-**总资产 / 按大类**（大类 = 各类**净敞口**，和配置页同一口径，可能为负）×
-**柱状图 / 趋势图**，共四种；「按月/按季/按年」也从一排 `FilterChip` 收成下拉
-（和上面「查看币种」同一套写法）。所有柱状图上方多一条**增长率带**：相对前一根柱子、
-整数百分比、红涨绿跌。12 根柱子时每根只有 ~22dp，所以百分比不留小数、y 轴也改成万/亿。
-按大类时的图例是**带颜色的复选框 + 名字**（不是纯色块 —— 浅色模式下几个大类色低于 3:1，
-名字是补偿手段，见上面图表配色那段）。
-
-**增长率没用 Vico 的 `dataLabel`**，虽然 `rememberColumnCartesianLayer` 就带这个参数：
-它的 formatter **只拿得到 y 值、拿不到 x**，而本项目的结转语义会让相邻周期的净值经常一模一样
-（那个月没记新快照就沿用上一条）—— 同值的柱子分不清谁是谁，标反了不会报错、只会静默错。
-改成图表顶部一条 `HorizontalAxis.rememberTop`（`line`/`tick`/`guideline` 全给 null），
-标签表和数据点在**同一个 transaction** 里进 `ExtraStore`、formatter 按 x 下标取 —— 就是教训 14 的通则。
-`CartesianValueFormatter.format` 返回 `CharSequence`，而 `TextMeasurer.measure` 对
-`AnnotatedString` 有专门重载，所以红涨绿跌是**一个标签内部**上色，不用叠两层轴。
-
-**四种组合之间必须用 `key(mode, style)` 隔开。** `CartesianChartModelProducer.collectAsState`
-里有 `check(previousHashCode == null || hashCode == previousHashCode)` ——
-同一个 chart host 换一个 producer 直接抛异常，这是硬约束不是风格问题。
-
-**Vico 3.2.3 没有原生堆叠面积图。** 趋势图的堆叠是「累计边界 + 不透明 `AreaFill` +
-后画的盖住先画的」模拟出来的，**前提是每一段非负**。净敞口可以为负（某一类的负债大于资产），
-所以先用 `AllocationSeries.hasNegativeExposure()` 检测，命中就退回**各画各的独立曲线**
-并在图下写清楚为什么 —— 不检测的话堆叠会静默画错（负段把上面的层往下拽，
-读起来像那一类凭空缩水）。趋势图只有 1 个取样点时画不出线（教训 10），
-这里不再拿柱子兜底，直接写一句"要两个以上的取样点才连得成线，先看柱状图"。
-
-**两个开关要显式 `contentDescription`。** 文字标签是 `Switch` **相邻的兄弟节点**，
-不会并进开关自己的无障碍节点 —— 不给的话读屏用户听到的只是"开关，已开启"，
-而这一页有三个开关（按大类 / 趋势图 / 应用锁），分不出是哪一个。
-用的是输入框那几个 `field-*` 同一套办法。`uiautomator dump` 确认过 `content-desc`
-确实落到了开关节点上（改之前是空的）。XCUITest 也正是靠它定位这两个开关。
-
-**复跑验证（Android 模拟器 API 34 / 411dp）：** 12 个取样点下四种组合逐个看过 ——
-柱状图没有折线残留、增长率带和底部月份**对齐同一批下标**（12 个点时都是 1/3/5/7/9/11，
-最新那期一定有标签）、红涨绿跌、y 轴走万/亿。按年（2 个取样点）下第一根柱子显示「—」
-而不是编一个百分比，第二根 +824%，柱心和轴标签对齐。**图例取消勾选会连带重算增长率**：
-勾掉权益类后同一根柱子从 +824% 变成 +118%（增长率按**可见那几类的合计**算，
-不然柱子矮了一截、头上的百分比却还是全量的，对不上）。按月 → 按年（教训 14 的崩溃方向）
-没有闪退。**1 个取样点的那两条路径（幽灵系列的柱宽、趋势图的"点数不够"说明）
-这轮没能实机看到** —— 模拟器里的种子数据有 12 个月，凑不出单点，
-上面新加的两条 XCUITest 覆盖的正是这个场景（但还没跑过，见上）。
-
-**资产页底部加了「更新记录」（Android 模拟器 API 34 验证，411dp / 360dp 两种宽度）：**
-需求原话带了一句「超过半年的不保留」，**没有照做，而且不能照做** ——
-快照是净值曲线的**唯一**数据源，结转规则取「该时点前最近的一条」，
-删掉半年以外的记录后，一项半年没更新过的资产会连**今天**都取不到快照，
-从净值、配置、资产列表里整个消失（不是丢精度，是资产凭空蒸发，且不报错）。
-存储上也没有收益：一行快照约 100 字节，20 项资产按月更新存十年不到 250 KB。
-所以**数据一条不删，分页只做在 UI 侧**：默认 20 条 + 「加载更多」。
-按条数而不是按时间窗口 —— 按季度记账的人「近半年」只有两条（展开了跟坏了一样），
-每天记的人半年有上百条。取舍写进了 [docs/domain.md](docs/domain.md) 和
-[UpdateHistory.kt](shared/src/commonMain/kotlin/com/boomsset/domain/UpdateHistory.kt) 的 KDoc。
-
-**没有新表**：`snapshot` 那条不可变、只追加的链本身就是流水，
-`UpdateHistory.build(data, zone)` 把它按时间倒序摊平、每条配上「链上紧邻的前一条」，
-新增/更新/归档三种事件全部从快照本身推（判据见 domain.md 那张表）。
-**QUOTED 的行只显示份额和成本，不显示市值** —— 市值要靠当时的行情，
-而行情还没做历史回补，硬算不是「无法估值」就是拿今天的价解释三个月前那条记录。
-同理**金额用资产自己的币种，不折算**。变化量**不上色**：这一栏里资产和负债混在一起，
-房贷从 ¥100 万降到 ¥95 万被涂成「跌」的颜色读起来像坏消息，前值→新值已经说清楚了。
-
-这一段**挂在 `LazyColumn` 末尾、不在任何 `if (isEmpty)` 分支里**，
-实机把全部 4 项资产逐个归档验证过：空态文案「没有在持资产」出现的同时，
-四条「归档 ¥X → ¥0.00」记录照样在 —— 就是下面第 1/5/8 条那个坑。
-分页路径也真跑过（临时把 `HISTORY_PAGE_SIZE` 改成 5，14 条 → 「还有 9 条」→「还有 4 条」→
-「已显示全部 14 条」，之后改回 20 重新构建）。跨年的记录自动补年份
-（`2025年10月5日` vs `9月4日`），360dp 下 `更新 ¥140,000.00 → ¥100,000.00` 仍是一行。
-
-**还没做的：** 应用锁在 iOS 上的真实认证（模拟器没录入生物识别，只验到了能力提示）；
-iOS 18+ 的深色/着色图标变体（现在只提供浅色一张，系统会自动派生）；
-**上面这轮图表改造和「更新记录」都只在 Android 上跑过** —— 本机只装了 Command Line Tools、
-没有完整 Xcode，`iosSimulatorArm64Test` 和 XCUITest 都起不来，
-共享代码过了 `compileKotlinIosSimulatorArm64` 但链接和真机渲染没验过
-（下拉菜单、`Switch`、`FlowRow` 在 iOS 上的排布尤其没看过；更新记录那栏是纯
-`Text`/`Row`/`Column`，风险比图表低，但 iOS 上没有 XCUITest 覆盖它）。
-**眼睛图标同样只在 Android 上看过** —— 它用了 `BlendMode.Clear` + 离屏图层，
-Android 上是 Skia、iOS 上也是 Skia，理论上一致，但"擦出一条缝"这种像素级的东西
-**没实机看过就不算验过**（教训 7、13、20 都是这个形状的坑）。
-iOS 上也还没有 XCUITest 覆盖它（选择器可以用 `app.buttons["隐藏金额"]`，
-无障碍节点在 Android 上确认过是一个 named + clickable 的 Button）。
-
-**教训（二十次都是实跑才发现、编译和单测全绿）：**
-1. 空状态判据用了 `series.latest == null`，但零资产时序列仍有一串 0 值点 → 空状态永不出现
-2. 预填用带千分位的 `formatAmount()`，而解析器拒绝逗号 → **≥¥1000 的资产无法更新**
-3. 汇率刷新只在 ViewModel `init` 跑一次，那时还没有资产、需要的币种是空集 →
-   **之后新增外币资产永远拉不到汇率**。改成随「需要的币种集合」变化触发，
-   并用「已尝试」集合防止失败时无限重试（写 fx_rate 会让数据流重新发射）
-4. 手误输入 1 亿股茅台 → `FixedPoint` 的溢出保护抛异常 → 异常从估值层一路逃到
-   ViewModel 的 combine → **App 崩溃**。抛异常本身是对的（金额不能静默回绕），
-   但**异常绝不能到达 UI**。现在估值层把溢出降级成「无法估值」：既没算错，也没崩。
-
-5. 归档掉**最后一项**资产后，资产页走空状态分支提前 `return`，而「查看已归档」的
-   展开按钮只渲染在 `LazyColumn` 里 → **那项资产在 UI 上彻底不可达**，再也取消不了归档。
-   数据层一直是对的，纯粹是 UI 路径缺失。现在空状态和列表走同一条渲染路径。
-
-**由此得出一条通则：`PortfolioCalculator` 里任何会抛异常的运算都必须在该层内被降级
-成 null，不能让异常穿过 ViewModel。** 那一层是纯函数，但纯函数也会抛。
-
-6. `AddAssetDialog` 的内容没加 `verticalScroll` → iOS 上键盘一弹，**市值和成本字段
-   被裁掉、用户够不到**。Android 模拟器屏幕高，刚好放得下所以一直没暴露。
-   **对话框内容默认就该可滚动** —— 键盘会吃掉一半屏幕。
-
-7. 图标的自适应前景按规范缩进了 66/108 安全区，本地按 72dp 视口合成看几乎贴边，
-   **但实机上环明显更小** —— Pixel Launcher 对自适应图标还会**再缩一次**
-   （Launcher3 的图标归一化，不在 `AdaptiveIconDrawable` 规范里）。
-   顶着安全区放大会在别的 OEM 遮罩下被削，所以改为**加粗笔画**来补视觉重量。
-   **图标必须装到设备上看，本地合成证明不了它在启动器里的样子。**
-
-8. 配置页零资产时走 `state.isEmpty` 分支只渲染一行「还没有资产，先去净值页添加」，
-   而 `AllocationPicker`（切换/编辑/新建目标配置的**唯一**入口）在 `else` 分支里
-   → **新用户根本设不了目标配置**。而那恰恰是录第一笔资产*之前*就想做的事。
-   **这条通则当时已经写在本文件里了，还是又犯了一次** —— 因为规则的字面只提了
-   提前 `return`，这次用的是 `when` 的分支，形式不同、后果一样。
-
-9. 浅色主题下**状态栏是白色图标压在奶白底上**，时间和信号几乎看不见
-   （实测 WCAG 对比度 **1.36:1**，修完 10.20:1）。原因：**Android 15（SDK 35）起
-   targetSdk ≥ 35 被强制 edge-to-edge**，内容画到状态栏下面，而系统不知道你的背景是浅是深，
-   默认给白色图标。修法是 `isAppearanceLightStatusBars = !darkTheme`
-   （名字容易读反：Light 指**背景**浅，所以图标画成深色），见
-   [SystemBars.android.kt](shared/src/androidMain/kotlin/com/boomsset/ui/theme/SystemBars.android.kt)。
-
-   **手上的 API 34 模拟器抓不到这个** —— 强制 edge-to-edge 之前，系统会画一条不透明状态栏、
-   颜色自己就是对的。API 36 那台模拟器本该抓到，但它 `screencap` 返回全黑，
-   于是我换到 API 34 去截图 —— **恰好换掉了会暴露这个 bug 的 API 等级**。
-   教训：**为了绕开工具问题换设备时，要先确认新设备没有绕掉被测的那个条件。**
-   验 edge-to-edge / 系统栏相关的问题必须用 **SDK ≥ 35** 的设备。
-
-10. 净值图表加了 `trimBeforeFirstSnapshot` 之后，第一次记完快照的用户只有一个取样点，
-    Vico 的 `LineCartesianLayer` 画不出线段（折线需要 2 个以上的点）——**图表区域里
-    只有坐标轴，没有任何可见图形**（实机反馈原话："只有一条虚线"，其实是连虚线都没有，
-    看到的是空的网格线）。单测测的是 `NetWorthSeries` 的数据，从没断言过"这个点数下
-    Vico 到底画不画得出东西"，所以编译和单测全绿也发现不了。改成柱状图+折线图组合
-    （`ColumnCartesianLayer` + `LineCartesianLayer` 叠在同一个 `rememberCartesianChart` 里），
-    一个点也能画出一根柱子。**这条通则可以再泛化一次：图表类组件的正确性不能只测数据层，
-    "点数很少（1 个、0 个）时图形是否可见"要专门实机确认**，数据正确不等于画得出来。
-
-11. **验证自定义手势（长按弹出、左滑显示操作）不能用测试框架"最方便"的那个 API —— 而且
-    "换一个更像真实拖拽的 API"这条思路在 iOS 上最终也没能修好，这是留在这里的一个真实缺口。**
-    Compose 的 `SwipeToDismissBox` 用 `anchoredDraggable` 识别拖拽，而 Android 的
-    `adb shell input swipe`、iOS XCUITest 的 `XCUIElement.swipeLeft()` 都是"元素范围内、
-    固定极短时长"的合成手势，生成的中间移动事件太少/太快，两边都识别不到——**实机上
-    手指划一下明明好用，自动化验证却像是没反应**，很容易被误判成"这个功能没做对"。
-    Android 换成 `adb shell input draganddrop`（更接近真实连续拖拽）之后**确认手势本身是好的**——
-    左滑露出按钮、点「更新」能打开对话框，全程实测通过。
-    iOS 这边依样画葫芦换成坐标级的 `XCUICoordinate.press(forDuration:thenDragTo:)`，
-    第一次以为修好了（写进过这条教训），但重新完整跑一遍测试套件后发现**其实还是没触发**——
-    之前"看起来通过"是没有重新跑验证就写下的结论，一个教训：**改完自动化断言必须真的重新跑一遍
-    再记录结果，不能凭"应该好了"就下结论。** 后来又试了带显式速度的重载
-    `press(forDuration:thenDragTo:withVelocity:thenHoldForDuration:)`（给一个远低于默认值的慢速度），
-    依然没用。三种 XCUITest 手势 API 都没能让这台模拟器上的 `anchoredDraggable` 识别成一次拖拽。
-    **结论是把这一小段自动化断言去掉**，改成让相关测试走"直接点卡片"这条已验证稳定的路径
-    （见 `testUpdateValuePrefillIsParseable`/`testUpdatingValueIsAVisibleAction`），
-    并在代码注释里写清楚"左滑这个具体交互没有自动化覆盖，改动这块要手动在真机/模拟器上划一下"——
-    诚实地承认工具链的缺口，比硬凑一个看起来通过、其实没测到东西的断言更负责任。
-    支撑"功能本身没问题"这个判断的是架构论证：`SwipeToDismissBox`/`anchoredDraggable`
-    是纯共享 Kotlin 代码，iOS 和 Android 手势识别逻辑完全一致，唯一的平台差异只在触摸事件
-    怎么送进来那一层——而这一层已经在 Android 上用接近真实连续触摸的方式验证过。
-    另外，**`coordinate(withNormalizedOffset:)` 建在一个还没等到出现的元素上时，
-    内部重试会挂到 XCTest 的默认超时**（实测卡了 600~950 秒才失败，而不是快速报错）——
-    自定义手势的测试助手函数必须先 `waitForExistence` 再取坐标，否则一个"元素暂时不在"
-    的小问题会被拖成看起来像"卡死"的大问题，调试成本差一个数量级。
-
-12. **`verticalScroll` 不等于"键盘弹出时能滚到聚焦字段"。** `AssetDetailForm` 早就有
-    `verticalScroll`（教训 6 修的是完全没有滚动），但按份额取行情时的「持有份额」
-    「总投入成本」两个字段照样被键盘挡住（实机反馈）。原因是**`verticalScroll` 单独
-    存在时不知道键盘占了多少高度**——它仍然按"整个屏幕都看得见"来计算可滚动范围，
-    聚焦字段的"滚入可视区"逻辑因此判断"已经在可视区内"而不多滚。补 `Modifier.imePadding()`
-    让内容区域随键盘高度收缩，滚动容器的可视高度才是真的，才会正确多滚出被键盘吃掉的那截。
-    **两个是不同的坑：`verticalScroll` 解决"内容装不下"，`imePadding` 解决"知道键盘多高"，
-    键盘相关的表单两个都要有，只查有没有 `verticalScroll` 不够。**
-
-13. **柱状图只有 1 个点时会撑满整条 x 轴，`LineComponent` 的 `thickness` 完全不管用。**
-    教训 10 把净值图改成柱状图+折线组合，解决了"1 个点画不出折线"；但只有 1 个点时，
-    这根柱子会撑成一整块实心矩形（实机反馈："宽度太宽"）。**先做了个错误验证**：
-    以为 `thickness` 控制柱子宽度，改小到 1dp 结果肉眼看不出任何变化——这说明 Vico
-    是按"这个 x 位置分到多少可用宽度"来画柱子，只有 1 个 x 位置时可用宽度就是整个绘图区，
-    `thickness` 根本不参与这个计算。**验证方法**：把柱子颜色换成一个和折线区域填充明显不同的
-    纯色（不透明蓝色），一眼就能确认那块"太宽的实心矩形"确实是柱状图层画的，不是折线的
-    区域填充或别的什么东西——排查视觉问题时，用一个夸张到不会混淆的颜色隔离图层，
-    比反复读源码猜哪个图层更快。
-
-    第一次尝试用 `CartesianLayerRangeProvider.fixed()` 把 x 轴范围**下限**人为往左扩宽
-    （比如只有 1 个点时假装有 6 个位置），让"每个位置的可用宽度"跟点数多时一致。
-    这个思路方向没错，但**直接导致崩溃**：`HorizontalAxis` 在测量坐标轴标签宽度时会对
-    扩出来的、没有对应真实日期的"虚拟"x 位置也调一次 `valueFormatter`，而这些位置的
-    formatter 只能返回空字符串——Vico 不允许这样（`IllegalStateException`，异常信息明确说
-    "改用 ItemPlacer，别用空字符串"）。改空字符串为占位文本能避开崩溃，但 `ItemPlacer`
-    的 spacing/offset 算法是按"真实点数"设计的，不知道该跳过哪些是扩出来的虚拟位置，
-    结果虚拟位置也会被真的选中显示，变成图表左边多出几个指向不存在日期的假标签。
-    往回改这条路的成本比预期高很多，及时放弃、换路径。
-
-    真正管用的办法完全不碰 x 轴范围：用 `ColumnCartesianLayer.MergeMode.Grouped` 加几个
-    **全 0 值的"幽灵系列"**，让同一个 x 位置的可用宽度被分成好几份——真实数据只占其中一份，
-    其余几份值是 0、画出来高度是 0、看不见。这个办法只影响"一个 x 位置内部怎么分宽度"，
-    完全不涉及 x 轴范围和坐标轴标签，不会重蹈上面那次崩溃。**只在恰好 1 个点时才加幽灵系列**——
-    2 个点以上时，多个真实点自然会分布在整个宽度上，不会出现"一整块"这种一眼看去像
-    渲染错误的效果，没必要处理。这条本可以更早想到：解决"1 个 x 位置内部的宽度分配"问题，
-    该用"1 个位置内部怎么分"这一层的机制（多系列分组），而不是先跳到"x 轴范围"这个更外层
-    的机制——**越靠近问题实际发生的那一层修，副作用越小**。
-
-    这个修法**第一版还有一个后续 bug**，也是装到真机上才看出来：把幽灵系列全部
-    追加在真实系列**后面**（`series(values)` 在前，5 个 `series(listOf(0.0))` 在后），
-    `Grouped` 是按 `series()` 的调用顺序把子柱从左到右排的，于是真实那根柱子被排到了
-    这个 x 位置的**最左边**；但坐标轴标签（"8月"）是按**整个位置的中心**画的——
-    结果柱子和它自己的月份标签左右错开，一眼看去像"柱子对错了日期"（实机反馈）。
-    修法是把 5 个幽灵系列拆成两组，2 个放真实系列前面、2 个放后面，真实系列夹在
-    正中间（5 个系列取中间下标 2），柱子的水平中心才会跟标签的水平中心对齐。
-    **教训：`MergeMode.Grouped` 子柱的排列顺序完全由 `series()` 的调用顺序决定，
-    "占位系列放哪"不是无所谓的细节，会直接决定真实柱子在这个位置里偏左还是居中。**
-
-14. **净值页从「按月」切到「按季/按年」直接闪退**（实机反馈，模拟器上已复现原始崩溃：
-    `IllegalStateException: CartesianValueFormatter.format returned a blank string`，
-    栈顶是 `HorizontalAxis.getMaxLabelWidth`）。原因是**图表模型和 UI 状态之间必然差一帧**：
-    `CartesianChartModelProducer` 是 `remember {}` 出来的、跨 period 切换一直活着，
-    而模型更新是 `LaunchedEffect` 里的 **suspend transaction**（还带过渡动画）。
-    切换的那一帧，composition 已经拿到新的 `series`（按季 3 个点），Vico 手里还是旧模型
-    （按月 7 个点）—— 原来的 `valueFormatter` 直接闭包捕获 `series.dates`，被问到 x=3..6 时
-    `getOrNull` 返回 null、formatter 返回 `""`，而 **Vico 对每个轴标签都 `check(isNotBlank())`**。
-    反过来（按季切按月）点数变多、取不到 null，所以**只有切到粗粒度才崩** —— 正好是反馈的现象，
-    这个方向性本身就是定位线索。
-    `ItemPlacer` 的 spacing/offset 是同一个坑的另一半：`getFirstLabelValue()` 用
-    `minX + offset * xStep` 去问 formatter，**这个 x 不做范围裁剪**，旧模型点少、
-    新算出的 offset 偏大时一样会问到越界的 x。
-    修法是把标签表放进 `ExtraStore`、和数据点在**同一个 transaction** 里落地，
-    formatter 从 `context.model.extraStore` 读，spacing/offset 也从 Vico 传进来的
-    `model.extraStore` 算（那两个 lambda 的参数就是它）。
-    **通则：凡是 formatter / ItemPlacer 需要的东西都必须跟着 model 走，不能从 composition 捕获** ——
-    「UI 状态」和「图表模型」是两个独立的时间线，任何跨越它们的隐式依赖都会在切换的那一帧炸。
-    单测测不到 Vico 画什么，但能锁住"喂进去的值永远合法"：见 `NetWorthChartAxisTest`
-    （标签永不为空白串、spacing>0、offset>=0、最后一个点一定被标到）。
-
-15. **M3 的 tooltip 气泡默认 1.5 秒就自己消失 —— 把说明文字收进 (i) 之前得先知道这件事。**
-    净值页的币种说明收进 `InfoTooltip` 后，装到模拟器上**连拍才发现**气泡只活了一瞬：
-    `rememberTooltipState()` 默认 `isPersistent = false`，到点自动收（`TooltipDuration` 1500ms）。
-    装的是三四行中文，读完要好几秒 —— 等于把文字藏进了一个来不及看的地方。
-    改成 `rememberTooltipState(isPersistent = true)`（点别处才收）。
-    配置页那几个 tooltip 一直有同样的问题，共用组件之后一起修了。
-    ⚠️ **验证方法本身也是个坑**：`adb shell input tap` 之后回主机 `sleep` 再 `exec-out screencap`，
-    一次往返就够 1.5 秒了，抓到的永远是气泡消失后的画面 —— 我因此**先误判成"tooltip 根本不显示"**。
-    正确做法是把点击和连拍放进**同一条设备端命令**里：
-    `adb shell 'input tap X Y; for i in 1 2 3 4; do screencap -p /sdcard/tt_$i.png; done'`，
-    第一张（约 0.3s）就抓到了。**通则：验证「短暂出现」的 UI 不能用主机端 tap→sleep→screencap，
-    往返延迟比被测现象还长；要么在设备端连拍，要么先让它别自动消失。**
-    另外这次踩到一个环境问题：API 35 的 `google_apis_playstore` 模拟器上 `install` 报 Success、
-    `dumpsys package` 里 resolver table 明明有 MainActivity，但 `am start` 一直报
-    `Activity class does not exist`（重装、重启模拟器都没用）；换 `google_apis`（无 Play 商店）
-    的 AVD 就正常。按教训 9 那条：**换设备绕工具问题之前先确认新设备没绕掉被测条件** ——
-    这次测的是布局，和 SDK 等级无关，所以换到 API 34 可以；但如果测的是系统栏/edge-to-edge，
-    就必须留在 SDK ≥ 35。
-
-16. **顶部卡片多显示一个"变化额"，一个一直存在的数据缺陷立刻变成了一句假话。**
-    净值页原来只显示增长**百分比**，期初净值为 0 时它返回 null、界面上什么都不显示，
-    所以"历史点缺汇率被算成 0"这个缺陷一直藏着。加上金额之后，把查看币种切到 USD
-    就看到 **"净值增长 +$13,097.04 · 相比 2026年8月"** —— 8 月那天没有历史汇率，
-    那个点的资产整个估不出值、净值算成 0，于是"从零挣出全部身家"。
-    数字没算错（0 → 13,097 确实是 +13,097），**错在拿一个已知不完整的数当基准**。
-    修法在领域层：变化额要求两端**估值覆盖面相同**（`unpricedAssetIds` 相等），
-    增长率要求两端都**没有**估不出的资产（百分比的分母是净值本身，低估的分母会放大涨幅）；
-    算不出时 UI 说清是"只记过一次"还是"两端不可比"—— 两种情况用户要做的事不一样。
-    **通则：新增一个派生显示值之前，先问它依赖的输入在什么情况下是"已知不完整"的** ——
-    原来那个值恰好在同样的情况下返回 null，所以缺陷不显形；换个表达方式就会显形。
-    ⚠️ 这个只能实跑发现，而且**必须真的去切一遍币种**：CNY 视图下一切正常，
-    单测里的 fixture 也都是估得出值的。改动概览类 UI 时把「切基准币种」当成必跑用例。
-    ⚠️ **这里修的是"不许拿不完整的数当基准"，不是缺汇率本身** —— 根因见教训 18，
-    已单独修掉。修完之后这两道覆盖面判据平时不再触发，**但要留着**：
-    它们兜的是所有"某个时点估不出值"的情形（取价失败、溢出降级、行情还没做历史回补）。
-
-17. **布局要在最窄的屏上看一遍，不能只看手上这台。** 模拟器是 411dp 宽，新卡片
-    在它上面刚好放得下（金额右边只剩 4dp 余量）；`adb shell wm density 640` 把同一台机器
-    变成 360dp 之后，标签断成两行、金额断在 " · " 后面吊着一个分隔点，
-    两列的数值还一高一低 —— 一眼看去像渲染坏了。
-    `wm density 640` / `wm density reset` 一条命令就能切，比换 AVD 快得多。
-    **中文界面尤其要试**：CJK 字符宽度约等于字号（labelSmall 11sp ≈ 11dp/字），
-    十来个汉字的标签在 120dp 的格子里必然断行，按拉丁文字的经验估会低估两三倍。
-
-18. **「支持历史日期」只说明接口能查，不等于我们真的存了历史。**（教训 16 那句假话的根因。）
-    净值页切成 USD 后，8 月那根柱子是 **$0**：旧卡片上表现为增长率那一行凭空消失
-    （期初为 0 → 除不出百分比 → 返回 null），换成新卡片后同一个缺陷变成
-    "净值增长 +$13,097.04 · 相比 2026年8月"。同一份数据在 CNY 下是
-    ¥100,000 → -12.00%，完全正常 —— **只有非基准币种会中招，所以特别容易漏。**
-    根因：`RateRefresher` 每次只 `fetch(..., on = today)` 拉**今天一天**，而估值取的是
-    「该时点前最近的一条汇率」—— 8 月 31 日那个取样点前面一条汇率都没有（库里只有 9 月 3 日那条），
-    于是资产判成「无法估值」，那个时点的净值算成 0。
-    **这个 bug 的形态特别值得记：它不报错、不崩、不显示「无法估值」，
-    而是让曲线从 0 起跳，读起来像"用户 8 月一穷二白、一个月赚了一万三"** ——
-    正是本文件反复强调的「静默算错」。而 `docs/domain.md` 里「折算历史净值用当时的汇率」
-    这条规则**早就写着**，代码的查询层也确实照做了，漏的是**刷新层从来没把那些历史汇率取回来**。
-    通则：**一条「用当时的 X」的规则，同时约束查询层和抓取层。查询层写对了不代表数据在。**
-
-    修法是把 `FxRateSource.fetch(on:)` 整个换成 `fetchRange(start, end)`
-    （单日就是 `start == end`，没必要留两个接口），刷新层按「持有该币种的那段区间」回补。
-    **动手前用 `curl` 把接口摸清楚了**，三条实测行为都写进了 KDoc 和测试：
-    区间报文的 `rates` 是**两层**（日期 → 币种 → 汇率，和单日的一层不一样）；
-    `start == end` 合法；**整段落在周末时服务方会把区间挪到前一个营业日**再返回，
-    不会返回空 —— 所以「接着补」要从已有的最后一天**本身**开始，从它的次日开始会在周末拿不到数据。
-    十年区间约 2561 个营业日 / 74KB，一次拉完完全可接受，不需要分页。
-    写库用一个 `db.transaction` 批量 upsert：一天一次 `upsertFxRate` 会让 portfolio 流
-    发射几百次，每次都重算整条曲线。
-    收敛性照旧靠「已尝试」集合，但 **key 里要带上区间** —— 否则补了一条更早的快照
-    （区间变长）之后，那次刷新会被当成"已经试过了"而跳过。
-    验证靠的是**修复前后各查一次 SQLite**：`fx_rate` 从 1 行变 20 行、覆盖持仓期全程；
-    而且 CNY 报 -12.00%、USD 报 -11.99%，**差的这 0.01% 正是两个端点之间的汇率漂移** ——
-    如果两端都用今天的汇率，两个百分比会一模一样。**这种"两个口径应该略有差异"的对照，
-    比只看数字变没变更能证明用的是当时的汇率。**
-
-19. **`uiautomator dump` 不包含 popup 窗口** —— tooltip 气泡、`DropdownMenu` 这类浮层
-    在 UI 树里**根本不出现**。点开 (i) 之后 dump 里搜不到气泡文字，一度判成"气泡没弹出来"，
-    还顺着教训 15 去怀疑是不是又被自动消失吃掉了；实际 `screencap` 一截就看见了，
-    文字、换行、位置全都正常。**验浮层用截图，别用 dump。**
-    附带一个更普适的坑：`adb install -r` 在模拟器**刚从快照恢复**的那几十秒里会报
-    Success 但不生效（恢复把文件系统状态盖回去了）。装完必须
-    `pm path` 拉下来核一个只在新版本里有的字符串，
-    否则会对着旧 APK 反复调试自己刚写的代码 —— 实测在这上面绕了三轮。
-
-20. **教训 13 的幽灵系列是 `MergeMode.Grouped` 专属的，换成 `Stacked` 完全失效；
-    而"柱子多宽"这件事只有装到设备上才看得出来。** 按大类的堆叠柱同样会撞上"只有 1 个取样点"
-    （按年看、账号才用了几个月），但 `Stacked` 下所有系列叠进同一根柱子，
-    加多少个 0 值幽灵系列都不改变这根柱子的宽度 —— 那招解决的是"一个 x 位置内部怎么分宽度"，
-    而 `Stacked` 根本不分。改用 `Zoom.min(Zoom.Content, Zoom.x(n))`（`Zoom.x(n)` = 保证 n 个
-    x 单位可见）才有效，**并且 `rememberVicoZoomState` 的 `minZoom` 要一起给** ——
-    它默认是 `Zoom.Content`，只改 `initialZoom` 会被立刻拉回"内容铺满视口"。
-    第一版取 `n = 6.0`，编译、单测、逻辑都对，装到模拟器上一看却像画坏了：柱子细成一条线，
-    而且**贴在最左边**、右边空掉一大片（`Zoom.x` 只决定缩放比例，不管内容摆在视口哪儿；
-    查过 `Scroll.Absolute`，内容比视口窄时压根没有滚动范围，居中这条路走不通）。
-    实机比出来的关系是**柱宽 ≈ 视口宽 ÷ (2n)**，取 `n = 2.0` 得到约 1/4 视口宽、
-    读起来像"两根柱子里的第一根"，这才顺眼。
-    **这个数只能实机调：单测锁得住"喂进去的值合法"，锁不住"看起来对不对"** ——
-    和教训 10、13 同类，图表的正确性有一半在像素上、不在数据里。
-
-**另一条通则（第 1、5、8 条都是它）：空状态不能走一条不包含入口的渲染分支。**
-**不要只盯着提前 `return`** —— `when`/`if` 分支、早退的 `LazyColumn` item，任何
-「空态和有数据走不同路径」的写法都会犯。可操作的检查：**把这一页所有入口列出来
-（已归档、设置、帮助、目标配置、应用锁…），逐个确认空态下它还在。**
-入口最好干脆放在分支之外，只让「主体内容」分支化。
-
-而且**这类 bug 只有 UI 测试能抓到**：数据层一直是对的（预设来自
-`observeAllocations()`，和持仓无关），state 层测试只能证明数据在。
-所以每修一次都要配一条 XCUITest，并且**先撤掉修复确认它真的会失败**。
-
-第 2 条的教训是：格式化和解析各自都有测试，**但没有测试跨过它们之间的接缝**。
-现在有 `InputRoundTripTest` 锁住「预填的字符串必须能被自己的解析器读回原值」。
-**给输入框预填数值一律用 `formatForInput()`，不要用 `formatAmount()`。**
-
-**领域计算的规则都在 [PortfolioCalculator](shared/src/commonMain/kotlin/com/boomsset/domain/PortfolioCalculator.kt)**，
-纯函数无 IO，改之前先读 docs/domain.md。
-
-## 这是什么
-
-旺资是一款**多类资产净值追踪 + 资产配置监控**应用，Android + iOS 双端。
-
-和传统记账 App 的根本区别：**不记流水，记快照。** 用户不逐笔录入收支，而是定期更新每类资产的当前市值。
-
-两个核心视图：
-
-1. **净值趋势** —— "我现在身价多少、比上季度涨了还是跌了"（可按月/季/年）
-2. **资产配置** —— "我的配置和预期目标差多少"（五大类占比 vs 目标配置，看偏离）
-
-做任何功能决策时用这条判断：**它服务于「资产整体视图」还是「流水明细」？** 后者不做。
-
-## 技术栈
-
-版本一律以 `gradle/libs.versions.toml` 为准（那是唯一事实来源，本文不重复列版本号）。
-选型理由、被否掉的方案、以及升级风险见 **[docs/stack.md](docs/stack.md)** —— 改动依赖前必读。
-
-| 层 | 选型 |
+# AGENTS.md — Boomsset (旺资)
+
+## Project Status
+
+**The core loop is closed end-to-end (verified on a real Android device).** Three screens: Net Worth Chart / Asset Allocation / Asset List.
+Add asset → periodically update valuation → archive — the whole flow works. **All 247 unit tests pass.**
+
+Verified by actually running the app (including checking SQLite directly): an update **appends a new snapshot** rather than overwriting (cost basis carries forward correctly); archiving appends a zero-value snapshot without touching a single character of history; allocation percentages sum to 100%.
+
+**Both market quotes and multi-currency support are wired up (verified on a real device):**
+- FX rates: Ktor + Frankfurter (ECB, no API key needed, **supports historical dates**). Tested: $1000 → ¥6,771.30
+- Quotes: Ktor + Tencent Finance `qt.gtimg.cn` (**an unofficial API**, no key needed, covers A-shares/HK stocks/US stocks). Tested: 100 shares of sh600519 @1334.05 → ¥133,405.00, gain +11.17%
+- The base currency is switchable and persisted; switching only changes the display basis — not a single snapshot gets rewritten
+- **Historical FX rates are backfilled by range** (verified on the emulator: `fx_rate` went from 1 row to 20 rows, covering 2026-08-07…09-03, i.e. the entire holding period). It queries Frankfurter's `/v1/{start}..{end}`, fetching an entire span in one call. The logic lives in `RateRefresher.requiredRanges` — see Lesson 15 below.
+
+⚠️ **Known issue: Quote backfill hasn't been done yet, but FX-rate backfill has.** `refreshQuotes` only fetches today's price, while valuation looks up "the most recent entry at or before that point in time" — so for a stock held for three months, historical points can't find a price, get marked "cannot be valued," and the net worth at those points is computed as 0 (**this happens even when the base currency is CNY** — it has nothing to do with FX). The fix is structurally the same (Tencent's daily-K-line has a separate endpoint), but since Tencent's API is unofficial, its response format and semantics would need to be re-explored from scratch — so it wasn't done alongside the FX-rate fix. **Check this issue first before touching net-worth-chart accuracy.**
+
+⚠️ **The Tencent API is unofficial**: no documentation or ToS guarantee, and it could stop working at any time. The product is positioned for personal/small-scale use, and this risk is explicitly accepted. When it fails, affected assets show "cannot be valued" (**it will not silently compute a wrong number**). The response is GBK-encoded; it's read byte-by-byte as Latin-1 to preserve the ASCII price fields — don't change this to UTF-8 decoding.
+
+**Target allocations are editable (verified on a real device):** multiple presets can be switched between and compared, percentages can be edited, and built-in presets can be "restored to default" but not deleted. **Saving enforces that the percentages sum to 100%** — an allocation that doesn't add up would make every deviation calculation silently wrong.
+
+**Asset metadata is editable (verified on a real device):** name / asset class / instrument type / whether it counts toward allocation can be changed at any time; **currency and liability flag can only be changed while the asset has exactly one snapshot** — changing them retroactively reinterprets every historical snapshot (the amount numbers stay the same but their meaning changes); the logic lives in `AssetEditPolicy`. Instrument types can be freely added by the user, and archiving can be undone.
+
+**iOS has been verified (Xcode 26.6 + iOS Simulator 26.5 SDK):** the framework links successfully, **all 158 iOS simulator tests pass**, including `NativeDatabaseTest` which specifically verifies `NativeSqliteDriver` (schema creation, enum adapters, CHECK constraints, transactions, per-day upserts) and `PortfolioFlowTest` which uses Turbine.
+
+**The iOS app has actually been run in the simulator (verified):** the shared Compose UI renders correctly, Koin starts up successfully, and SQLDelight's native driver creates and seeds the database inside the real app. `iosApp/` uses **XcodeGen** to generate the Xcode project — what's committed is `project.yml`; the `.xcodeproj` and `Info.plist` are generated artifacts and are gitignored. See iosApp/README.md.
+
+**There's a manual fallback for quotes (verified on a real device):** every QUOTED asset shows the date of its quote, flagged as stale after 3 days; the user can manually enter a price to override it. **This is the only remedy when the Tencent API fails** — without it, an asset whose price can't be fetched would show "cannot be valued" forever. A manually entered price is written into the same `quote` table, so a successful automatic refresh on the same day will overwrite it (this is intentional: a real market price is naturally more accurate than a manual entry).
+
+**App lock has been implemented (verified on a real Android device):** either biometrics or the screen-lock passcode, whichever the user chooses; authentication must succeed once before enabling it, and the unlocked state **is not persisted** (re-authentication is required after backgrounding or restarting). While locked, protected content is **not composed at all** rather than covered with an overlay — the latter would show up in the task-switcher screenshot and could also flash visible for an instant.
+
+**Brand color and app icon are done. ⚠️ The current value is deep rosewood purple `#5D3270`** — defined in
+[Theme.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt), and follows the system light/dark mode.
+The paragraphs below record, in chronological order, the multiple revisions from `#8A5A18` → `#BD4D03` → `#918163` → `#986E00` → `#955E00` → `#D3BC7D` → `#5D3270` and the reasons each one was rejected.
+**When reading a paragraph that mentions an old hex code, remember that it's history, not the current state.**
+The icon shows "bursting out of a ring" (an allocation ring + three rising bars, with the tallest bar breaking out past the ring) — **the ring uses the actual colors of the app's five asset classes**, and all the sizes are generated by
+[tools/appicon/generate.py](tools/appicon/generate.py) —
+**that is the single source of truth; the PNGs under res/ and Assets.xcassets are build artifacts, don't hand-edit them.**
+Any change to its constants must be followed by running [tools/appicon/validate.py](tools/appicon/validate.py).
+
+Before all this, the entire app was wrapped in a single bare `MaterialTheme {}`, so the UI ran on Material 3's own **default purple** —
+that wasn't a design decision, it's just that nobody had configured a color scheme yet. When configuring a `ColorScheme`, **every role must be filled in explicitly**: any parameter you don't pass falls back to the baseline default,
+and the baseline `surface` family is a purple-tinted gray — changing only `primary` would leave Cards and the BottomBar still looking purple.
+
+**Verified on a real Android device (Xiaomi 15 Pro / Android 16 / HyperOS 3):** launches without crashing,
+theme and empty states are correct, status-bar icon contrast is 10.20:1; app lock's
+`capability()` returns AVAILABLE **on a device with real biometrics enrolled** (the emulator only has a PIN, so that path hasn't been verified there).
+⚠️ **Don't store the `adb` device argument in a shell variable** (`D="-s xxx"` then using `$D`) —
+zsh doesn't word-split an unquoted variable, so it gets passed as a single argument and you get `-s requires an argument`.
+
+**Empty states are usable now (verified on both platforms, real device):** the net-worth page gives a three-step onboarding guide and explains "we record snapshots, not transactions"
+(without that explanation, users would use it the way they'd use a bookkeeping app). **The allocation page works fine even with zero assets** —
+the target allocation percentages themselves are shown, presets can be switched, and percentages can be edited.
+
+**The net-worth chart no longer shows periods with "no data," and the allocation page gained a pie chart (verified on both platforms, real device):**
+when viewed by quarter/year, an account that's only a few months old used to have a fixed window of 12 periods, with a large leading stretch of zero-value points where "the asset didn't exist yet." Now there's a `trimBeforeFirstSnapshot` toggle (off by default, so it doesn't change the carry-forward semantics locked in by existing tests); when turned on in the UI, it keeps only the sample points at or after the first snapshot. The criterion is **whether the sample point's end time is before the earliest snapshot time**, not "whether net worth is 0" — a genuine zero after the account has been cleared out (e.g. every asset archived)
+shouldn't be erased by this rule as "no data."
+
+At the same time, Vico's `HorizontalAxis.ItemPlacer.aligned(spacing, offset)` is used to thin out x-axis labels
+based on point count, instead of "one label per point" cramming into overlap and truncation (observed in testing: "Oct/Nov/Dec"
+got truncated to "Oct…/Nov…/Dec…"); `offset` is deliberately computed so that "the last index is aligned," guaranteeing the newest point
+always has a label on the far right, so it's never missed just because the point count isn't a multiple of spacing.
+
+The allocation page gained a donut chart (Vico's `PieChart`/`PieChartHost`, from the same package already used for the line chart),
+sharing the five fixed-order asset-class colors from [chartColors](shared/src/commonMain/kotlin/com/boomsset/ui/theme/ChartColors.kt)
+with the progress bars in [ClassRow](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt) — the donut doesn't get its own separate legend text, since the names and percentages are already written on the cards below it,
+and writing them again would be redundant (the first version of the allocation page got exactly this kind of feedback for repeating "compared to which target," and that lesson was carried straight over).
+
+⚠️ **When looking up the Vico API, always check against the pinned tag, never trust GitHub's default branch.**
+The first time we looked up the parameters of `HorizontalAxis.ItemPlacer.aligned()`, WebFetch pulled from the
+`master` branch and returned a "parameter that only exists in a newer version" (`shiftExtremeLabels`), which failed to compile with
+"parameter not found." We used `gh api repos/.../git/refs/tags` to find the commit SHA matching the version the project actually pins,
+then `gh api repos/.../contents/<path>?ref=<sha>` to look at the source — only that gave us the API this
+project actually links against. The file paths for Vico's pie-chart code were likewise found using
+`gh api search/code` for the real paths, not guessed from experience (guessing would likely have been wrong —
+this library's directory structure goes several levels deeper than its package name suggests).
+
+**The brand color was brightened again (verified on both platforms):** `#8A5A18` → `#BD4D03`, feedback being that the original color wasn't "upbeat/positive" enough.
+Simply raising lightness/chroma along the old hue wasn't feasible — the candidate would get clipped in sRGB, and clipping itself silently shifts the hue angle,
+which ended up colliding with the "Equity" chart orange `#E58A26` (the allocation page's FAB and the Equity bar would sit right next to each other).
+Instead, the hue was shifted about 25° toward red, and the dataviz validator confirmed a separation of ΔE 16.2 (threshold 15).
+Details and the solving process are in the comments of [Theme.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/Theme.kt) . The icon was updated to the new color at the same time; the ring's four-step gradient was recalculated as an "offset relative to BRAND," not hand-tuned.
+
+**Surfaces are neutral white-gray, not warm off-white (verified on a real device):** the main cause of it feeling "not premium enough" wasn't the hue, it was the background —
+a warm off-white background reads as "yellowish/retro" on its own, and it also degrades the contrast of every accent color.
+Now the surface and text lightness ladder is taken from **Youzhiyouxing (有知有行)**'s design tokens, and the brand amber-brown is the **only** warm accent.
+The icon keeps its warm color unchanged (the icon has nothing to do with the app's surfaces, so it didn't need redoing).
+
+**⚠️ The two paragraphs above have been superseded by the round below** (neither pure neutral white-gray nor `#BD4D03` is current anymore),
+but the conclusion that "a warm off-white background reads as yellowish/retro" still holds — the current warm background's chroma is only 0.013, far lower than that version.
+
+**Changed to a warm Morandi tone: `#BD4D03` → olive gold `#918163` (verified on the Android emulator, API 34).**
+Feedback was "not attractive enough." The problem wasn't the hue, **it was role assignment**: `#BD4D03`'s OKLCH chroma was **0.160**,
+and it sat on `primary` — the FAB, nav indicator, switches, and net-worth bars were all colored by it. A high-chroma orange used as a large fill
+reads, in a Chinese-app context, like the e-commerce tier of design. Now the chroma is down to **0.047**, and color is reserved entirely for data.
+
+Two dead ends explored along the way each left behind a reusable finding:
+
+* **"Dark-ink anchoring" (primary L 0.33 + a dark hero card) was rejected as too dark.** But it exposed a real dependency:
+  `primaryContainer` in this project **has exactly one consumer — the net-worth page's hero card**
+  (the Card in `NetWorthScreen`), so changing it is equivalent to changing just that one card, no UI code changes needed.
+* **Cool colors were rejected, but for a computable reason**: four of the five asset-class colors are cool colors, and they already fill up the cool-color region
+  of the lightness axis (at the time: Protection purple L.48, Liquid Funds blue L.60, Fixed Income green and Alternative/Physical Assets cyan both L.70).
+  A cool `primary`'s available window is limited to **L ≤ 0.42**, necessarily a full step darker than a warm one; a warm color can reach **L 0.61**.
+  **The only way to get a brighter cool color is to first move "Protection purple"** — it's the one pinning the ceiling at L 0.48.
+  (⚠️ It really was moved later — see the "brand color changed to deep rosewood purple" section below: Protection has since moved from purple to golden-yellow `#977E00`.)
+
+The three hard criteria now in place (re-verify if you change any color value; method is the same as in the ChartColorsTest comments):
+1. **Minimum ΔE ≥ 15 against all five asset-class chart colors** (measured 15.2). The old `#BD4D03` was only 16.2 against the Equity orange,
+   sitting right at the threshold — changing color wasn't just about looking good, it was pulling a barely-passing value further apart.
+2. **`primary` against the page background ≥ 3:1** (measured 3.70); below this, the FAB blurs into the background.
+3. **`onPrimary` against `primary` ≥ 4.5:1**. ⚠️ Once primary reaches L 0.61, **white text is only 3.86:1, which fails**,
+   so `onPrimary` is dark brown, not white — this is generally true across Morandi palettes: **a color bright enough to feel sunny can't support white text**. Don't just assume `Color.White` will work.
+
+Neutral surfaces are no longer pure gray either: the lightness steps are kept, but a slight chroma at H=82 is added
+(near-white surface 0.008, mid-gray 0.013, dark text 0.020); body-text contrast barely changes (13.1:1).
+
+**Gain/loss colors were changed along with it, and went from "one fixed set of values" to "two sets, light and dark"** (see
+[GainLossColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/GainLossColors.kt)).
+The criterion is **≥4.5:1 against every background it actually sits on**. It's now provided by `BoomssetTheme` through
+`LocalGainLossColors`, the same approach as `LocalChartColors`. **Red for gains, green for losses — that hasn't changed at all.**
+
+⚠️ **"The worst-case background" isn't the same one in light mode and dark mode — this was a real trap.**
+In light mode, the hero card (`primaryContainer`) is **darker** than the page background, so it's the worst case
+(the old value `#C5453F` only reached 3.34:1 against it); **in dark mode, the hero card is actually lighter than the page background**,
+and it's again the worst case — but the first dark-mode value was only verified against `surfaceContainer`,
+and it turned out to be **only 2.50:1** against the dark hero card (`#5E4200`),
+**only discovered by actually switching to dark mode on a real device**. General rule: when changing these two color values, **check all three backgrounds one by one**
+(page background / regular card / hero card) — don't assume which one is the worst case.
+
+**The Morandi version was rejected again as "too dull" → switched to warm gold `#986E00` (verified on the Android emulator, API 34).**
+The restraint that came with low chroma cost something: **every place that relies on color to indicate state got weaker** (the bottom nav's selected state ended up
+fainter than the unselected state — see below). Now the chroma is back up to **0.120**, but the lightness is pulled down to **L 0.565** —
+the key insight being that **going darker actually lets you carry more chroma**: "Equity" orange sits at L 0.715, so moving further away from it naturally opens up ΔE
+(16.0, wider than the Morandi version's 15.2). **White text finally passes too** (4.60:1) —
+the Morandi version at L 0.61 only got white text to 3.86:1, forcing dark brown.
+⚠️ Going even more gold means going darker still: `#AC8137` (L 0.63) is only ΔE 10.3 against Equity — outright fails.
+
+**The icon ring switched to using the app's actual five asset-class colors (the light-mode values from `ChartColors`, not a single pixel changed).**
+The ring on the icon is exactly the five color chips on the allocation page — "blue = Liquid Funds" holds true in both places;
+`validate.py` checks every color one by one and FAILs on any mismatch.
+**The cost was giving up "monotonically increasing lightness"** — the three brightest of the original colors (Fixed Income 0.699 /
+Alternative 0.715 / Equity 0.715) are nearly tied, leaving no usable gradient along the lightness axis. The fallback is colorblind separation
+(minimum adjacent ΔE 10.2, threshold 8). ⚠️ **The background color was forced by this set of colors**: to get all five original colors to
+≥1.8:1 against the background, the background had to be either **L ≤ 0.30 or L ≥ 0.95**, so it moved from wheat gold `#D7B984` to a
+near-white warm cream `#FBF2E3`. The bars are three steps of brand gold, and **the middle one is exactly `BrandGold`**.
+
+**The splash screen (Android 12+'s system splash) had never been configured before.** The host theme is
+`android:Theme.Material.Light.NoActionBar`, and without configuring `windowSplashScreenBackground`,
+it falls back to the platform's light gray `windowBackground` — which is neither our warm background **nor does it follow dark mode**
+(in dark mode it would flash light gray first). Now all three of `values/`, `values-v31/`, and `values-night/` are set consistently,
+with the color value equal to `Theme.kt`'s `surface`, so there's no color jump between the splash screen and the first frame.
+
+**The `alpha = 0.5f` on the net-worth chart's bars was removed.** That was leftover from the version where bars and a line were drawn overlapping
+(the transparency let the line show through); once the line was deleted, all it did was "make the bars fainter" — measured contrast of the bars
+against the page background was only **1.95:1**, even though the bars are the primary data marker on this page. Solid color measures 4.41:1.
+⚠️ This alpha had been low the whole time (2.08:1 with `#BD4D03`, 1.77:1 with `#918163` — even worse) —
+**it just had never been measured.** It's worth measuring all "brand colors with alpha applied" whenever the brand color changes.
+
+**The app icon was redone as "bursting out of a ring," and switched to a multi-hue design (verified on the Android emulator, build artifact).**
+The feedback was "it should represent not just allocation, but also management, and money growing over time," plus "it's all one color family, too boring."
+Now it's: five segments of an allocation ring (allocation) + the ring gathers them into a base for the bars (management) + three rising bars, with the tallest one
+**breaking out past the ring** (money growing). The background is warm terracotta `#CBAD76`, chroma 0.080 —
+**higher than the UI's**, because the icon isn't subject to any collision constraint (it's never on the same screen as the charts), so most of the sunny feel comes from here.
+
+Three pitfalls hit during this icon round are all documented in `generate.py`'s comments — only the general lessons are recorded here:
+
+1. **The hand-computed bounding radius was off by 27%**, so the adaptive foreground exceeded the 66/108 safe circle — the farthest point turns out to be **the top-right corner
+   of the rightmost bar**, not the top of a bar. So `validate.py` now **reads the generated output pixel by pixel** to check this, rather than trusting the constants.
+2. **The gaps around the bars in the transparent foreground must actually be cut to transparent**, not filled with the background color — Android 13+ themed icons
+   only take the alpha channel as the silhouette, and filling with the background color would fuse the bars and the ring back together. So the adaptive background layer
+   must be **a solid color matching FIELD**, not the off-white gradient left over from the old design.
+3. **PIL's `rounded_rectangle` requires height ≥ 2r + 2**; satisfying only `2r` still throws "y1 must be greater than or equal to y0."
+   Only the shortest bar, **only at the mdpi (48px) size tier**, hits this — every other size is fine — so the corner radius now goes uniformly through `_radius()`, which clamps it.
+
+**The FAB needs `primary` given explicitly, not the M3 default.** The default is `primaryContainer`, which under the Morandi palette
+is a pale sand color, and against the equally warm off-white page background it's **only 1.3:1 — the plus sign is nearly invisible**
+(confirmed on the emulator). `primary` gives 3.70:1. See [App.kt](shared/src/commonMain/kotlin/com/boomsset/ui/App.kt).
+General rule: **whenever you change the lightness of `primaryContainer`, go through every component that defaults to that role** —
+in this project it has two consumers: the net-worth hero card (explicit) and the FAB (M3 default, easy to miss).
+
+**The bottom nav's selected state can't be colored with `primary`** (real-device feedback: "the selected effect is too faint").
+`primary` is an L 0.61 olive gold, and against the nav-bar background it's only **3.41:1**, while the unselected
+`onSurfaceVariant` is **5.26:1** — **the selected state ends up fainter than the unselected one.**
+The old high-chroma orange `#BD4D03` relied on chroma to carry the "has color = selected" reading, and that reading collapses once the color is low-chroma.
+Now the selected state goes through **three channels**: the text `onPrimaryContainer` in dark brown (12.72:1) + `SemiBold`,
+plus the indicator bar above the text switched to `primary` (3.41:1, past the 3:1 "visible" threshold for UI elements).
+The indicator's default color `secondaryContainer` was only **1.05:1** against the nav-bar background — effectively invisible —
+which was half the reason for the "too faint" feedback.
+⚠️ This tab bar has `icon = {}` — no icon — so the indicator bar is a **solid block of color**, and its presence or absence *is* the selected state;
+**if an icon is added in the future, `selectedIconColor` must be changed to `onPrimary`**, or the icon will blend into the color block.
+
+⚠️ **This is a general rule, not just about the nav bar: once you switch a high-chroma `primary` to a low-chroma one,
+every place relying on color to indicate state needs its contrast re-measured** — a high-chroma color can stand out even without a lightness advantage,
+thanks to chroma; a low-chroma one can't. The way to check is to **compute the contrast ratio of both the selected and unselected states and compare them**,
+not just look at "does the selected state have the brand color on it."
+
+✅ **Verified on a real Xiaomi 15 Pro device (Android 16 / SDK 36 / HyperOS 3):** net-worth page
+(hero card and solid gold bars with real data), allocation page, asset page, bottom nav, splash background,
+**both light and dark modes**, and the icon in the real device's launcher — it wasn't pulled into HyperOS's "unified icon" treatment
+on top of the generated background; the graphic's proportion matches its neighbors (**the "shrunk again" effect seen on the Pixel emulator
+did not reproduce on this device** — scaling policy differs between OEMs, don't extrapolate from one device).
+SDK 36 also incidentally confirmed that status-bar icon lightness/darkness is correct under forced edge-to-edge (Lesson 9).
+⚠️ **Still not verified:**
+**iOS hasn't been verified at all** (this machine only has Command Line Tools, `xcodebuild` doesn't run, and
+`compileKotlinIosSimulatorArm64` passing doesn't prove linking or rendering).
+
+**⚠️ "Protection" has changed from purple to golden-yellow `#977E00` (light) / `#9B8100` (dark).** The reason is that the brand color
+needs to use purple, and the brand color must be ΔE ≥ 15 from all five asset-class colors — Protection was occupying purple, so brand purple had no room to stand.
+The direction to move it was **calculated, not guessed**: magenta (H340) was tried first and was wrong — magenta instead blocks the H300~330 purple range and
+forces its chroma up to 0.19 (too vivid). It had to move to **the side farthest from purple**, at which point purple's minimum required chroma dropped from
+0.135 to 0.060. Both palettes were re-run through the dataviz validator, passing all six checks.
+⚠️ This change **rebuilds user expectations** — "purple = Protection" had already been running on real devices for a while.
+
+⚠️ **During the search I added my own extra rule, "any two colors ΔE ≥ 10" — that is NOT this project's actual criterion.**
+The official validator only checks **adjacent pairs**; the current palette's global minimum is only 8.3, and it still passes. Searching with a stricter
+criterion than what's actually in effect can produce a false conclusion of "no solution exists" — **verify against the current state before adding a constraint.**
+
+**The chart color system is fully worked out (verified on both platforms, real device, light and dark):** each of the five asset classes has its own color,
+and **the order is fixed and must not be reordered** — the order itself is the colorblind-safety mechanism. Deviation uses a divergent scale: red for overweight,
+blue for underweight, neutral gray for on-target. All three pages (net worth / allocation / assets) share the same asset-class colors —
+"blue = Liquid Funds" holds on every page.
+⚠️ **The color values weren't hand-picked**: the hues come from Youzhiyouxing (有知有行), but **they had to go through a snap-to-passing step**
+(hue angle untouched, lightness and chroma nudged into compliance) — their original values are meant for small-area accents, and when used to fill five categories,
+gold/pink's lightness went out of range and cyan/purple's chroma was insufficient. Searching across 2,520 combinations found 588 passing sets, and the one
+closest to the original colors was chosen (total deviation only ΔE 5.8). Changing a color value requires re-running the validator;
+the method and commands are documented in the comments of [ChartColorsTest](shared/src/commonTest/kotlin/com/boomsset/ui/theme/ChartColorsTest.kt).
+In light mode, a few of the asset-class color chips fall below 3:1 contrast, **and this must be compensated for by always keeping a name + percentage
+label next to the color chip** — don't remove those labels when redesigning the layout.
+
+**Adding an asset is a standalone page (verified on both platforms, real device):** not a dialog — a dialog can't fit this form; once the keyboard
+pops up there's only room for two or three lines. **Step one is choosing the instrument type, not the asset class**: the user doesn't know which class
+Alipay ("支付宝") belongs to, so it's done in reverse — pick "支付宝" (Alipay), and the asset class and default valuation mode are carried in from the built-in
+instrument-type table, with the asset class only shown as a resulting field. Liability instrument types (mortgage / car loan / credit card / consumer loan)
+form their own group, and selecting one automatically turns on the liability toggle. Currency is a **dropdown**, not a row of chips (it's almost never changed,
+so it shouldn't occupy the form's most prominent spot).
+
+**The iOS interaction flow has been verified (XCUITest, 10 tests all passing):** empty state, tab switching, correct net worth and gain/loss after
+adding an asset, the update dialog's prefilled value being parseable, allocation percentages, app-lock capability prompt, plus **the target-allocation entry
+point being reachable with zero assets**, empty-state guidance, choosing by instrument type in the add flow, and liability instrument types presetting the
+liability flag.
+How to run it: `cd iosApp && xcodebuild test -scheme iosApp -destination "id=<UDID>"`.
+
+⚠️ There are also **2 net-worth-page chart-control tests that haven't been run yet** (`testChartPeriodIsADropdown`,
+`testChartModeAndStyleSwitchesStayUsable`) — the machine that wrote them only has Command Line Tools, so `xcodebuild` doesn't run.
+They cover the period dropdown (including the "switching to coarser granularity can crash" direction from Lesson 14) and the four combinations of the
+two switches (including Lesson 10's "a single point can't draw a trend line, and that must be stated explicitly"). Two spots in them have
+**element types that are guesses** and need a real run to confirm: what type Compose's `Switch` and `DropdownMenuItem` end up as in the iOS accessibility tree
+(hence the two helpers `toggle()` / `menuItem()` trying each type). **The first time this runs on a machine with Xcode, be prepared to adjust these two selectors.**
+
+**A second round of UI polish based on real-device usage feedback (verified on both platforms, real device/emulator):**
+- The net-worth chart changed to a **bar chart + line chart** combo, no longer a pure line chart — see Lesson 10 below;
+  only 1 point used to make the bar stretch to fill the entire x-axis, narrowed to a normal width using a ghost series — see Lesson 13
+- **The add button (add asset) moved from the net-worth page to the asset page**: the net-worth page is a read-only trend overview, and adding an asset
+  is something the asset page does — putting the entry point on the wrong page makes users look for it in the wrong place. The empty-state copy was
+  updated to match (no longer says "go to the net-worth page and tap the plus")
+- The bottom nav's selected state now also needs the **text** to turn brand color, not just rely on a light gray indicator bar — that indicator was too
+  subtle, you couldn't tell which tab was selected
+- The net-worth page got a bit of warm color: the overview card switched to a `primaryContainer` light background, and gain/loss numbers got colored
+  (see [GainLossColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/GainLossColors.kt), **red for gains, green for losses** in the Chinese
+  stock-market convention). This set of colors, at the time, **reused already-verified M3 role colors instead of introducing a new set of hex values**,
+  because the validator script hadn't been committed to the repo and there wasn't time in that round to rebuild it.
+  ⚠️ **This is no longer true**: the Morandi round solved for gain/loss colors independently (as light/dark sets, criterion ≥4.5:1 against the hero card),
+  and the validator was added to the repo too ([tools/appicon/validate.py](tools/appicon/validate.py) is the icon validator suite, sharing the same color math).
+  Current values are in `GainLossColors.kt`
+- Allocation page: net-exposure amounts got an explicit **+/−** sign (previously only negative numbers showed a sign); the long explanatory text about
+  "which target is being compared" and about the built-in presets was tucked into an **(i) icon tooltip** that only shows on tap; "edit percentages /
+  restore default / delete" changed from always-visible buttons to only expanding on a **long press on the current target**
+  ([AllocationScreen.kt](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationScreen.kt)'s `InfoTooltip`/`AllocationPicker`)
+- The allocation page's donut chart **segments are now tappable** — tapping shows that class's name and amount, tapping again collapses it.
+  Vico's `PieChart` has no click callback, so hit detection is hand-written angle/radius math; see
+  [AllocationDonut.kt](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationDonut.kt)
+- The asset page removed the always-visible "tap to update valuation and record a snapshot" hint at the top; each row's previously always-visible
+  "update valuation / rename & reclassify / archive" three buttons now only reveal on **swipe left**, using material3's built-in `SwipeToDismissBox`
+  (it's not actually a dismiss — swiping doesn't remove the data, it just reveals the buttons behind it). **The card itself is still fully tappable to
+  open the update dialog directly** — this is deliberately kept, see Lesson 11 below
+- The second step of the add-asset form (the "shares held"/"total cost basis" fields, for share-based quoted instruments) had its fields covered by
+  the popping-up keyboard; added `Modifier.imePadding()` — see Lesson 12 below
+
+**The net-worth page can now hide amounts (eye icon, verified on the Android emulator API 34, both light and dark modes):** an eye icon in the
+top-right corner of the overview card; tapping it swaps **this page's absolute amounts** for a fixed-length `••••••`
+([AmountVisibility.kt](shared/src/commonMain/kotlin/com/boomsset/ui/AmountVisibility.kt)), **percentages and ratios still display as normal** —
+growth rate, return rate, and liability ratio on their own can't reveal net worth, and they're exactly the value proposition of this page; hiding
+everything would be equivalent to turning off the net-worth page. Date, number of assets covered, and the shape of the bars are also kept (shape is a
+relative quantity).
+
+Three decisions worth recording:
+
+* **The state is persisted** (in the settings table, key `amounts_hidden`), not just a UI `remember`. This toggle's use case is "someone else is
+  nearby" — during which the user is likely to switch to the allocation page and come back; if it reset on restart, the user would have to race to
+  tap it again before someone else sees the app every time they open it, which defeats the whole feature.
+* **The chart's y-axis labels must be hidden along with it.** Hiding just the card would leave the y-axis still saying something like "2.4M" —
+  the placeholder at the top would become pointless. **A privacy toggle that only covers half of it is worse than no toggle at all** — the user
+  would think it's fully hidden when it isn't.
+* **The placeholder is a fixed length**, not generated based on digit count. `"•".repeat(digits)` would let a seven-digit number and a four-digit
+  number be told apart at a glance, leaking exactly the "roughly how much money" information that's supposed to be hidden. There's a test locking
+  this down ([AmountVisibilityTest](shared/src/commonTest/kotlin/com/boomsset/ui/AmountVisibilityTest.kt)).
+
+⚠️ **Only the net-worth page got this.** Amounts in the asset list and the update history still display normally — the requirement was specifically
+about the home page.
+
+⚠️ **Hiding the axis = `label = null`, but the `itemPlacer` must be swapped along with it** — see
+[NetWorthChart.kt](shared/src/commonMain/kotlin/com/boomsset/ui/networth/NetWorthChart.kt)'s `rememberAmountAxis`. Both placers take a
+**special-case branch** when there are no labels: the default `step()` skips overlap-avoidance and just uses `10^(floor(log10(maxY))-1)` as the
+step size, which at a net worth of 2.38 million gives a step of 100,000 — **23 horizontal gridlines, smearing the bars into stripes** (only visible
+from an emulator screenshot; compiling and unit tests were all green). Switching to `count()` fixes it: with zero label height, it returns only the
+two ends, so the gridlines disappear entirely — which is exactly what's wanted. **General rule: before setting some component to null, first find
+out who else is reading its size to compute something else.**
+
+The icon is a **hand-drawn Canvas** shape, no icon library was imported (elsewhere in the project "+"/"ⓘ"/"▾" are all glyphs, but there's no usable
+glyph for an eye: 👁 is a colored emoji and can't pick up the theme color, and there's no code point at all for a "crossed-out eye"). Three things hit
+while doing this are all documented in that file:
+1. **The slash was drawn wrong in an earlier version, only visible once installed on a device and zoomed in** (real-device feedback: "the icon looks
+   wrong"): the short line's two ends landed exactly on the eye-outline curve, and its middle merged into a blob with the pupil, so it didn't read as
+   "crossed out." It needs to **go corner-to-corner** + carve a gap with `BlendMode.Clear` (paired with `CompositingStrategy.Offscreen`, otherwise
+   Clear would erase the card's background color), **and the pupil must not be drawn in the hidden state** — the slash runs straight through the
+   center, and drawing both would leave the pupil erased into two disconnected fragments left and right.
+2. **`IconButton`'s accessibility semantics need to be declared entirely by hand** (`clearAndSetSemantics` + `role` + `onClick`). It puts `clickable`
+   on an inner element, so the semantics node hung on the outside is an **ancestor** of the clickable one: attaching just `contentDescription` produces
+   two nodes (the 28dp one has a name but isn't clickable, the 48dp clickable one has no name); `mergeDescendants = true` can merge them into one, but
+   `clickable` is still false. Each option was checked against `uiautomator dump` before settling on this one — there was no way to tell without
+   checking. (`LabeledSwitch` is unaffected: `Switch`'s `clickable` is on its own layer.)
+3. Shapes drawn with Canvas **don't produce accessibility nodes**, and have no automated coverage (same as the vertical line in `AllocationBar`) —
+   any change to the drawing must be checked on a real device.
+
+**The net-worth page's "view currency" changed to a dropdown (verified on the Android emulator API 34):** it used to be 9 `FilterChip`s laid out in
+a row, plus a label and a line of explanation, taking up three or four lines on a phone (feedback: "takes up too much space"). Now it's collapsed
+into a single line: label + `OutlinedButton`("CNY ▾") + `DropdownMenu`, with the explanation tucked into an (i) tooltip. The default is still CNY
+(`DEFAULT_BASE_CURRENCY`, unchanged).
+**`ExposedDropdownMenuBox` was not used** — that component is meant for text-input fields and brings in a 56dp-tall `OutlinedTextField`, which is
+the opposite of "saving space"; the add-asset page's `CurrencyDropdown` is right to use it (that's already a form). The expanded menu **covers the
+button itself**, so the current currency is marked in the menu with a `trailingIcon` checkmark (not just a color change — color alone carrying the
+state doesn't work for colorblind users). The allocation page's `InfoTooltip`, mentioned in
+[InfoTooltip.kt](shared/src/commonMain/kotlin/com/boomsset/ui/InfoTooltip.kt), is shared by both pages and was switched to `isPersistent = true` at
+the same time — see Lesson 15 below.
+Tested: switching to USD converts correctly (¥100,000 → $14,883, Frankfurter live rate); switching back to CNY leaves the original value unchanged.
+
+**Net-worth page top card redone (verified on the Android emulator API 34, both 360dp and 411dp widths checked):** feedback was "the total-asset
+info takes up too much space," with a reference screenshot of a household-budgeting app's top card attached. It used to be four or five full
+sentences ("Net worth growth +2.10% (including new contributions)"…), where you had to read the entire sentence each time just to know what the
+number meant, and it was **missing the three things that mattered most**: what day the data was recorded, what the growth is being compared against,
+and total assets / total liabilities / liability ratio.
+Now it's split into three sections: net worth + recorded date → total assets / total liabilities in a grid → net-worth growth / unrealized
+gain-loss as a full row.
+
+The new derived values all live in **pure functions in the domain layer** (`NetWorthPoint.liabilityRatioBp`,
+`NetWorthSeries.growthAbsolute/baselineDate/hasBaseline`, `PortfolioSeriesCalculator.lastRecordedDate`); the UI is only responsible for formatting —
+the definitions and trade-offs are documented in [docs/domain.md](docs/domain.md) (why the liability-ratio denominator is total assets, why
+freshness excludes archived snapshots).
+
+**The two sections use different layouts, and that wasn't arbitrary**: short labels with short values (total assets/total liabilities) suit a
+grid; a label like "net worth growth (including new contributions)," which runs to a dozen-plus Chinese characters, only leaves 120dp per cell when
+placed side by side, and **the label and the value end up wrapping together** (measured at 360dp: the label wraps to two lines, and the amount wraps
+right after " · " leaving a dangling separator dot, and since the two labels wrap to different numbers of lines, the values below end up at
+different heights). In the full-row version, `weight(1f)` is given to **the label**: Row measures the non-weighted children at their full width
+first, so **the value is always shown in full**, and only the label wraps if there isn't enough room. The liability ratio doesn't get its own cell —
+it appears as a footnote under total liabilities (since it's derived from those two numbers anyway).
+
+**Two Markdown asterisks in strings were fixed in passing**: `Text` doesn't parse `**bold**`, and the asterisks in the tooltip bubble and the
+"cannot be valued" hint had been displaying literally to users the whole time (confirmed by screenshot).
+
+**Allocation page: the target position is marked on the bar, and the deviation is converted into a money amount (verified on the Android emulator
+API 34, both light and dark):** two pieces of feedback — "the progress bar only draws the current share, you can't tell where the target is," and
+"being 31% overweight doesn't by itself tell you how much money to move." `LinearProgressIndicator` can't draw a second marker point (it only takes
+a single `progress` argument), so it was replaced with a hand-written
+[AllocationBar](shared/src/commonMain/kotlin/com/boomsset/ui/allocation/AllocationBar.kt): a rounded track + fill (current) + a vertical line
+(target). **The horizontal axis is a constant 0–100% and does not adapt per row** — the whole point of this page is comparing the five rows against
+each other; the target line has a surface-colored outline around it, otherwise it's invisible sitting on top of a fill of the same color (the
+Equity class at 76% with a 40% target line is exactly the case where the line falls inside the fill).
+
+The amount is `AllocationView.rebalanceAmount()`, using an **internal-rebalance, total-net-worth-unchanged** basis (sell the overweight classes, buy
+the underweight ones); from this there's an assertable invariant: **the amounts across all classes sum to 0**. The other possible basis, "only
+invest new money," and why it wasn't chosen, is documented in that function's KDoc.
+**Don't back-derive it from `deviationBp`** — that's computed by subtracting from a `shareBp` that's already been truncated to whole basis points,
+and 1 basis point times total net worth is real money (a random spot check found a discrepancy as large as ¥99,876); `target amount − net exposure`
+only truncates once. The overflow guard for the basis-point math was unified into `fitsBpMath()`, shared by
+`shareBp`/`rebalanceAmount`/`liabilityRatioBp`.
+
+⚠️ **That vertical target line has no automated coverage**: shapes drawn with Canvas don't produce accessibility nodes, and the project still has
+no Compose UI tests at all (`compose-ui-test` is declared in libs.versions.toml but was never actually pulled in). Changing `AllocationBar` requires
+manually looking at it on a real device/emulator — the same kind of gap as the swipe-left gesture.
+
+**Net-worth page chart: the line was removed, two toggles were added (Android emulator API 34, all four combinations checked one by one):** the
+line and the bars were drawing the same data, so the line was redundant and got deleted. The chart's form is now determined by two orthogonal
+toggles: **Total Assets / By Asset Class** (by class = each class's **net exposure**, same basis as the allocation page, which can be negative) ×
+**Bar chart / Trend line**, giving four combinations; "Month/Quarter/Year" was also collapsed from a row of `FilterChip`s into a dropdown (same
+approach as "view currency" above). Every bar chart now has a **growth-rate band** above it: relative to the previous bar, an integer percentage,
+red for gains and green for losses. At 12 bars, each bar is only ~22dp wide, so the percentage keeps no decimal places, and the y-axis switches to
+units of 万 (10k)/亿 (100M). The legend when viewing by class is **a colored checkbox + name** (not a plain color chip — in light mode several
+asset-class colors are below 3:1, and the name compensates, per the chart-color section above).
+
+**The growth rate did not use Vico's `dataLabel`**, even though `rememberColumnCartesianLayer` has this parameter: its formatter **only receives the
+y value, not the x** — and this project's carry-forward semantics often make the net worth of adjacent periods identical (if no new snapshot was
+recorded that month, the previous one carries over) — bars with identical values can't be told apart, and a mislabeled one wouldn't error, it would
+just silently be wrong. Instead, a `HorizontalAxis.rememberTop` was added at the top of the chart (with `line`/`tick`/`guideline` all set to null);
+the label table and the data points are written into `ExtraStore` in the **same transaction**, and the formatter reads by x-index — this is the same
+general rule as Lesson 14. `CartesianValueFormatter.format` returns a `CharSequence`, and `TextMeasurer.measure` has a dedicated overload for
+`AnnotatedString`, so the red/green coloring happens **inside a single label**, without stacking a second axis.
+
+**The four combinations must be isolated from each other with `key(mode, style)`.** `CartesianChartModelProducer.collectAsState` has
+`check(previousHashCode == null || hashCode == previousHashCode)` — swapping the producer under the same chart host throws directly; this is a hard
+constraint, not a stylistic choice.
+
+**Vico 3.2.3 has no native stacked area chart.** The trend line's stacking is simulated with "cumulative boundaries + opaque `AreaFill` + later
+draws covering earlier ones," which **requires every segment to be non-negative**. Net exposure can be negative (one class's liabilities can exceed
+its assets), so `AllocationSeries.hasNegativeExposure()` checks for this first, and if it's true, falls back to **drawing each series as its own
+independent line** with a note below the chart explaining why — without this check, the stacking would silently draw wrong (a negative segment
+would drag the layers above it down, reading as if that class had inexplicably shrunk). The trend line still can't draw anything with only 1 sample
+point (Lesson 10); here it no longer falls back on the bar chart, it just states directly: "need two or more sample points to draw a line — see the
+bar chart instead."
+
+**The two toggles need an explicit `contentDescription`.** The text label is a **sibling node** next to the `Switch`, not merged into the switch's
+own accessibility node — without this, a screen-reader user just hears "switch, on," and this page has three switches (by class / trend line / app
+lock), with no way to tell which is which. It uses the same `field-*` approach as the input fields. `uiautomator dump` confirmed the
+`content-desc` actually lands on the switch node (it was empty before the change). XCUITest also relies on exactly this to locate the two switches.
+
+**Re-ran verification (Android emulator API 34 / 411dp):** all four combinations checked one by one with 12 sample points — the bar chart has no
+leftover line, the growth-rate band and the month labels at the bottom **align to the same set of indices** (at 12 points, both are 1/3/5/7/9/11,
+and the newest period always has a label), red for gains and green for losses, y-axis in units of 万/亿. By year (2 sample points), the first bar
+shows "—" instead of making up a percentage, and the second shows +824%, with the bar centered and aligned to its axis label. **Deselecting a legend
+item recalculates the growth rate accordingly**: unchecking Equity turns the same bar from +824% into +118% (growth rate is computed over **the sum
+of the visible classes only**, otherwise the bar would be shorter but the percentage above it would still reflect the full total, which wouldn't
+match). Month → Year (the crash direction from Lesson 14) doesn't crash. **The two paths for a single sample point (ghost-series bar width, the
+trend line's "not enough points" message) weren't reached in this round on a real device** — the emulator's seed data has 12 months, not enough to
+produce a single point; the two new XCUITests added above cover exactly this scenario (but haven't been run yet, see above).
+
+**A "history" section was added to the bottom of the asset page (verified on the Android emulator API 34, both 411dp and 360dp widths):** the
+requirement, as stated, included "don't keep anything older than six months," which **was not implemented, and cannot be implemented** — snapshots
+are the **only** data source for the net-worth chart, and the carry-forward rule looks up "the most recent one at or before this point in time";
+deleting records older than six months would mean an asset that hasn't been updated in over six months would fail to find a snapshot even for
+**today**, and it would vanish entirely from net worth, allocation, and the asset list (not a precision loss — the asset disappears out of thin air,
+with no error). There's also no storage benefit: one snapshot row is roughly 100 bytes, so 20 assets updated monthly for ten years is under 250 KB.
+So **not a single record is deleted; pagination is done purely on the UI side**: 20 by default + "load more." Paging is by count, not by a time
+window — someone who records quarterly would only have two entries in "the last six months" (expanding it would feel just as broken), while someone
+who records daily would have hundreds in six months. The trade-off is documented in [docs/domain.md](docs/domain.md) and in the KDoc of
+[UpdateHistory.kt](shared/src/commonMain/kotlin/com/boomsset/domain/UpdateHistory.kt).
+
+**No new table was added**: the `snapshot` chain is already immutable and append-only, which is itself the transaction log.
+`UpdateHistory.build(data, zone)` flattens it in reverse-chronological order, pairing each entry with "the one immediately before it in the chain";
+the three event types — add / update / archive — are all derived from the snapshots themselves (the derivation criteria are in the domain.md table).
+**QUOTED rows only show shares and cost, not market value** — market value would depend on the quote at that point in time, and since quotes haven't
+been backfilled historically, computing it would either be "cannot be valued" or would misleadingly explain a three-month-old record using today's
+price. Likewise, **amounts use the asset's own currency, not a converted one**. Changes in value **aren't color-coded**: this column mixes assets
+and liabilities together, and a mortgage dropping from ¥1,000,000 to ¥950,000 colored as a "decrease" would read like bad news, when the before →
+after values already make it clear.
+
+This section **sits at the end of the `LazyColumn`, not inside any `if (isEmpty)` branch** — verified on a real device by archiving all 4 assets one
+by one: the empty-state copy "no assets currently held" appears at the same time as the four "Archived ¥X → ¥0.00" records are still there — this is
+exactly the same class of bug as items 1/5/8 below. The pagination path was actually run too (temporarily changing `HISTORY_PAGE_SIZE` to 5: 14
+records → "9 more" → "4 more" → "showing all 14," then changed back to 20 and rebuilt). Records spanning a year automatically get the year appended
+(`2025年10月5日` vs `9月4日`), and at 360dp, `更新 ¥140,000.00 → ¥100,000.00` (Updated ¥140,000.00 → ¥100,000.00) still fits on one line.
+
+**Still not done:** real authentication for app lock on iOS (the simulator has no enrolled biometrics, only the capability prompt has been
+verified); iOS 18+ dark/tinted icon variants (currently only one light-mode icon is provided, and the system will derive the rest automatically);
+**this whole round of chart changes and the "history" section have only been run on Android** — this machine only has Command Line Tools installed,
+no full Xcode, so `iosSimulatorArm64Test` and XCUITest don't run; the shared code passes `compileKotlinIosSimulatorArm64` but linking and
+real-device rendering haven't been verified (the dropdown menu, `Switch`, and `FlowRow` layout on iOS in particular haven't been looked at; the
+history row is plain `Text`/`Row`/`Column`, lower risk than the chart, but there's no XCUITest covering it on iOS either). **The eye icon has
+likewise only been checked on Android** — it uses `BlendMode.Clear` + an offscreen layer; Android uses Skia and so does iOS, so in theory it should
+be consistent, but a pixel-level thing like "carving out a gap" **isn't considered verified without seeing it on a real device** (Lessons 7, 13, and
+20 are all this same shape of pitfall). There's no XCUITest covering it on iOS yet either (the selector could be `app.buttons["隐藏金额"]` ("Hide
+Amount"); on Android its accessibility node has been confirmed to be a single named, clickable Button).
+
+**Lessons learned (all twenty of these were only discovered by actually running the app — compile and unit tests were all green):**
+1. The empty-state condition used `series.latest == null`, but with zero assets the series still has a run of zero-value points → the empty state
+   never showed
+2. Prefill used the thousands-separated `formatAmount()`, while the parser rejects commas → **assets ≥¥1000 could not be updated**
+3. FX-rate refresh only ran once, in the ViewModel's `init`, at which point there were no assets yet and the set of needed currencies was empty →
+   **any foreign-currency asset added afterward would never get an FX rate**. Fixed by triggering it off changes to "the set of needed currencies,"
+   with an "already attempted" set to prevent infinite retries on failure (writing to fx_rate re-emits the data flow)
+4. Accidentally entering 100 million shares of Moutai → `FixedPoint`'s overflow guard throws → the exception escapes all the way from the valuation
+   layer up through the ViewModel's `combine` → **the app crashes**. Throwing the exception itself is correct (an amount must never silently wrap
+   around), but **the exception must never reach the UI**. Now the valuation layer downgrades overflow to "cannot be valued": nothing is computed
+   wrong, and nothing crashes.
+
+5. After archiving the **last remaining** asset, the asset page's empty-state branch returned early, while the "view archived" expand button was
+   only rendered inside the `LazyColumn` → **that asset became completely unreachable in the UI**, with no way to un-archive it ever again. The data
+   layer was correct the whole time; this was purely a missing UI path. Now the empty state and the list go through the same rendering path.
+
+**From this comes a general rule: any computation in `PortfolioCalculator` that can throw must be downgraded to null within that layer — the
+exception must never pass through the ViewModel.** That layer is pure functions, but pure functions can still throw.
+
+6. `AddAssetDialog`'s content had no `verticalScroll` → on iOS, when the keyboard popped up, **the market-value and cost fields got clipped off and
+   the user couldn't reach them**. The Android emulator's screen is tall enough that everything fit, so this had never been exposed. **Dialog
+   content should be scrollable by default** — the keyboard can eat up half the screen.
+
+7. The icon's adaptive foreground was inset to the 66/108 safe zone per spec, and looked nearly edge-to-edge when composited locally at a 72dp
+   viewport, **but the ring was noticeably smaller on the real device** — the Pixel Launcher applies **an additional shrink** to adaptive icons
+   (Launcher3's icon normalization, which isn't part of the `AdaptiveIconDrawable` spec). Enlarging right up against the safe zone would get clipped
+   under other OEMs' masks, so it was compensated for instead with **bolder strokes** to add back visual weight. **The icon must be installed on a
+   device to be seen — local compositing can't prove what it looks like in a launcher.**
+
+8. With zero assets, the allocation page took the `state.isEmpty` branch and only rendered a single line, "no assets yet, go add one on the
+   net-worth page," while `AllocationPicker` (the **only** entry point for switching / editing / creating a target allocation) was in the `else`
+   branch → **new users had no way to set a target allocation at all**. And that's exactly the thing they'd want to do *before* recording their
+   first asset. **This general rule was already written down in this file, and it still happened again** — because the rule's literal wording only
+   mentioned an early `return`, and this time it was a `when` branch — different shape, same consequence.
+
+9. In light mode, **the status bar had white icons over a cream-white background**, making the time and signal icons nearly invisible (measured WCAG
+   contrast **1.36:1**; 10.20:1 after the fix). Cause: **starting with Android 15 (SDK 35), targetSdk ≥ 35 forces edge-to-edge**, content is drawn
+   under the status bar, and the system doesn't know whether your background is light or dark, so it defaults to white icons. The fix is
+   `isAppearanceLightStatusBars = !darkTheme` (the name is easy to misread: "Light" refers to the **background** being light, so the icons are
+   drawn dark) — see [SystemBars.android.kt](shared/src/androidMain/kotlin/com/boomsset/ui/theme/SystemBars.android.kt).
+
+   **The API 34 emulator on hand didn't catch this** — before forced edge-to-edge, the system draws an opaque status bar with the right color on
+   its own. The API 36 emulator should have caught it, but its `screencap` returned all-black, so I switched to API 34 for screenshots — **which
+   happened to switch away the exact API level that exposes this bug.** Lesson: **when switching devices to work around a tooling problem, first
+   confirm the new device hasn't also switched away the condition being tested.** Testing anything related to edge-to-edge / system bars must use a
+   device with **SDK ≥ 35**.
+
+10. After adding `trimBeforeFirstSnapshot` to the net-worth chart, a user who had just recorded their first snapshot would have only one sample
+    point, and Vico's `LineCartesianLayer` can't draw a line segment (a line needs 2+ points) — **the chart area had only axes, no visible shape at
+    all** (the real-device feedback, verbatim: "there's just a dashed line" — actually there wasn't even a dashed line, what was seen was an empty
+    grid). Unit tests test `NetWorthSeries`'s data, and had never asserted "can Vico actually draw something at this point count," so compiling and
+    unit tests being all green couldn't catch this. Changed to a bar+line combo (`ColumnCartesianLayer` + `LineCartesianLayer` stacked in the same
+    `rememberCartesianChart`), so even a single point draws a bar. **This general rule can be generalized once more: a chart component's
+    correctness can't be tested at the data layer alone — "is anything visible when the point count is very small (1 or 0)" needs to be
+    specifically confirmed on a real device** — correct data doesn't guarantee it can actually be drawn.
+
+11. **Verifying a custom gesture (long-press to expand, swipe-left to reveal actions) can't use the testing framework's "most convenient" API — and
+    the idea of "switch to an API that mimics a real drag more closely" ultimately never fixed it on iOS either; this is left here as a genuine gap.**
+    Compose's `SwipeToDismissBox` uses `anchoredDraggable` to recognize dragging, while Android's `adb shell input swipe` and iOS XCUITest's
+    `XCUIElement.swipeLeft()` are both "confined to the element's bounds, fixed and extremely short duration" synthetic gestures, generating too
+    few/too fast intermediate move events for either side to recognize — **a real finger swipe works fine on the device, but automated verification
+    looks like nothing happened**, which is easy to misjudge as "this feature wasn't implemented correctly." On Android, switching to
+    `adb shell input draganddrop` (closer to a real continuous drag) **confirmed the gesture itself works fine** — swipe-left reveals the buttons,
+    tapping "Update" opens the dialog, all verified working end to end. On iOS, following the same idea, switched to the coordinate-level
+    `XCUICoordinate.press(forDuration:thenDragTo:)`; the first attempt seemed to have fixed it (and this lesson was written with that conclusion),
+    but after rerunning the full test suite it turned out **it still wasn't actually triggering** — the earlier "looks like it passed" was a
+    conclusion written down without re-verifying. One lesson from this: **after changing an automated assertion, you must actually rerun it and
+    record the real result — you can't conclude "it should be fine now" without checking.** Later, the overload with an explicit velocity was also
+    tried — `press(forDuration:thenDragTo:withVelocity:thenHoldForDuration:)` (given a speed far below the default) — still no effect. None of the
+    three XCUITest gesture APIs got `anchoredDraggable` on this simulator to recognize it as a drag. **The conclusion was to drop this small piece
+    of automated assertion**, and change the relevant tests to go through the already-verified stable path of "tap the card directly" (see
+    `testUpdateValuePrefillIsParseable`/`testUpdatingValueIsAVisibleAction`), with a code comment stating clearly that "this specific swipe-left
+    interaction has no automated coverage — changes to this area need a manual swipe on a real device/simulator" — honestly acknowledging a gap in
+    the tooling is more responsible than forcing an assertion that looks like it passes but doesn't actually test anything. The architectural
+    argument backing "the feature itself is fine" is: `SwipeToDismissBox`/`anchoredDraggable` is pure shared Kotlin code, and iOS and Android gesture
+    recognition logic are exactly the same — the only platform difference is in the layer that feeds touch events in — and that layer has already
+    been verified on Android using something close to a real continuous touch. Also, **`coordinate(withNormalizedOffset:)`, when built on an
+    element that hasn't appeared yet, has internal retries that hang until XCTest's default timeout** (measured: it took 600–950 seconds to fail,
+    instead of failing fast) — a custom-gesture test helper function must `waitForExistence` before taking a coordinate, or a minor "element not
+    present yet" issue gets dragged out into what looks like a hang, an order of magnitude more expensive to debug.
+
+12. **`verticalScroll` does not mean "can scroll to the focused field when the keyboard pops up."** `AssetDetailForm` already had `verticalScroll`
+    (Lesson 6 fixed the case of no scrolling at all), but the "shares held"/"total cost basis" fields for share-based quoted instruments were still
+    covered by the keyboard (real-device feedback). The reason is that **`verticalScroll` on its own doesn't know how much height the keyboard is
+    taking up** — it still computes the scrollable range as if "the whole screen is visible," so the focused field's "scroll into view" logic judges
+    it as "already in view" and doesn't scroll further. Adding `Modifier.imePadding()` shrinks the content area with the keyboard height, so the
+    scroll container's visible height becomes accurate, and it correctly scrolls out the part eaten by the keyboard. **These are two different
+    pitfalls: `verticalScroll` solves "content doesn't fit," `imePadding` solves "knowing how tall the keyboard is." Any keyboard-involving form needs
+    both — checking only for `verticalScroll` isn't enough.**
+
+13. **A bar chart with only 1 point stretches to fill the entire x-axis, and `LineComponent`'s `thickness` has no effect on this at all.** Lesson 10
+    switched the net-worth chart to a bar+line combo, solving "1 point can't draw a line"; but with exactly 1 point, that bar stretches into one
+    giant solid rectangle (real-device feedback: "too wide"). **A wrong verification was tried first**: assuming `thickness` controlled bar width,
+    it was reduced to 1dp with no visible change at all — this showed that Vico draws bars based on "how much available width this x position gets,"
+    and with only 1 x position, the available width is the entire plot area; `thickness` doesn't participate in that computation at all.
+    **Verification method**: switching the bar color to a solid color clearly distinct from the trend-line's area fill (opaque blue) confirmed at a
+    glance that the "overly wide solid rectangle" really was drawn by the bar-chart layer, not the line's area fill or something else — when
+    tracking down a visual issue, isolating the layer with an exaggeratedly unmistakable color is faster than repeatedly reading the source trying
+    to guess which layer it is.
+
+    The first attempt was to use `CartesianLayerRangeProvider.fixed()` to artificially widen the x-axis range's **lower bound** to the left (e.g.,
+    pretend there are 6 positions when there's only 1 point), so "available width per position" matches the case with more points. The idea was in
+    the right direction, but it **caused a crash directly**: while measuring axis-label width, `HorizontalAxis` also calls `valueFormatter` once for
+    the "virtual" x positions that were padded in and have no corresponding real date, and the formatter for those positions can only return an
+    empty string — which Vico doesn't allow (`IllegalStateException`, with a message explicitly saying "use ItemPlacer instead, don't use an empty
+    string"). Changing the empty string to placeholder text avoided the crash, but `ItemPlacer`'s spacing/offset algorithm is designed around "the
+    real point count," and doesn't know which positions to skip as padded-in virtual ones, so the virtual positions ended up genuinely being
+    selected for display too, resulting in a few extra fake labels on the left of the chart pointing to nonexistent dates. Backing out of this path
+    cost far more than expected, so it was abandoned in time in favor of a different approach.
+
+    The approach that actually worked doesn't touch the x-axis range at all: use `ColumnCartesianLayer.MergeMode.Grouped` and add a few
+    **all-zero-value "ghost series,"** so the available width at that same x position gets split into several shares — real data occupies just one
+    of them, and the remaining shares are 0, drawn at zero height, invisible. This approach only affects "how width is split within a single x
+    position," and doesn't touch the x-axis range or axis labels at all, so it doesn't repeat the crash above. **Ghost series are only added when
+    there's exactly 1 point** — with 2 or more points, multiple real points naturally spread across the full width, and there's no "one giant block"
+    effect that looks like a rendering bug, so there's no need to handle it. This could have been thought of sooner: solving "how width is split
+    within one x position" should use the mechanism at "how one position's width is split" (multi-series grouping), not jump straight to the
+    outer-level mechanism of "x-axis range" — **the closer the fix is to where the problem actually happens, the fewer the side effects.**
+
+    This fix **had a follow-up bug in its first version**, also only spotted once installed on a real device: all the ghost series were appended
+    **after** the real series (`series(values)` first, then 5 `series(listOf(0.0))`), and `Grouped` lays out sub-bars left to right in the order
+    `series()` was called, so the real bar ended up at the **leftmost** position for that x; but the axis label ("Aug") is drawn at **the center of
+    the entire position** — the result was the bar and its own month label sitting offset from each other, looking at a glance like "the bar is
+    matched to the wrong date" (real-device feedback). The fix was to split the 5 ghost series into two groups, 2 before the real series and 2
+    after, sandwiching the real series exactly in the **middle** (index 2 out of 5 series), so the bar's horizontal center aligns with the label's
+    horizontal center. **Lesson: the order sub-bars are laid out under `MergeMode.Grouped` is entirely determined by the order `series()` is
+    called — "where to put the placeholder series" isn't an insignificant detail, it directly determines whether the real bar sits left-of-center
+    or centered within that position.**
+
+14. **Switching the net-worth page from "by month" to "by quarter/year" crashed outright** (real-device feedback; the original crash was reproduced
+    on the emulator: `IllegalStateException: CartesianValueFormatter.format returned a blank string`, with `HorizontalAxis.getMaxLabelWidth` at the
+    top of the stack). The cause: **the chart model and the UI state are inevitably a frame apart** — `CartesianChartModelProducer` is created with
+    `remember {}` and stays alive across period switches, while the model update happens inside a **suspend transaction** in a `LaunchedEffect` (with
+    a transition animation too). On the frame of the switch, the composition already has the new `series` (3 points by quarter), but Vico is still
+    holding the old model (7 points by month) — the original `valueFormatter` directly closed over `series.dates`, and when asked about x=3..6,
+    `getOrNull` returns null and the formatter returns `""`, while **Vico calls `check(isNotBlank())` on every axis label**. Going the other
+    direction (quarter → month) increases the point count and never hits null, so **it only crashes when switching to coarser granularity** —
+    exactly the reported symptom, and that directionality itself was a clue to locating it. `ItemPlacer`'s spacing/offset is the other half of the
+    same pit: `getFirstLabelValue()` uses `minX + offset * xStep` to query the formatter, and **this x is not range-clipped**, so with the old model
+    having fewer points, and the newly computed offset being too large, it likewise queries an out-of-range x. The fix was to put the label table
+    into `ExtraStore`, landing it in the **same transaction** as the data points; the formatter reads from `context.model.extraStore`, and the
+    spacing/offset are also computed from the `model.extraStore` that Vico passes in (the parameter to those two lambdas). **General rule: anything
+    a formatter / ItemPlacer needs must travel with the model, never captured from the composition** — "UI state" and "chart model" are two
+    independent timelines, and any implicit dependency crossing between them will blow up on the frame of the switch. Unit tests can't test what
+    Vico actually draws, but they can lock down "whatever is fed in is always valid": see `NetWorthChartAxisTest` (labels are never blank, spacing >
+    0, offset >= 0, the last point is always labeled).
+
+15. **M3's tooltip bubble disappears on its own after 1.5 seconds by default — you need to know this before tucking explanatory text into an (i)
+    icon.** After the net-worth page's currency explanation was tucked into `InfoTooltip`, installing it on the emulator and **only discovering via
+    burst screenshots** that the bubble only lived for an instant: `rememberTooltipState()` defaults to `isPersistent = false`, auto-dismissing on a
+    timer (`TooltipDuration` 1500ms). What's tucked in there is three or four lines of Chinese text that take several seconds to read — effectively
+    hiding the text somewhere there's no time to read it. Changed to `rememberTooltipState(isPersistent = true)` (dismissing only on tapping
+    elsewhere). The tooltips on the allocation page had the same problem the whole time and were fixed together once the component was shared.
+    ⚠️ **The verification method itself was a pitfall too**: doing `adb shell input tap` and then going back to the host to `sleep` and then
+    `exec-out screencap` — a single round trip alone takes 1.5 seconds, so what got captured was always the frame after the bubble disappeared —
+    which led to **first misjudging this as "the tooltip doesn't show up at all."** The correct approach is to put the tap and the burst of
+    screenshots into **the same on-device command**: `adb shell 'input tap X Y; for i in 1 2 3 4; do screencap -p /sdcard/tt_$i.png; done'`, and the
+    first frame (around 0.3s) already caught it. **General rule: verifying "briefly appearing" UI can't use a host-side tap→sleep→screencap — the
+    round-trip latency is longer than the phenomenon being tested; either burst-capture on the device, or make it stop auto-dismissing first.** Also
+    hit an environment issue along the way: on an API 35 `google_apis_playstore` emulator, `install` reported Success, and `dumpsys package`'s
+    resolver table clearly had MainActivity, but `am start` kept reporting `Activity class does not exist` (reinstalling and restarting the emulator
+    didn't help); switching to a `google_apis` (no Play Store) AVD fixed it. Per Lesson 9: **before switching devices to work around a tooling
+    problem, confirm the new device hasn't also switched away the condition being tested** — this time the thing under test was layout, unrelated to
+    SDK level, so switching to API 34 was fine; but if what's being tested is system bars/edge-to-edge, it must stay on SDK ≥ 35.
+
+16. **Adding a "change amount" display to the top card turned a pre-existing data defect into an outright false statement.** The net-worth page used
+    to only show the growth **percentage**; when the starting net worth was 0, it returned null and nothing showed on screen at all, so the defect
+    of "historical points missing an FX rate get computed as 0" stayed hidden. After adding the amount, switching the view currency to USD showed
+    **"Net worth growth +$13,097.04 · vs. August 2026"** — that August date had no historical FX rate, so the asset at that point couldn't be valued
+    at all, and net worth was computed as 0, making it look like "went from nothing to a full fortune." The number itself wasn't computed wrong (0 →
+    13,097 really is +13,097), **the mistake was using a known-incomplete number as the baseline.** The fix is at the domain layer: the change
+    amount now requires **matching valuation coverage** at both ends (`unpricedAssetIds` must be equal), and the growth rate requires **neither** end
+    to have any unpriced assets (the percentage's denominator is net worth itself, and an understated denominator inflates the growth rate); when it
+    can't be computed, the UI states clearly whether it's "only recorded once" or "the two ends aren't comparable" — the two cases call for different
+    user actions. **General rule: before adding a new derived display value, first ask under what conditions its inputs are "known to be
+    incomplete"** — the old value happened to return null under exactly the same conditions, so the defect stayed invisible; expressing it a
+    different way made it visible.
+    ⚠️ This can only be discovered by actually running the app, and **specifically requires actually switching currency**: everything looks fine
+    under the CNY view, and the fixtures in unit tests are all valuable at both ends too. When changing overview-style UI, treat "switch the base
+    currency" as a mandatory test case.
+    ⚠️ **What got fixed here was "don't use an incomplete number as a baseline," not the missing FX rate itself** — the root cause is covered in
+    Lesson 18, and has been fixed separately. After that fix, these two coverage checks no longer trigger under normal conditions, **but they should
+    stay**: they cover every case of "a value couldn't be computed at some point in time" (a failed price fetch, an overflow downgrade, or quotes
+    not having been backfilled historically yet).
+
+17. **Layouts need to be checked on the narrowest screen, not just whatever device is at hand.** The emulator is 411dp wide, and the new card fit on
+    it just fine (only 4dp of margin left to the right of the amount); using `adb shell wm density 640` to turn the same device into 360dp made the
+    label wrap to two lines, the amount wrap right after " · " leaving a dangling separator dot, and the two columns' values end up at different
+    heights — looking, at a glance, like something rendered broken. `wm density 640` / `wm density reset` switches this in one command, much faster
+    than swapping AVDs. **Chinese-language UI especially needs this check**: CJK character width is roughly equal to the font size (labelSmall 11sp
+    ≈ 11dp per character), so a label of a dozen-plus Chinese characters will necessarily wrap inside a 120dp cell, and estimating from experience
+    with Latin text would underestimate this by two or three times.
+
+18. **"Supports historical dates" only means the API can be queried for them, not that we've actually stored the history.** (The root cause of
+    Lesson 16's false statement.) After switching the net-worth page to USD, the August bar was **$0**: in the old card this showed up as the
+    growth-rate line vanishing entirely (starting net worth 0 → can't divide into a percentage → returns null); with the new card, the same defect
+    became "Net worth growth +$13,097.04 · vs. August 2026." The exact same data in CNY reads ¥100,000 → -12.00%, completely normal — **only a
+    non-base currency triggers it, which makes it especially easy to miss.** Root cause: `RateRefresher` only ever `fetch(..., on = today)`s **a
+    single day, today**, while valuation looks up "the most recent FX rate at or before this point in time" — the sample point on August 31 has no
+    FX rate before it at all (the database only had the one from September 3), so the asset is judged "cannot be valued," and net worth at that
+    point is computed as 0. **The shape of this bug is especially worth remembering: it doesn't error, doesn't crash, doesn't show "cannot be
+    valued" — instead it makes the curve start from 0, reading as if "the user was penniless in August and made their entire fortune in one month"**
+    — exactly the "silently computing something wrong" this document keeps emphasizing. And the rule in `docs/domain.md`, "convert historical net
+    worth using the rate at that time," **had already been written down**, and the query layer's code did in fact follow it — what was missing was
+    that **the refresh layer never actually fetched those historical rates back.** General rule: **a rule of "use the X from back then" constrains
+    both the query layer and the fetch layer. Getting the query layer right doesn't mean the data is actually there.**
+
+    The fix was to change `FxRateSource.fetch(on:)` entirely into `fetchRange(start, end)` (a single day is just `start == end`, no need to keep two
+    separate interfaces), with the refresh layer backfilling based on "the span during which that currency was held." **The API's behavior was
+    worked out with `curl` before touching any code**, and three tested-in-practice behaviors are documented in the KDoc and tests: a range
+    response's `rates` is **two levels deep** (date → currency → rate, unlike the single-level shape for a single day); `start == end` is valid;
+    **when the entire span falls on a weekend, the server shifts the range back to the previous business day** and returns that instead of an empty
+    result — so "continue backfilling from here" needs to start from the **last existing day itself**, not the day after it, or it would come up
+    empty on a weekend. A ten-year range is roughly 2,561 business days / 74KB, entirely acceptable to fetch in one shot — no pagination needed.
+    Writing to the database uses a single `db.transaction` for a batch upsert: doing one `upsertFxRate` per day would make the portfolio flow emit
+    hundreds of times, recalculating the entire curve every time. Convergence still relies on an "already attempted" set, but **the key must
+    include the date range** — otherwise, after a backfill goes further back (because a snapshot further back was added, lengthening the range),
+    that refresh would be skipped as "already tried." Verification was done by **querying SQLite once before and once after the fix**: `fx_rate`
+    went from 1 row to 20 rows, covering the entire holding period; and CNY reported -12.00% while USD reported -11.99%, **with that 0.01%
+    difference being exactly the FX drift between the two endpoints** — if both ends used today's rate, the two percentages would be identical.
+    **This kind of check — where two bases should show a small, expected difference — proves that the historical rate was actually used far better
+    than just checking that the number changed at all.**
+
+19. **`uiautomator dump` doesn't include popup windows** — floating layers like tooltip bubbles and `DropdownMenu` **simply don't show up** in the
+    UI tree. After tapping the (i) icon, the bubble text couldn't be found in the dump, which was momentarily judged as "the bubble never popped
+    up," and per Lesson 15 there was even a suspicion it had been eaten by the auto-dismiss again; but a `screencap` immediately showed it — text,
+    line wrapping, and position were all fine. **Use screenshots, not dumps, to verify floating layers.** A more general pitfall came up alongside
+    this: `adb install -r`, in the tens of seconds right after an emulator **restores from a snapshot**, reports Success but doesn't actually take
+    effect (the restore overwrites the filesystem state back). After installing, you must pull the result with `pm path` and check for a string
+    that only exists in the new version — otherwise you'll spend rounds debugging code you just wrote against a stale APK. This actually cost three
+    rounds of confusion.
+
+20. **The ghost series from Lesson 13 is specific to `MergeMode.Grouped` and completely stops working under `Stacked`; and "how wide the bar is" is
+    something you can only see once it's on a device.** The stacked bar for viewing by asset class runs into the same "only 1 sample point" case
+    (viewing by year, with an account only a few months old), but under `Stacked`, every series stacks into the same single bar, and adding any
+    number of zero-value ghost series doesn't change that bar's width at all — that trick solves "how width is split within one x position," and
+    `Stacked` doesn't split at all. What worked instead was `Zoom.min(Zoom.Content, Zoom.x(n))` (`Zoom.x(n)` = guarantee n x-units are visible), **and
+    `rememberVicoZoomState`'s `minZoom` had to be given the same value** — it defaults to `Zoom.Content`, and changing only `initialZoom` would get
+    pulled straight back to "content fills the viewport." The first version picked `n = 6.0` — compiled, unit-tested, and reasoned correctly, but
+    looked broken once installed on the emulator: the bar had thinned into a line, and it was **stuck against the left edge** with a large empty
+    space on the right (`Zoom.x` only determines the zoom ratio, not where the content sits in the viewport; `Scroll.Absolute` was checked too, but
+    when content is narrower than the viewport there's simply no scroll range at all, so centering wasn't an option that way). The relationship
+    worked out on a real device was **bar width ≈ viewport width ÷ (2n)**; taking `n = 2.0` gives about 1/4 of the viewport width, reading like "the
+    first of two bars," which looked right. **This number can only be tuned on a real device: unit tests can lock down "whatever is fed in is
+    valid," but not "does it look right"** — same category as Lessons 10 and 13: half of a chart's correctness lives in the pixels, not the data.
+
+**Another general rule (items 1, 5, and 8 are all this same rule): an empty state must never take a rendering path that omits an entry point.**
+**Don't just watch for an early `return`** — a `when`/`if` branch, an early-exiting `LazyColumn` item, any pattern where "the empty state and the
+with-data state take different paths" can fall into this trap. An actionable check: **list out every entry point on the page (archived items,
+settings, help, target allocation, app lock…) and confirm each one is still there in the empty state.** Ideally the entry points should sit outside
+any branching at all, with only the "main content" branching.
+
+And **this class of bug can only be caught by UI tests**: the data layer was correct the whole time (the preset comes from `observeAllocations()`,
+unrelated to holdings), and state-layer tests can only prove the data exists. So every fix like this needs a matching XCUITest, and **you must first
+revert the fix and confirm the test actually fails.**
+
+The lesson from item 2 is: formatting and parsing each had their own tests, **but nothing tested the seam between them**. Now there's an
+`InputRoundTripTest` that locks down "a prefilled string must be readable back to its original value by its own parser." **Always use
+`formatForInput()` to prefill a numeric input field — never `formatAmount()`.**
+
+**All domain-calculation rules live in
+[PortfolioCalculator](shared/src/commonMain/kotlin/com/boomsset/domain/PortfolioCalculator.kt)**, pure functions with no IO — read docs/domain.md
+before changing it.
+
+## What This Is
+
+Boomsset (旺资) is a **multi-asset net-worth tracking + asset-allocation monitoring** app, for both Android and iOS.
+
+The fundamental difference from a traditional budgeting app: **it records snapshots, not transactions.** The user doesn't log income and expenses
+line by line — instead, they periodically update the current market value of each asset.
+
+Two core views:
+
+1. **Net worth trend** — "how much am I worth right now, and is it up or down from last quarter" (viewable by month/quarter/year)
+2. **Asset allocation** — "how far is my allocation from my target" (five asset classes' share vs. target allocation, showing deviation)
+
+Use this test for any feature decision: **does it serve the "overall asset picture" or "transaction-level detail"?** The latter is out of scope.
+
+## Tech Stack
+
+Versions are always governed by `gradle/libs.versions.toml` (that's the single source of truth; this document doesn't repeat version numbers).
+Rationale for each choice, options that were rejected, and upgrade risk are in **[docs/stack.md](docs/stack.md)** — read it before changing any
+dependency.
+
+| Layer | Choice |
 |---|---|
-| 语言 / UI | Kotlin Multiplatform + Compose Multiplatform（UI 也共享，不只共享逻辑） |
-| 架构 | MVVM + 单向数据流，`ViewModel` 用 `org.jetbrains.androidx.lifecycle` |
-| 导航 | `org.jetbrains.androidx.navigation:navigation-compose` |
+| Language / UI | Kotlin Multiplatform + Compose Multiplatform (UI is shared too, not just logic) |
+| Architecture | MVVM + unidirectional data flow; `ViewModel` uses `org.jetbrains.androidx.lifecycle` |
+| Navigation | `org.jetbrains.androidx.navigation:navigation-compose` |
 | DI | Koin |
-| 本地库 | SQLDelight（本地优先，无后端、无账号） |
-| 偏好 | DataStore Preferences |
-| 网络 | Ktor（只用于拉汇率/行情，不同步用户数据） |
-| 图表 | Vico（坐标是 `:compose-m3`，**不是** `:multiplatform` —— 见 stack.md，这里极易搞错） |
-| 测试 | kotlin-test + Kotest 断言 + Turbine + Compose ui-test；mock 默认手写 fake |
-| 配色 | 品牌**深紫檀** `#5D3270`（OKLCH H=315°、L 0.40、彩度 0.110）。⚠️ **中性面不跟品牌色相** —— 表面仍是暖 greige（H 70），这一版是**两个独立的色相输入** |
-| 图表配色 | 大类=分类色（固定顺序）、偏离度=分歧色，见 [ChartColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/ChartColors.kt)。**色值是验证过的，改了要重跑验证器** |
+| Local storage | SQLDelight (local-first, no backend, no accounts) |
+| Preferences | DataStore Preferences |
+| Networking | Ktor (used only to fetch FX rates/quotes; never syncs user data) |
+| Charts | Vico (the coordinate is `:compose-m3`, **not** `:multiplatform` — see stack.md, extremely easy to get wrong here) |
+| Testing | kotlin-test + Kotest assertions + Turbine + Compose ui-test; mocks default to hand-written fakes |
+| Color scheme | Brand **deep rosewood purple** `#5D3270` (OKLCH H=315°, L 0.40, chroma 0.110). ⚠️ **Neutral surfaces do not share the brand's hue** — surfaces are still warm greige (H 70); this version has **two independent hue inputs** |
+| Chart colors | Asset class = categorical color (fixed order), deviation = divergent color; see [ChartColors.kt](shared/src/commonMain/kotlin/com/boomsset/ui/theme/ChartColors.kt). **The color values have been validated — re-run the validator if you change them** |
 
-## 项目结构
+## Project Structure
 
 ```
-shared/          KMP library，绝大部分代码在这
-  src/commonMain/   领域模型、数据层、ViewModel、Compose UI —— 默认都写这里
-  src/androidMain/  仅 Android 平台实现（SQLDelight driver、Keystore…）
-  src/iosMain/      仅 iOS 平台实现（native driver、Keychain…）
-  src/commonTest/   共享测试
-androidApp/      Android 应用入口（com.android.application）
-iosApp/          Xcode 工程
-tools/appicon/   app icon 生成器（PNG 都是产物，改设计改这里）
-docs/            详细文档，按需查阅
+shared/          KMP library, where most of the code lives
+  src/commonMain/   domain models, data layer, ViewModel, Compose UI — write here by default
+  src/androidMain/  Android-only implementations (SQLDelight driver, Keystore…)
+  src/iosMain/      iOS-only implementations (native driver, Keychain…)
+  src/commonTest/   shared tests
+androidApp/      Android app entry point (com.android.application)
+iosApp/          Xcode project
+tools/appicon/   app icon generator (the PNGs are build artifacts — change the design here)
+docs/            detailed documentation, consult as needed
 ```
 
-**为什么 `androidApp` 是独立模块：** AGP 9 不再允许在 KMP 模块里应用 application 插件。
-`shared` 用的是 `com.android.kotlin.multiplatform.library`，**不是** `com.android.library`。
-这不是风格选择，是硬性要求。细节见 docs/stack.md。
+**Why `androidApp` is a separate module:** AGP 9 no longer allows applying the application plugin inside a KMP module. `shared` uses
+`com.android.kotlin.multiplatform.library`, **not** `com.android.library`. This isn't a style choice, it's a hard requirement. Details in
+docs/stack.md.
 
-**默认写 commonMain。** 只有真正调用平台 API 时才落到 androidMain/iosMain，通过 `expect/actual` 暴露。
+**Write in commonMain by default.** Only drop down to androidMain/iosMain when you genuinely need to call a platform API, exposed via
+`expect`/`actual`.
 
-## 构建与验证
+## Build & Verify
 
 ```bash
-./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS 编译，改完共享代码先跑这个（不需要 Xcode）
-./gradlew :shared:testAndroidHostTest              # 共享代码的单元测试（跑在 JVM 上，247 个）
-./gradlew :shared:iosSimulatorArm64Test            # iOS 模拟器测试（158 个，需要 Xcode）
-./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS 链接（需要 Xcode）
-./gradlew :androidApp:assembleDebug                # Android 构建
-./gradlew :shared:allTests                         # 两端一起
+./gradlew :shared:compileKotlinIosSimulatorArm64   # iOS compile — run this first after changing shared code (no Xcode needed)
+./gradlew :shared:testAndroidHostTest              # shared-code unit tests (run on the JVM, 247 of them)
+./gradlew :shared:iosSimulatorArm64Test            # iOS simulator tests (158, requires Xcode)
+./gradlew :shared:linkDebugFrameworkIosSimulatorArm64  # iOS link (requires Xcode)
+./gradlew :androidApp:assembleDebug                # Android build
+./gradlew :shared:allTests                         # both platforms together
 ```
 
-改了共享代码后，**至少要过 `compileKotlinIosSimulatorArm64`**。只跑 Android 构建会漏掉
-Kotlin/Native 特有的失败（反射、依赖缺 iOS variant）。
+After changing shared code, **at least run `compileKotlinIosSimulatorArm64`.** Running only the Android build would miss failures specific to
+Kotlin/Native (reflection, dependencies missing an iOS variant).
 
-**哪些命令需要完整 Xcode，实测结论：**
+**Which commands need a full Xcode install — tested conclusions:**
 
-| 命令 | 需要 Xcode？ | 能抓到什么 |
+| Command | Needs Xcode? | What it catches |
 |---|---|---|
-| `compileKotlinIosSimulatorArm64` | **不需要** | Kotlin/Native 编译错误。Kotlin/Native 自带 platform 库，编到 klib 不碰 iOS SDK |
-| `linkDebugFrameworkIosSimulatorArm64` | **需要** | 链接期错误。缺 Xcode 会失败在 `xcrun xcodebuild -version` |
-| 跑模拟器 | **需要** | 运行时问题 |
+| `compileKotlinIosSimulatorArm64` | **No** | Kotlin/Native compile errors. Kotlin/Native ships its own platform libraries, so compiling to a klib doesn't touch the iOS SDK |
+| `linkDebugFrameworkIosSimulatorArm64` | **Yes** | Link-time errors. Without Xcode it fails at `xcrun xcodebuild -version` |
+| Running the simulator | **Yes** | Runtime issues |
 
-所以 CLT 环境下第一道验证照常能跑，但**过了它不等于 iOS 没问题** —— 链接错误要 Xcode 才能发现。
+So in a Command-Line-Tools-only environment, the first verification step still runs, but **passing it doesn't mean iOS has no problems** — link
+errors can only be discovered with Xcode.
 
-**JVM 和 iOS 的测试数不一样（247 vs 158），这是对的**：
-- 数据库测试（`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`）在
-  `androidHostTest`，用 JVM 的 JDBC driver
-- `iosTest/NativeDatabaseTest` 单独验 iOS 的 `NativeSqliteDriver`（**不同的 SQLite 构建**，
-  CHECK 约束能否拦住是运行时行为）
+**The JVM and iOS test counts differ (247 vs. 158), and that's expected:**
+- Database tests (`DatabaseSchemaTest` / `AllocationEditingTest` / `AssetEditingTest`) run under `androidHostTest`, using the JVM's JDBC driver
+- `iosTest/NativeDatabaseTest` separately verifies iOS's `NativeSqliteDriver` (**a different SQLite build**, and whether the CHECK constraint holds
+  is a runtime behavior)
 
-注意 `androidHostTest` 这个 target 是在 `shared/build.gradle.kts` 里用
-`withHostTestBuilder {}` **显式开启**的 —— 新的 KMP Android 插件默认不建测试 target，
-不开的话 commonTest 无处运行且没有任何提示。
+Note that the `androidHostTest` target is **explicitly enabled** in `shared/build.gradle.kts` via `withHostTestBuilder {}` — the new KMP Android
+plugin doesn't create a test target by default, and without enabling it, commonTest has nowhere to run, with no warning at all.
 
-**加了跨平台的库之后，别只看 `compileKotlinIosSimulatorArm64` 通过就算完。**
-链接器会丢掉没被引用的符号，所以一个「声明了但没有任何测试导入」的依赖，
-连编译都证明不了它在 iOS 上能用。Turbine 就当了很久这样的依赖 ——
-现在 `PortfolioFlowTest` 真正用到它了。
+**After adding a cross-platform library, don't stop at `compileKotlinIosSimulatorArm64` passing.** The linker discards symbols that are never
+referenced, so a dependency that's "declared but never imported by any test" can't be proven to work on iOS even by compiling. Turbine was a
+dependency like this for a long time — now `PortfolioFlowTest` actually uses it.
 
-iOS 工程状态见 **[iosApp/README.md](iosApp/README.md)**（.xcodeproj 尚未生成，那里写了怎么补）。
+See **[iosApp/README.md](iosApp/README.md)** for the state of the iOS project (the `.xcodeproj` hasn't been generated yet; that file explains how
+to regenerate it).
 
-## 硬约束（踩了会浪费很多时间）
+## Hard Constraints (violating these wastes a lot of time)
 
-1. **iOS 只有 arm64。** `iosX64` 已移除 —— Intel Mac 连模拟器都跑不了，团队必须 Apple Silicon。iOS 最低 15.0。
-2. **Kotlin/Native 没有反射。** 不能裸调 `viewModel()`，每个都要给 initializer：`viewModel { PortfolioViewModel(...) }`。
-   同理，导航路由的序列化在 iOS 上要手写 `SerializersModule`，不能靠反射。
-3. **iOS 没有内置 `ViewModelStoreOwner`。** 生命周期得手动绑到 SwiftUI。
-4. **金额绝不用 `Double`。** 用 `Long` 存最小单位（分）或定点小数。浮点误差在净值累加上会被放大。
-5. **新加依赖前先确认它有 iOS artifact。** 很多流行的 Android 库没有，**包括一些 README 明确
-   声称支持 KMP 的**（实测有库的 iOS variant 三年前就停发了，README 还写着支持）。
-   查 maven-metadata.xml 看有没有 `-iosarm64`，别信 README。
-6. **`MainActivity` 必须继承 `FragmentActivity`，不是 `ComponentActivity`。**
-   CMP 模板默认给的是 `ComponentActivity`，但 `BiometricPrompt` 的构造函数硬性要求
-   `FragmentActivity`。`FragmentActivity` 本身继承自 `ComponentActivity`，`setContent {}`
-   照常工作 —— 改一行的事，但等做应用锁时才发现就要返工。
-7. **iOS 的 `Info.plist` 必须有 `NSFaceIDUsageDescription`**，否则首次调用 Face ID 时
-   **直接崩溃**（Touch ID 不需要，Face ID 需要）。
-8. **iOS 的 `Info.plist` 还必须有 `CADisableMinimumFrameDurationOnPhone`**，否则
-   **App 一启动就崩** —— CMP 的 `PlistSanityCheck` 主动抛异常。
-   这个崩溃**没有崩溃报告、系统日志里也查不到**（异常在 dispatch queue 上），
-   只有 `xcrun simctl launch --console` 能看到。**排查 iOS 启动问题从 --console 开始。**
-9. **`BiometricManager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)` 不能只查组合值。**
-   没录入生物识别时它返回 `NONE_ENROLLED`，**即使设备设了锁屏密码、认证实际能成功** ——
-   结果是设备明明能用应用锁却告诉用户开不了。必须分别查两种再取「任一可用」。
-10. **Xcode target 必须显式 `-lsqlite3`**，否则链接失败在 `_sqlite3_step` 未定义。
-   ⚠️ **iOS 单元测试全过不能证明 App 能链接** —— Kotlin/Native 链接测试可执行文件时
-   继承了 cinterop 的 linker opts，但静态 framework 交给 Xcode 后那些 opts 不传递。
+1. **iOS is arm64 only.** `iosX64` has been removed — an Intel Mac can't even run the simulator, so the team must use Apple Silicon. iOS minimum is
+   15.0.
+2. **Kotlin/Native has no reflection.** You can't call bare `viewModel()`; every one needs an initializer: `viewModel { PortfolioViewModel(...) }`.
+   Likewise, navigation-route serialization on iOS must be hand-written with `SerializersModule` — it can't rely on reflection.
+3. **iOS has no built-in `ViewModelStoreOwner`.** Lifecycle has to be wired to SwiftUI by hand.
+4. **Amounts are never `Double`.** Use `Long` to store the smallest unit (cents) or a fixed-point decimal. Floating-point error gets amplified when
+   accumulating net worth.
+5. **Confirm a new dependency has an iOS artifact before adding it.** Many popular Android libraries don't — **including some whose README
+   explicitly claims KMP support** (one library's iOS variant, in practice, stopped shipping three years ago while the README still claims
+   support). Check maven-metadata.xml for an `-iosarm64` classifier — don't trust the README.
+6. **`MainActivity` must extend `FragmentActivity`, not `ComponentActivity`.** The CMP template defaults to `ComponentActivity`, but
+   `BiometricPrompt`'s constructor requires `FragmentActivity`. `FragmentActivity` itself extends `ComponentActivity`, so `setContent {}` still
+   works fine — a one-line change, but discovering it only once building app lock means redoing work.
+7. **iOS's `Info.plist` must have `NSFaceIDUsageDescription`**, or the app **crashes outright** the first time Face ID is invoked (Touch ID doesn't
+   need this, Face ID does).
+8. **iOS's `Info.plist` must also have `CADisableMinimumFrameDurationOnPhone`**, or **the app crashes on launch** — CMP's `PlistSanityCheck` throws
+   an exception proactively. This crash **produces no crash report and shows nothing in the system log** (the exception happens on a dispatch
+   queue) — only `xcrun simctl launch --console` shows it. **Start any iOS launch investigation with `--console`.**
+9. **`BiometricManager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)` can't be checked only as a combined value.** With no biometrics
+   enrolled, it returns `NONE_ENROLLED`, **even when the device has a screen-lock passcode set and authentication would actually succeed** —
+   resulting in a device that could actually use app lock being told it can't. Both must be checked separately and then combined as "either one
+   available."
+10. **The Xcode target must explicitly link `-lsqlite3`**, or linking fails with `_sqlite3_step` undefined.
+   ⚠️ **All iOS unit tests passing doesn't prove the app can link** — Kotlin/Native inherits cinterop's linker options when linking the test
+   executable, but those options don't carry over once a static framework is handed off to Xcode.
 
-## 领域模型
+## Domain Model
 
-完整定义在 **[docs/domain.md](docs/domain.md)**（产品决策已定，表结构可照此实现）。要点：
+The full definition is in **[docs/domain.md](docs/domain.md)** (product decisions are settled; the table structure can be implemented as
+documented). Key points:
 
-- `Asset` + `Snapshot` + `Quote` + `FxRate` → 聚合出 `NetWorth` 时间序列（派生，不是表）
-- **`Quote`（市场行情）和 `Snapshot`（用户持仓）必须分开。** 行情刷新只写 Quote。
-  混在一起会导致快照表爆炸，且加仓会篡改历史净值 —— 原因见 domain.md
-- 估值分 `QUOTED`（市值只读，= 份额 × 单价，可改**份额和成本**）和 `MANUAL`（市值和成本都可改，不刷新）。
-  **成本是独立字段、与模式无关，两种模式都能填、都显示收益率** —— 别把"市值只读"误推成"成本只读"。
-  存的是**总成本**，均价是派生显示值（存均价会在加仓时静默算错，见 domain.md）。
-  **模式记在 `Snapshot` 上，估值一律看 `Snapshot.mode`，不看 `Asset`** ——
-  `Asset` 上那个只是新快照的默认值。写反了要等到有资产退市转换后才炸，且是静默算错
-- 快照**不可变、只追加**，改历史要新增记录而不是原地改；**每条是完整状态而非增量**
-- 基准币种默认 CNY、可切换，作为查询参数传入，**不落到 Asset/Snapshot 上**
-- 折算历史净值用**当时的汇率**，不是今天的 —— 这条**同时**要求刷新层按区间把历史汇率抓回来，
-  只存今天一条会让历史时点全部估不出值（见教训 15）
-- 分类是**两层**：五大类（SAA 四大类 + 保障，服务配置比例）+ 品种（可自定义，服务记账）
-- 配置比例的分子是**净敞口**（该类资产 − 归属到该类的负债），分母是全部净资产。
-  **每条负债都必须有 `assetClass`**，漏了比例就不闭合，而且不报错、只是数字悄悄不对
-- **净值增长率 ≠ 投资收益率**，前者含新增投入。两个都要显示且标签写清区别
+- `Asset` + `Snapshot` + `Quote` + `FxRate` → aggregate into a `NetWorth` time series (derived, not a table)
+- **`Quote` (market price) and `Snapshot` (user holdings) must be kept separate.** Refreshing quotes only writes to Quote. Mixing them would blow
+  up the snapshot table, and adding to a position would retroactively rewrite historical net worth — see domain.md for why.
+- Valuation splits into `QUOTED` (market value is read-only, = shares × unit price; **shares and cost** can be edited) and `MANUAL` (both market
+  value and cost can be edited, never refreshed). **Cost is an independent field, mode-agnostic — both modes let you fill it in, and both show a
+  return rate** — don't mistake "market value is read-only" for "cost is read-only" too. What's stored is **total cost**, with average cost as a
+  derived display value (storing average cost would silently compute wrong when adding to a position — see domain.md). **The mode is recorded on
+  `Snapshot`, and valuation always looks at `Snapshot.mode`, never `Asset`** — the one on `Asset` is only the default for a new snapshot. Getting
+  this backwards wouldn't blow up until an asset gets delisted and converted, and it fails silently.
+- Snapshots are **immutable, append-only** — changing history means adding a new record, not editing in place; **each record is a complete state,
+  not a delta.**
+- The base currency defaults to CNY and is switchable, passed in as a query parameter — **it is never stored on Asset/Snapshot.**
+- Historical net worth is converted using **the rate at that point in time**, not today's — this rule **simultaneously requires** the refresh
+  layer to backfill historical FX rates by range; storing only today's rate would make every historical point unable to be valued (see Lesson 15).
+- Classification is **two-tiered**: five asset classes (the four SAA classes + Protection, serving allocation percentages) + instrument type
+  (freely customizable, serving record-keeping).
+- The allocation percentage's numerator is **net exposure** (that class's assets − liabilities attributed to that class), with the denominator
+  being total net worth. **Every liability must have an `assetClass`** — missing one means the percentages don't add up, silently, with no error.
+- **Net-worth growth rate ≠ investment return rate** — the former includes new contributions. Both must be shown, with labels that make the
+  distinction clear.
 
-## 边界
+## Boundaries
 
-- **不做流水记账。** 见开头那条判断标准。
-  **例外：持仓成本和浮动盈亏要做**（产品明确决定）。它记在 `Snapshot.costBasisMinor` 上，
-  由用户直接填总投入，**不做逐笔买入的均价推算** —— 那才是越界。
-  别把这块当成违反边界的代码删掉，详见 docs/domain.md。
-- **不上传用户资产数据。** 网络层只出不进用户数据 —— 只拉公开行情，不发用户持仓。
-  任何要把资产数据发到服务端的改动，先问过再动手。
-- **`iosApp/` 里的 Xcode 工程文件（.pbxproj）尽量别手改**，冲突极难解。
+- **Not a transaction ledger.** See the litmus test at the top.
+  **Exception: cost basis and unrealized gain/loss are in scope** (an explicit product decision). It's recorded in `Snapshot.costBasisMinor`, with
+  the user directly entering total invested cost — **it does not derive an average price from individual buy transactions**, which would cross
+  the line. Don't delete this as if it were out-of-scope code — see docs/domain.md for details.
+- **User asset data is never uploaded.** The network layer only ever fetches, never sends user data — it only pulls public market data, never
+  sends holdings. Any change that would send asset data to a server needs to be discussed first.
+- **Try not to hand-edit the Xcode project files (.pbxproj) in `iosApp/`** — conflicts there are very hard to resolve.
 
-## 给 agent 的工作约定
+## Working Agreement for Agents
 
-- 改依赖版本 → 先读 docs/stack.md，那里记了哪些版本是故意不取最新的。
-- 不确定某个库在 iOS 上能不能用 → 去查 Maven 实际发布的 variant，不要凭印象回答。
-- 完成一处改动后跑对应的验证命令，**如实报告结果**，测试没过就说没过。
+- Changing a dependency version → read docs/stack.md first; it records which versions are deliberately not the latest.
+- Not sure whether a library works on iOS → look up the actual variant published to Maven, don't answer from memory.
+- After finishing a change, run the corresponding verification command, and **report the result honestly** — if a test doesn't pass, say so.

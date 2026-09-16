@@ -46,16 +46,20 @@ import com.boomsset.domain.parseQuantity
 import com.boomsset.network.TencentQuoteSource
 
 /**
- * 添加资产。**独立页面，不是对话框。**
+ * Add asset. **A standalone screen, not a dialog.**
  *
- * 原来是 `AlertDialog`：实机上空间太窄，键盘一弹就只剩两三行可用，
- * 而这个表单最多有七八个字段。对话框适合"一两个决定"，不适合录一条完整记录。
+ * It used to be an `AlertDialog`: on a real device there's too little room — once the
+ * keyboard pops up only two or three lines remain visible, but this form can have seven
+ * or eight fields. A dialog suits "one or two decisions," not entering a whole record.
  *
- * **两步，而且第一步是选品种、不是选大类。**
- * 原来第一步要用户自己选「大类」—— 但用户不知道支付宝该算哪一类，
- * "另类实物"这种术语对非专业用户也没有信息量。反过来做：选「支付宝」，
- * 大类和默认估值方式都从品种带出来（内置品种表本来就带这两个字段）。
- * 大类只作为结果显示出来，顺带教会用户，但不要求他理解才能完成操作。
+ * **Two steps, and the first step picks a subtype, not an asset class.**
+ * The first step used to have the user pick an "asset class" directly — but users don't
+ * know which class Alipay falls under, and jargon like "alternative/physical assets"
+ * carries no information for non-expert users either. So it's inverted: pick "Alipay,"
+ * and the asset class and default valuation mode are both derived from the subtype (the
+ * built-in subtype table already carries both fields). The asset class is shown only as
+ * a result — it incidentally teaches the user, but doesn't require understanding it to
+ * complete the action.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,10 +92,12 @@ fun AddAssetScreen(
 }
 
 /**
- * 第一步：选品种。
+ * Step 1: pick a subtype.
  *
- * 负债单独成组 —— 房贷/车贷/信用卡这些放在资产的大类里会让人以为是资产。
- * 分组之后，选「房贷」就同时确定了"这是负债"和"抵扣另类实物"两件事。
+ * Liabilities form their own group — putting mortgage/car loan/credit card under an
+ * asset class would make them look like assets. Once grouped, picking "mortgage"
+ * simultaneously decides both "this is a liability" and "it offsets alternative/physical
+ * assets."
  */
 @Composable
 private fun SubtypePicker(
@@ -171,13 +177,17 @@ private fun SubtypeGroup(
 }
 
 /**
- * 第二步：填详情。品种已定，所以大类、默认估值方式、是否负债都有了初值。
+ * Step 2: fill in details. The subtype is already chosen, so the asset class, default
+ * valuation mode, and whether it's a liability all have initial values.
  *
- * **`verticalScroll` 不够，还要 `imePadding`。** 只有 `verticalScroll` 时，键盘弹出
- * 不会改变 Column 的可视高度 —— 滚动容器仍然按"整屏都看得见"来算，聚焦字段被键盘挡住
- * 之后也不会多滚一截露出来（实机反馈：按份额取行情时的「持有份额」「总投入成本」
- * 字段被键盘挡住）。`imePadding()` 让内容区域随键盘高度收缩，滚动容器才知道
- * 视口变矮了，聚焦字段的"滚入可视区"逻辑才会真的多滚那一截。
+ * **`verticalScroll` alone isn't enough — `imePadding` is also needed.** With only
+ * `verticalScroll`, showing the keyboard doesn't change the Column's visible height — the
+ * scroll container still computes as if "the whole screen is visible," so once a focused
+ * field is covered by the keyboard, it won't scroll further to reveal it (real-device
+ * feedback: the "holding quantity" / "total cost basis" fields were covered by the keyboard
+ * when using share-based quotes). `imePadding()` makes the content area shrink with the
+ * keyboard height, so the scroll container actually knows the viewport got shorter, and the
+ * focused field's "scroll into view" logic then really does scroll that extra bit.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -189,7 +199,8 @@ private fun AssetDetailForm(
     onConfirm: (NewAsset) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 名称预填品种名 —— 大多数情况这就是用户想写的（"支付宝"），要改也就是加两个字
+    // Name is pre-filled with the subtype name — in most cases that's exactly what the
+    // user wants ("Alipay"); if it needs changing, it's just adding a couple of characters
     var name by remember { mutableStateOf(subtype.name) }
     var currency by remember { mutableStateOf(defaultCurrency) }
     var amountText by remember { mutableStateOf("") }
@@ -207,9 +218,10 @@ private fun AssetDetailForm(
     val symbolOk = TencentQuoteSource.isRecognized(symbol)
     val isQuoted = mode == ValuationMode.QUOTED && !isLiability
 
-    // ⚠️ QUOTED 的币种由代码前缀决定，不让用户选。
-    // 行情价是以该市场的币种计价的，而估值时按 asset.currency 折算 ——
-    // 两者不一致会静默算错（比如港股价按人民币折算）。强制对齐避免这个 bug。
+    // ⚠️ QUOTED's currency is determined by the ticker's prefix; the user doesn't choose it.
+    // The quoted price is denominated in that market's currency, while valuation converts
+    // using asset.currency — a mismatch would silently produce wrong numbers (e.g. converting
+    // a Hong Kong stock price as if it were RMB). Forcing them to align avoids this bug.
     val effectiveCurrency = if (isQuoted && symbolOk) {
         TencentQuoteSource.currencyOf(symbol)
     } else {
@@ -229,7 +241,7 @@ private fun AssetDetailForm(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // 已选的品种 + 它带出来的大类。可以退回上一步换
+        // The chosen subtype + the asset class it derives. Can go back a step to change it
         Card(modifier = Modifier.fillMaxWidth()) {
             Row(
                 Modifier.fillMaxWidth().padding(16.dp),
@@ -254,8 +266,9 @@ private fun AssetDetailForm(
             label = { Text("名称") },
             supportingText = { Text("写清楚是哪一个，比如「招行活期」") },
             singleLine = true,
-            // 显式 contentDescription：OutlinedTextField 的 label 只在某些状态下才映射成
-            // 无障碍 label（实测 iOS 上聚焦后就没了），读屏用户会听到空白。
+            // Explicit contentDescription: OutlinedTextField's label only maps to an
+            // accessibility label in certain states (confirmed on iOS: it disappears once
+            // focused), so screen reader users would hear nothing.
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = FIELD_NAME },
         )
 
@@ -374,10 +387,11 @@ private fun AssetDetailForm(
 }
 
 /**
- * 币种用 dropdown 而不是一排 chip。
+ * Currency uses a dropdown rather than a row of chips.
  *
- * chip 排开来会占掉两三行，而绝大多数资产就是基准币种、根本不用改 ——
- * 让一个"很少改的选项"占据表单最显眼的一块是本末倒置。
+ * A row of chips would take up two or three lines, and the vast majority of assets are
+ * already in the base currency and never need changing — giving a "rarely-changed option"
+ * the most prominent spot on the form gets the priorities backwards.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -430,16 +444,18 @@ private fun CurrencyDropdown(
 }
 
 /**
- * 输入框的无障碍标识。
+ * Accessibility identifiers for the input fields.
  *
- * 抽成常量是因为 UI 测试要按同样的字符串定位 —— 字面量散在两处早晚会不一致。
+ * Pulled out into constants because UI tests need to locate them by the same string —
+ * literals scattered across two places would eventually drift out of sync.
  */
 const val FIELD_NAME = "field-asset-name"
 const val FIELD_AMOUNT = "field-asset-amount"
 const val FIELD_COST = "field-asset-cost"
 const val FIELD_CURRENCY = "field-asset-currency"
 
-/** 新建资产的入参。字段多了之后用 data class 比十个位置参数安全。 */
+/** Input parameters for creating a new asset. With this many fields, a data class is safer
+ * than ten positional parameters. */
 data class NewAsset(
     val name: String,
     val assetClass: AssetClass,
@@ -455,6 +471,6 @@ data class NewAsset(
 )
 
 /**
- * 「元」字符串 → 分。委托给 [com.boomsset.domain.parseMoneyMinor]。
+ * "Yuan" string → cents. Delegates to [com.boomsset.domain.parseMoneyMinor].
  */
 internal fun String.toMinorUnitsOrNull(): Long? = parseMoneyMinor(this)

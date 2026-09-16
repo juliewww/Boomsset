@@ -1,79 +1,106 @@
 #!/usr/bin/env python3
-"""生成 app icon 的全部尺寸。
+"""Generate all sizes of the app icon.
 
-**这是图标的唯一事实来源。** res/ 和 Assets.xcassets 里的 PNG 都是产物，
-不要手改 —— 改了下次跑这个脚本就没了。改设计请改下面的常量。
+**This is the single source of truth for the icon.** The PNGs under res/ and
+Assets.xcassets are build artifacts -- do not hand-edit them, any edits are wiped out
+the next time this script runs. To change the design, edit the constants below.
 
     python3 tools/appicon/generate.py
-    python3 tools/appicon/validate.py     # 改完必须跑
+    python3 tools/appicon/validate.py     # must be run after any change
 
-需要 Pillow（macOS 自带的 python3 通常已有）。构建本身不依赖它 ——
-PNG 是提交进仓库的，所以 CI 和别人的机器不用装 Pillow。
+Requires Pillow (usually already present in macOS's bundled python3). The build itself
+does not depend on it -- the PNGs are committed to the repo, so CI and other people's
+machines don't need Pillow installed.
 
-两个平台的几何要求完全不同，这也是为什么必须用脚本而不是手切图：
+The two platforms have completely different geometry requirements, which is also why
+this has to be a script rather than manually cropped images:
 
-* **iOS** 要满幅（full-bleed）1024×1024，**不能带 alpha 通道**，
-  自己也不能画圆角 —— 系统会套 squircle 遮罩。带 alpha 会被 App Store 拒。
-* **Android 自适应图标**的图层是 108dp，但只有中间 72dp 可见、
-  且只有直径 66dp 的圆保证不被裁。启动器的遮罩形状由 OEM 决定
-  （圆/方/squircle/水滴），所以图形必须缩进安全区。
+* **iOS** needs a full-bleed 1024x1024 image, **must not have an alpha channel**, and
+  must not have rounded corners of its own -- the system applies a squircle mask. An
+  alpha channel gets the icon rejected by the App Store.
+* **Android adaptive icons** use a 108dp layer, but only the center 72dp is guaranteed
+  visible, and only a 66dp-diameter circle is guaranteed not to be clipped. The
+  launcher's mask shape is up to the OEM (circle/square/squircle/teardrop), so the
+  artwork must be inset within the safe zone.
 
-── 设计：「驮着钱的飞猪」──────────────────────────────────────────
+── Design: "flying pig carrying money" ──────────────────────────────────────────
 
-上一版是「破环而出」（分段环 + 三根穿出环外的柱），抽象、和"资产配置"直连，
-但反馈是**太繁琐、颜色太多**。这一版换成一个具体的吉祥物：
+The previous version was "breaking out of the ring" (a segmented ring + three bars
+punching through it), abstract and tied directly to "asset allocation", but the
+feedback was **too busy, too many colors**. This version switches to a concrete
+mascot:
 
-* **会飞的猪** —— 猪 = 存钱罐/招财，翅膀 = 资产在增长（"会飞"）
-* **侧身三枚铜钱** —— 钱币本身，同时借存钱罐的读感
-* **前后两条腿 / 圆耳带小尖 / 眼睛高光** —— 可爱度，都是实机比过尺寸的
+* **A flying pig** -- pig = piggy bank / good fortune, wings = assets growing ("it can
+  fly")
+* **Three coins at its side** -- the coins themselves, while also borrowing the
+  piggy-bank association
+* **Two legs (front and back) / round ears with a small point / eye highlight** --
+  cuteness details, all sized by comparing on an actual device
 
-⚠️ **几何自适应，不再手算包围半径。** 上一版有个 `CONTENT_R` 常量是手算的，
-**算错了 27%**（最远的点是最右那根柱的右上角，不是柱顶），自适应前景因此超出
-安全圆、在圆形遮罩的启动器上会被削掉，而这**本地合成看不出来**。
-这一版改成：先把图形画在透明画布上，**逐像素扫出真实的包围半径**，
-再按目标半径缩放居中 —— 没有可以算错的常量。
+WARNING: **the geometry is now adaptive; the bounding radius is no longer computed by
+hand.** The previous version had a hand-computed `CONTENT_R` constant that was **off by
+27%** (the farthest point was the top-right corner of the rightmost bar, not the bar's
+top), so the adaptive foreground overflowed the safe circle and got clipped on
+launchers with a circular mask -- and **this was invisible when composited locally.**
+This version instead: draws the artwork on a transparent canvas first, **scans
+pixel-by-pixel for the true bounding radius**, then scales and centers it to the
+target radius -- there's no constant left that can be miscalculated.
 """
 from PIL import Image, ImageDraw
 import json
 import math
 import os
 
-# ── 品牌 ──────────────────────────────────────────────────────────────
-# 品牌色相角。⚠️ 必须和 shared/.../ui/theme/Theme.kt 里的 BrandRose (#C94385) 一致。
-# 图标和界面脱节比图标丑更糟。
-BRAND_HUE = 354                 # 中玫瑰
+# ── Brand ──────────────────────────────────────────────────────────────
+# Brand hue angle. WARNING: must match BrandRose (#C94385) in
+# shared/.../ui/theme/Theme.kt. An icon disconnected from the UI is worse than an ugly
+# icon.
+BRAND_HUE = 354                 # medium rose
 
-# 底色：近白淡紫粉。⚠️ 这是**图标自己的底**，和 App 的页面底（暖色 H70）不是同一个
-# 色相 —— 界面的中性面按要求保持暖色，图标跟品牌色，这是刻意的。
-# 它同时是 Android 自适应背景层的色值（colors.xml 的 ic_launcher_bg），
-# 因为前景把缝隙掏成了透明，露出来的就是它。改这里要改那边（validate.py 会核对）。
-# ⚠️ 色值是 **#F9F0FD 挪到品牌色相之后**的结果。挑底色时选的是 #F9F0FD（偏白、
-# 不那么粉的那一版），但那个值是配**旧的紫色品牌色**解出来的，色相 315.7° ——
-# 换成中玫瑰（H 354）之后就和品牌脱节了。同亮度同彩度挪到 H 354 得到 #FFEFF4，
-# 两者 **ΔE 仅 1.3**（肉眼分不出），所以既保住了挑选时的观感，也保住了色相一致。
+# Background color: near-white pale lavender-pink. WARNING: this is **the icon's own
+# background**, not the same hue as the app's page background (warm H70) -- the UI's
+# neutral surfaces are required to stay warm-toned, while the icon follows the brand
+# color; this is intentional.
+# It is also the color value for the Android adaptive background layer (ic_launcher_bg
+# in colors.xml), because the foreground carves the gaps out to transparent, and this
+# is what shows through. Changing it here requires changing it there too (validate.py
+# checks this).
+# WARNING: this value is the result of **moving #F9F0FD to the brand hue**. When
+# picking the background color, #F9F0FD was chosen (the whiter, less pink variant),
+# but that value was solved for **the old purple brand color**, at hue 315.7° --
+# once switched to medium rose (H 354) it became disconnected from the brand. Moving
+# the same lightness and chroma to H 354 gives #FFEFF4; the two are only **ΔE 1.3
+# apart** (indistinguishable to the eye), so this keeps both the look that was chosen
+# and hue consistency with the brand.
 FIELD = (255, 239, 244)         # #FFEFF4
 
-# ── 配色 ──────────────────────────────────────────────────────────────
-# 猪身和蹄子同色相（H≈354），和品牌色是一家人。
-# ⚠️ **蹄子直接用 `Theme.kt` 的 primary 色值本身**（#C94385）—— 图标和界面里
-# 的 FAB、导航选中态是同一个色，这是"图标属于这个 App"最直接的证据。
+# ── Color palette ──────────────────────────────────────────────────────────────
+# The pig's body and hooves share the same hue (H≈354), part of the same family as
+# the brand color.
+# WARNING: **the hooves use the exact primary color value from `Theme.kt`**
+# (#C94385) -- it's the same color as the FAB and the nav selected state in the UI,
+# the most direct evidence that "this icon belongs to this app".
 BODY   = (246, 160, 195)        # #F6A0C3
-SNOUT  = (214, 103, 153)        # #D66799  鼻子和内耳
-HOOF   = (201,  67, 133)        # #C94385  = Theme.kt 的 primary
-WINGC  = (255, 224, 235)        # #FFE0EB  翅膀
+SNOUT  = (214, 103, 153)        # #D66799  snout and inner ear
+HOOF   = (201,  67, 133)        # #C94385  = Theme.kt's primary
+WINGC  = (255, 224, 235)        # #FFE0EB  wing
 EYE    = ( 63,  15,  39)        # #3F0F27
 
-# 铜钱：亮金 + 同色系的深金描边。
-# ⚠️ **描边不能省，也不能用白色。** 金对猪身的对比度只有 **1.11:1**（两者亮度
-# 几乎一样），没有描边钱币会直接糊进身体，三枚之间也没有边界。
-# 白色描边试过，读起来像贴纸（反馈"不要有白色边缘"），所以改用**深金** ——
-# 属于钱币自己的色系，像钱币的厚度边。
-# 方孔**填猪身色**，让身体从孔里透出来，多一条形状线索。
+# Coins: bright gold + a darker gold outline from the same color family.
+# WARNING: **the outline cannot be dropped, and cannot be white.** Gold's contrast
+# against the pig's body is only **1.11:1** (their lightness is nearly identical);
+# without an outline the coins would blend straight into the body, and there would
+# be no boundary between the three coins either.
+# A white outline was tried, but it read like a sticker (feedback: "no white
+# edges"), so it was changed to **dark gold** instead -- it belongs to the coin's
+# own color family, reading like the coin's edge thickness.
+# The square hole is **filled with the pig's body color**, letting the body show
+# through the hole, adding one more shape cue.
 GOLD   = (238, 188,  74)        # #EEBC4A
 GEDGE  = (176, 126,  16)        # #B07E10
 
-# ── 几何（全部相对画布宽）────────────────────────────────────────────
-TILT      = -14                 # 身体上仰角，读作"在飞"
+# ── Geometry (all relative to canvas width) ────────────────────────────────────
+TILT      = -14                 # body tilt-up angle, reads as "flying"
 BODY_RX   = 0.245
 BODY_RY   = 0.186
 LEG_W     = 0.036
@@ -82,27 +109,31 @@ EAR_R     = 0.048
 EYE_R     = 0.027
 SNOUT_R   = 0.068
 
-# 铜钱：直径 24px @250 预览 → 半径比例 0.048。
-# ⚠️ 尺寸是实机比出来的：再大会压过脸和翅膀，再小（22px）48px 下方孔就糊没了、
-# 只剩一块金斑。**这一档是"还能看出是钱币"的下限附近。**
+# Coins: 24px diameter @250 preview -> radius ratio 0.048.
+# WARNING: the size was tuned by comparing on an actual device: any bigger and it
+# overlaps the face and wings; any smaller (22px) and at 48px the square hole
+# smears away, leaving just a gold blob. **This size sits near the lower bound of
+# "still readable as a coin".**
 COIN_R    = 0.048
-COIN_POS  = (0.12, 0.02)        # 相对身体中心（x 向后为正，y 向下为正）
-COIN_LAY  = [(-0.78, 0.39), (0.78, 0.39), (0, -0.39)]   # 三枚的相对位置（单位=半径）
-COIN_HOLE = 0.34                # 方孔半宽 / 钱币半径
-COIN_EDGE = 0.025               # 描边宽 / 钱币半径。⚠️ 小尺寸下必然退化成抗锯齿的灰，
-                                # 48px 的 legacy 图标上三枚会读成一簇金点 —— 已知且接受
+COIN_POS  = (0.12, 0.02)        # relative to body center (x positive = backward, y positive = down)
+COIN_LAY  = [(-0.78, 0.39), (0.78, 0.39), (0, -0.39)]   # relative positions of the three coins (unit = radius)
+COIN_HOLE = 0.34                # square-hole half-width / coin radius
+COIN_EDGE = 0.025               # outline width / coin radius. WARNING: at small sizes this
+                                # inevitably degrades into anti-aliased gray; at 48px on the
+                                # legacy icon the three coins read as a cluster of gold dots
+                                # -- known and accepted
 
 WING_L    = 0.235
 WING_W    = 0.062
 WING_ANG  = -74
 
-SS = 4                          # 超采样倍数 —— PIL 的 draw 没有抗锯齿
-WORK = 1024                     # 画图形用的工作画布（再缩放到各目标尺寸）
+SS = 4                          # supersampling factor -- PIL's draw has no anti-aliasing
+WORK = 1024                     # working canvas the artwork is drawn on (then scaled to each target size)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-# ── 绘图基元 ──────────────────────────────────────────────────────────
+# ── Drawing primitives ──────────────────────────────────────────────────────────────
 def _bez(p0, p1, p2, n=48):
     return [((1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t * t * p2[0],
              (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t * t * p2[1])
@@ -116,7 +147,7 @@ def _frame(ox, oy, ang):
 
 
 def _plume(d, ox, oy, L, W, ang, col, bulge=1.0):
-    """一根羽毛：根部窄、中段饱满、尖端圆。"""
+    """A single feather: narrow at the base, full in the middle, rounded at the tip."""
     T = _frame(ox, oy, ang)
     up = _bez(T(0, 0), T(L * 0.42, -W * bulge), T(L, -W * 0.16))
     tip = [T(L, -W * 0.16), T(L + W * 0.22, 0), T(L, W * 0.16)]
@@ -125,10 +156,13 @@ def _plume(d, ox, oy, L, W, ang, col, bulge=1.0):
 
 
 def _wing(d, ox, oy, L, W, ang, c, fld, shade):
-    """天使翼：外层四根主羽 + 根部三根短覆羽（略深），两层才有"天使翅膀"的堆叠感。
+    """Angel wing: four outer primary feathers + three shorter covert feathers near
+    the root (slightly darker) -- it takes two layers to get the "angel wing" layered
+    look.
 
-    ⚠️ 前扫角度刻意收窄（最外侧 +20° 而不是 +32°），配合翅根后移，
-    **否则前羽会盖住耳朵** —— 48px 下耳朵会整个消失。
+    WARNING: the forward sweep angle is deliberately narrowed (outermost is +20°
+    instead of +32°), together with moving the wing root back, **otherwise the front
+    feather would cover the ear** -- at 48px the ear would disappear entirely.
     """
     for da, l in [(-34, 0.80), (-14, 0.98), (6, 1.0), (20, 0.80)]:
         _plume(d, ox, oy, L * l + L * 0.05, W * 1.30, ang + da, fld)
@@ -139,9 +173,10 @@ def _wing(d, ox, oy, L, W, ang, c, fld, shade):
 
 
 def _ear(d, cx, cy, r, col, icol):
-    """圆形 + 一个朝上的小尖尖（圆和三角求并）。
+    """A circle + a small point facing up (union of a circle and a triangle).
 
-    ⚠️ 纯三角的尖耳被否过（"耳朵不要太尖"）；而圆形没有尖会读成猫耳。
+    WARNING: a purely triangular pointed ear was rejected ("ears shouldn't be so
+    pointy"); but a circle with no point at all reads as a cat's ear.
     """
     a = math.radians(-90)
     tip = 0.55
@@ -156,11 +191,15 @@ def _ear(d, cx, cy, r, col, icol):
 
 
 def _coins(d, T, r, edge_w):
-    """三枚铜钱堆叠（外圆内方）。层序后→前，后面的被前面压住一角。
+    """Three stacked coins (round outside, square inside). Drawn back-to-front, so
+    each coin behind has a corner covered by the one in front.
 
-    ⚠️ **元宝在这个位置上不成立。** 试过把元宝画在侧身，它是横向的船形，
-    贴在圆身子上小尺寸会糊成一坨（48px 完全看不出是什么）。
-    铜钱的外圆和身体的圆呼应、方孔在小尺寸下还能撑住，是被小尺寸逼出来的选择。
+    WARNING: **a gold ingot (yuanbao) doesn't work in this position.** Drawing an
+    ingot at the pig's side was tried, but it's a horizontal boat shape, and against
+    the round body it smears into a blob at small sizes (completely unrecognizable
+    at 48px).
+    The coin's outer circle echoes the body's circle, and the square hole still
+    holds up at small sizes -- a choice forced by the small-size constraint.
     """
     w = max(1, round(edge_w))
     for dx, dy in COIN_LAY:
@@ -172,7 +211,7 @@ def _coins(d, T, r, edge_w):
 
 
 def _pig(n):
-    """把猪画在 n×n 的**透明**画布上（只有图形，没有底色）。"""
+    """Draw the pig on an n x n **transparent** canvas (artwork only, no background fill)."""
     img = Image.new("RGBA", (n, n), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     B, S, W = BODY + (255,), SNOUT + (255,), WINGC + (255,)
@@ -195,7 +234,7 @@ def _pig(n):
             d.ellipse([p[0] - lw / 2, p[1] - lw / 2, p[0] + lw / 2, p[1] + lw / 2], fill=B)
         d.ellipse([p1[0] - hr, p1[1] - hr, p1[0] + hr, p1[1] + hr], fill=Hf)
 
-    # 尾巴（一圈渐细的螺旋，用小圆点铺出来）
+    # Tail (a spiral that tapers as it winds, built from small dots)
     tx, ty = T(-RX * 1.02, -RY * 0.30)
     for i in range(70):
         t = i / 69
@@ -204,12 +243,13 @@ def _pig(n):
         x, y = tx + rr * math.cos(a), ty + rr * math.sin(a)
         d.ellipse([x - n * 0.0145, y - n * 0.0145, x + n * 0.0145, y + n * 0.0145], fill=B)
 
-    # 只有两条腿（前后各一）。先画一次，身体盖住上半截；身体之后再画一次露出下半截。
+    # Only two legs (one front, one back). Drawn once first so the body covers the
+    # upper half; drawn again after the body so the lower half shows through.
     for _ in range(1):
         leg(-0.30, -0.34, 0.90, 1.10)
         leg(0.28, 0.25, 0.88, 1.08)
 
-    # 身体（旋转过的椭圆）
+    # Body (a rotated ellipse)
     lay = Image.new("RGBA", (int(RX * 2) + 6, int(RY * 2) + 6), (0, 0, 0, 0))
     ImageDraw.Draw(lay).ellipse([3, 3, RX * 2 + 3, RY * 2 + 3], fill=B)
     lay = lay.rotate(-TILT, expand=True, resample=Image.BICUBIC)
@@ -219,7 +259,7 @@ def _pig(n):
     leg(-0.30, -0.34, 0.90, 1.10)
     leg(0.28, 0.25, 0.88, 1.08)
 
-    # 鼻子 + 两个鼻孔
+    # Snout + two nostrils
     sx, sy = T(RX * 0.92, -RY * 0.08)
     sr = n * SNOUT_R
     d.ellipse([sx - sr * 0.75, sy - sr * 0.80, sx + sr * 0.95, sy + sr * 0.80], fill=S)
@@ -228,11 +268,12 @@ def _pig(n):
         d.ellipse([sx + n * 0.010 - nr, sy + k * n * 0.023 - nr,
                    sx + n * 0.010 + nr, sy + k * n * 0.023 + nr], fill=(168, 76, 122, 255))
 
-    # 耳朵
+    # Ear
     ex, ey = T(RX * 0.46, -RY * 0.86)
     _ear(d, ex, ey, n * EAR_R, B, S)
 
-    # 眼睛 + 高光。⚠️ 高光在 48px 下会消失，这是正常的渐进细节，不是 bug。
+    # Eye + highlight. WARNING: the highlight disappears at 48px; this is expected
+    # graceful degradation of detail, not a bug.
     ox, oy = T(RX * 0.52, -RY * 0.30)
     er = n * EYE_R
     d.ellipse([ox - er, oy - er, ox + er, oy + er], fill=E)
@@ -240,13 +281,14 @@ def _pig(n):
     d.ellipse([ox - er * 0.34 - hr2, oy - er * 0.36 - hr2,
                ox - er * 0.34 + hr2, oy - er * 0.36 + hr2], fill=(255, 255, 255, 255))
 
-    # 翅膀。⚠️ 必须在钱币之前画：钱币在侧身、翅膀在背上，两者不重叠，
-    # 但翅根靠后，画在钱币之后会压住身体轮廓。
+    # Wing. WARNING: must be drawn before the coins: the coins sit at the side and
+    # the wing sits on the back, so they don't overlap, but the wing root sits
+    # further back and drawing it after the coins would cover the body's outline.
     wx, wy = T(-RX * 0.30, -RY * 0.62)
     _wing(d, wx, wy, n * WING_L, n * WING_W, WING_ANG, W, FIELD + (255,),
           (255, 208, 224, 255))
 
-    # 三枚铜钱（侧身）
+    # Three coins (at the side)
     gx, gy = T(-RX * COIN_POS[0], RY * COIN_POS[1])
     _coins(d, _frame(gx, gy, TILT), n * COIN_R, n * COIN_R * COIN_EDGE)
 
@@ -254,11 +296,15 @@ def _pig(n):
 
 
 def _fit(content, canvas, radius_frac):
-    """把图形缩放居中，让**真实的**包围半径正好等于 radius_frac × 画布宽。
+    """Scale and center the artwork so its **actual** bounding radius equals exactly
+    radius_frac x canvas width.
 
-    ⚠️ **半径是逐像素扫出来的，不是算出来的。** 上一版用手算的常量，错了 27%
-    （最远的点不在想当然的地方），自适应前景因此超出安全圆而本地看不出来。
-    包围盒的角同样不能用 —— 那个角上往往根本没有像素，会低估缩放、白白缩小图形。
+    WARNING: **the radius is scanned pixel-by-pixel, not computed.** The previous
+    version used a hand-computed constant that was off by 27% (the farthest point
+    wasn't where it was assumed to be), so the adaptive foreground overflowed the
+    safe circle without this being visible locally.
+    The bounding box's corner can't be used either -- there's often no pixel there
+    at all, which would underestimate the scale and needlessly shrink the artwork.
     """
     a = content.getchannel("A")
     bbox = a.getbbox()
@@ -270,7 +316,7 @@ def _fit(content, canvas, radius_frac):
     for y in range(bbox[1], bbox[3]):
         dy2 = (y - cy) ** 2
         for x in range(bbox[0], bbox[2]):
-            if px[x, y] > 8:                      # 8：忽略抗锯齿边缘的近透明像素
+            if px[x, y] > 8:                      # 8: ignore near-transparent anti-aliased edge pixels
                 r2 = (x - cx) ** 2 + dy2
                 if r2 > far:
                     far = r2
@@ -280,7 +326,7 @@ def _fit(content, canvas, radius_frac):
     scale = target / far
     w, h = content.size
     small = content.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
-    # 缩放后内容中心的位置
+    # Position of the content's center after scaling
     ncx, ncy = cx * scale, cy * scale
     out = Image.new("RGBA", (canvas * SS, canvas * SS), (0, 0, 0, 0))
     out.paste(small, (round(canvas * SS / 2 - ncx), round(canvas * SS / 2 - ncy)), small)
@@ -288,7 +334,7 @@ def _fit(content, canvas, radius_frac):
 
 
 def full_bleed(size):
-    """满幅版：iOS 用，以及 Android 的 legacy 图标。无 alpha。"""
+    """Full-bleed version: used for iOS, and for Android's legacy icon. No alpha."""
     content = _fit(_pig(WORK * SS), size, 0.40)
     out = Image.new("RGBA", content.size, FIELD + (255,))
     out.alpha_composite(content)
@@ -296,9 +342,12 @@ def full_bleed(size):
 
 
 def adaptive_foreground(size):
-    """Android 自适应前景：透明底 + 缩进直径 66/108 的保证可见圆。"""
-    # ⚠️ 乘 0.985 留一点余量：目标半径取成正好等于安全半径时，缩放和重采样的
-    # 舍入会把最远的像素推出去约 0.3%（validate.py 实测 100.3%，判 FAIL）。
+    """Android adaptive foreground: transparent background + inset to the
+    guaranteed-visible 66/108-diameter circle."""
+    # WARNING: multiplying by 0.985 leaves a small margin: when the target radius is
+    # set to exactly equal the safe radius, rounding from scaling and resampling
+    # pushes the farthest pixel out by about 0.3% (validate.py measured 100.3% in
+    # practice, which fails).
     content = _fit(_pig(WORK * SS), size, (66 / 108) / 2 * 0.985)
     return content.resize((size, size), Image.LANCZOS)
 
@@ -306,7 +355,7 @@ def adaptive_foreground(size):
 def main():
     written = []
 
-    # ── iOS：单张 1024，无 alpha ──
+    # ── iOS: single 1024 image, no alpha ──
     ios_dir = os.path.join(ROOT, "iosApp/iosApp/Assets.xcassets/AppIcon.appiconset")
     os.makedirs(ios_dir, exist_ok=True)
     p = os.path.join(ios_dir, "icon-1024.png")
@@ -326,7 +375,7 @@ def main():
         json.dump({"info": {"author": "xcode", "version": 1}}, f, indent=2)
         f.write("\n")
 
-    # ── Android：自适应前景 + legacy 满幅 ──
+    # ── Android: adaptive foreground + legacy full-bleed ──
     res = os.path.join(ROOT, "androidApp/src/main/res")
     for bucket, factor in [("mdpi", 1), ("hdpi", 1.5), ("xhdpi", 2),
                            ("xxhdpi", 3), ("xxxhdpi", 4)]:

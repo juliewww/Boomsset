@@ -2,10 +2,10 @@ import com.boomsset.domain.AssetClass;
 import com.boomsset.domain.ValuationMode;
 import kotlin.Boolean;
 
--- 一项资产或负债。
+-- An asset or liability.
 --
--- default_valuation_mode / default_quote_symbol 只是**新快照的默认值**，
--- 估值一律看 snapshot.mode —— 见 docs/domain.md「为什么 mode 在快照上」。
+-- default_valuation_mode / default_quote_symbol are only **defaults for new snapshots**;
+-- valuation always looks at snapshot.mode -- see docs/domain.md "Why mode lives on the snapshot".
 CREATE TABLE asset (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     name                   TEXT NOT NULL,
@@ -13,7 +13,8 @@ CREATE TABLE asset (
     subtype_id             INTEGER NOT NULL REFERENCES asset_subtype(id),
     currency               TEXT NOT NULL,
     is_liability           INTEGER AS Boolean NOT NULL DEFAULT 0,
-    -- 是否计入资产配置比例。默认计入；关掉它是排除自住房的低成本手段。
+    -- Whether this counts toward allocation percentages. Included by default; turning it off is
+    -- a low-cost way to exclude a primary residence.
     include_in_allocation  INTEGER AS Boolean NOT NULL DEFAULT 1,
     default_valuation_mode TEXT AS ValuationMode NOT NULL,
     default_quote_symbol   TEXT,
@@ -48,7 +49,8 @@ UPDATE asset SET
     include_in_allocation = ?, default_valuation_mode = ?, default_quote_symbol = ?
 WHERE id = ?;
 
--- 归档而非删除：历史快照必须留着，否则过去的净值曲线会凭空变化。
+-- Archive instead of delete: historical snapshots must be kept, otherwise past net worth curves
+-- would change out of nowhere.
 archive:
 UPDATE asset SET archived_at = ? WHERE id = ?;
 

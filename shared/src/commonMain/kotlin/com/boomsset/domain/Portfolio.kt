@@ -3,16 +3,18 @@ package com.boomsset.domain
 import kotlin.time.Instant
 
 /**
- * 估值上下文 —— 某个时点 T 所需的全部外部数据。
+ * Valuation context — all the external data needed for a given point in time T.
  *
- * [quotes] 和 [rates] 都应该是**该时点（含之前最近一条）**的值，不是今天的值。
- * 用今天的汇率折算历史净值会污染曲线，让用户看到自己从没经历过的涨跌。
+ * Both [quotes] and [rates] should be the values **as of that point in time (or the
+ * most recent one before it)**, not today's values. Using today's exchange rate to
+ * convert a historical net worth value would pollute the curve, showing the user swings
+ * they never actually experienced.
  */
 data class ValuationContext(
     val baseCurrency: String,
-    /** symbol → 该时点前最近的一条行情 */
+    /** symbol → the most recent quote as of that point in time */
     val quotes: Map<String, Quote>,
-    /** "USD→CNY" → 该时点前最近的一条汇率。同币种不需要出现在这里。 */
+    /** "USD→CNY" → the most recent rate as of that point in time. Same-currency pairs don't need to appear here. */
     val rates: Map<String, ExchangeRate>,
 ) {
     fun rateTo(fromCurrency: String): ExchangeRate? =
@@ -24,35 +26,38 @@ data class ValuationContext(
     }
 }
 
-/** 某个大类的净敞口。 */
+/** Net exposure of a single top-level asset class. */
 data class ClassExposure(
     val assetClass: AssetClass,
-    /** 该类资产合计（基准币种） */
+    /** Total assets in this class (base currency) */
     val assets: Money,
-    /** 归属到该类的负债合计（正数量级，基准币种） */
+    /** Total liabilities attributed to this class (positive magnitude, base currency) */
     val liabilities: Money,
 ) {
     /**
-     * 净敞口 = 资产 − 归属负债。**可能为负**（车贷超过车值、信用卡欠款超过流动资金）。
+     * Net exposure = assets − attributed liabilities. **Can be negative** (a car loan
+     * exceeding the car's value, credit card debt exceeding liquid funds).
      *
-     * 配置比例的分子是这个值，不是 [assets] —— 忘了减负债会让各大类加总超过 100%。
+     * This value, not [assets], is the numerator for allocation ratios — forgetting to
+     * subtract liabilities would make the classes sum to more than 100%.
      */
     val netExposure: Money get() = assets - liabilities
 
     val isNegative: Boolean get() = netExposure < Money.ZERO
 }
 
-/** 某时点的净值。 */
+/** Net worth at a point in time. */
 data class NetWorthPoint(
     val asOf: Instant,
     val baseCurrency: String,
     val totalAssets: Money,
     val totalLiabilities: Money,
     /**
-     * 无法估值的资产 id —— QUOTED 快照的 symbol 一条行情都没有。
+     * IDs of assets that could not be valued — a QUOTED snapshot's symbol has no quote
+     * at all.
      *
-     * 这些资产**没有计入**上面的合计。不把它们当成 0，是因为当成 0 会静默低估净值；
-     * UI 必须把这个列表提示出来。
+     * These assets are **not included** in the totals above. They aren't treated as 0
+     * because that would silently understate net worth; the UI must surface this list.
      */
     val unpricedAssetIds: List<Long> = emptyList(),
 ) {
@@ -60,42 +65,47 @@ data class NetWorthPoint(
     val hasUnpriced: Boolean get() = unpricedAssetIds.isNotEmpty()
 
     /**
-     * 负债率 = 总负债 / 总资产，基点。
+     * Liability ratio = total liabilities / total assets, in basis points.
      *
-     * 分母是**总资产**而不是净资产 —— "欠的钱占身家多大比例"这个问题里，
-     * 净资产做分母会在高杠杆时给出超过 100% 的数，读不出意义。
+     * The denominator is **total assets**, not net worth — for "what fraction of my
+     * wealth do I owe", using net worth as the denominator would produce a figure over
+     * 100% under high leverage, which doesn't read as meaningful.
      *
-     * @return 总资产 ≤ 0 时返回 null（分母无意义）。**不返回 0** ——
-     *   0% 会被读成"没有负债"，而"一分资产都没有"是另一回事。
+     * @return null when total assets ≤ 0 (the denominator is meaningless). **Never
+     *   returns 0** — 0% would read as "no liabilities", while "zero assets at all" is a
+     *   different situation entirely.
      */
     val liabilityRatioBp: Int?
         get() {
             val assets = totalAssets.minorUnits
             if (assets <= 0L) return null
             val liabilities = totalLiabilities.minorUnits
-            // 乘法先于除法，所以数量级极端时会溢出 Long。溢出是静默回绕（不像
-            // FixedPoint 会抛），所以这里主动降级成 null —— 宁可不显示，
-            // 不能显示一个回绕出来的假比率。见 AGENTS.md 教训 4。
+            // Multiplication happens before division, so extreme magnitudes can overflow
+            // Long. Overflow here wraps silently (unlike FixedPoint, which throws), so
+            // this proactively degrades to null — better to show nothing than to show a
+            // wrapped-around fake ratio. See AGENTS.md lesson 4.
             if (!fitsBpMath(liabilities)) return null
             return (liabilities * TargetAllocation.TOTAL_BP / assets).toInt()
         }
 }
 
-/** 资产配置视图：当前比例 vs 目标比例。 */
+/** Asset allocation view: current ratio vs. target ratio. */
 data class AllocationView(
     val asOf: Instant,
     val baseCurrency: String,
-    /** 分母。已定：全部净资产（含自住房，减负债）。 */
+    /** The denominator. Decided: total net worth (including primary residence, minus liabilities). */
     val netWorth: Money,
     val exposures: Map<AssetClass, ClassExposure>,
     val target: TargetAllocation?,
 ) {
     /**
-     * 当前比例，单位基点（100% = 10000）。可能为负（该类净敞口为负）。
+     * Current ratio, in basis points (100% = 10000). Can be negative (if this class's net exposure is negative).
      *
-     * @return 净资产 ≤ 0 时返回 null —— 此时比例在数学上无意义（分母为零或负），
-     *   UI 应当直说"净资产为负，配置比例无法计算"，而不是显示一个乱数。
-     *   量级过大导致基点换算会回绕时同样返回 null，见 [fitsBpMath]。
+     * @return null when net worth ≤ 0 — the ratio is mathematically meaningless at that
+     *   point (the denominator is zero or negative); the UI should say plainly "net
+     *   worth is negative, allocation ratio can't be computed" rather than display a
+     *   garbage number. Also returns null when the magnitude is too large and the basis
+     *   point conversion would wrap around, see [fitsBpMath].
      */
     fun shareBp(assetClass: AssetClass): Int? {
         if (netWorth.minorUnits <= 0L) return null
@@ -104,10 +114,10 @@ data class AllocationView(
         return (exposure.minorUnits * TargetAllocation.TOTAL_BP / netWorth.minorUnits).toInt()
     }
 
-    /** 目标比例，基点。没有生效的目标配置时返回 null。 */
+    /** Target ratio, in basis points. Returns null when there's no active target allocation. */
     fun targetBp(assetClass: AssetClass): Int? = target?.targetsBp?.get(assetClass)
 
-    /** 偏离 = 当前 − 目标，基点。正数超配、负数低配。 */
+    /** Deviation = current − target, in basis points. Positive means overweight, negative means underweight. */
     fun deviationBp(assetClass: AssetClass): Int? {
         val current = shareBp(assetClass) ?: return null
         val goal = targetBp(assetClass) ?: return null
@@ -115,29 +125,39 @@ data class AllocationView(
     }
 
     /**
-     * 要让这一类回到目标比例，需要调整的金额。**正数需增加、负数需减少。**
+     * The amount by which this class needs to be adjusted to reach its target ratio.
+     * **Positive means increase, negative means decrease.**
      *
-     * ## 口径：内部调仓，总净资产不变
+     * ## Convention: internal rebalancing, total net worth unchanged
      *
-     * 这个数假设调整是在组合**内部**发生的（卖掉超配的类、把等额买进低配的类），
-     * 所以分母不变。由此得到一条可以断言的不变量：**全部大类的调整额加总为 0**
-     * （因为目标比例之和恒为 [TargetAllocation.TOTAL_BP]）—— 超配的类要卖出多少，
-     * 正好够低配的类买入。取整会让这个和有最多「大类数 − 1」分的误差，见测试。
+     * This figure assumes the adjustment happens **within** the portfolio (sell down the
+     * overweight classes, buy an equal amount into the underweight classes), so the
+     * denominator doesn't change. This gives an invariant that can be asserted:
+     * **the adjustment amounts across all classes sum to 0** (because target ratios
+     * always sum to [TargetAllocation.TOTAL_BP]) — however much the overweight classes
+     * need to sell is exactly enough for the underweight classes to buy. Rounding can
+     * introduce an error of up to "number of classes − 1" fen in this sum, see the tests.
      *
-     * 另一个口径是"只投新钱、什么都不卖"，那时新钱同时进分母，算式是
-     * `x = (目标 × 净资产 − 净敞口) / (1 − 目标)`，数字明显更大（20%→40% 的例子里
-     * 是 33.3 万而不是 20 万）。**没有选它**：各类独立算出来的数加不起来，
-     * 拼不成一个可执行的方案，而"卖超配补低配"是再平衡的通行含义。
+     * The other convention is "invest new money only, sell nothing", where the new money
+     * also enters the denominator, giving the formula
+     * `x = (target × net worth − net exposure) / (1 − target)`, which yields noticeably
+     * larger numbers (in the 20%→40% example, 333,000 rather than 200,000).
+     * **This wasn't chosen**: the figures computed independently per class don't add up
+     * into one executable plan, whereas "sell overweight to top up underweight" is the
+     * common meaning of rebalancing.
      *
-     * ## 为什么不从 [deviationBp] 反算
+     * ## Why not derive this from [deviationBp]
      *
-     * `−偏离 × 净资产` 看起来等价，实际会放大误差：[deviationBp] 是从**已经截断到
-     * 整基点**的 [shareBp] 减出来的，1 基点乘上净资产就是真金白银 ——
-     * 每 100 万净资产误差 ¥100，随机对照跑到过 ¥99,876（净资产约 10 亿那档）。
-     * 这里 `目标额 − 净敞口` 只截断一次，误差 < 1 分。
+     * `−deviation × net worth` looks equivalent but actually amplifies error:
+     * [deviationBp] is subtracted from [shareBp], which is **already truncated to whole
+     * basis points** — 1 basis point times net worth is real money — an error of ¥100
+     * per ¥1,000,000 of net worth, which in randomized testing reached as much as
+     * ¥99,876 (at roughly ¥1 billion net worth). Here, `target amount − net exposure`
+     * truncates only once, with error < 1 fen.
      *
-     * @return null 的条件和 [deviationBp] **完全一致**（净资产 ≤ 0、没有生效目标、
-     *   量级过大）。不一致会让 UI 出现"比例说算不出来、金额却给了个数"。
+     * @return the null conditions are **exactly the same** as [deviationBp] (net worth ≤
+     *   0, no active target, magnitude too large). Any inconsistency would let the UI
+     *   show "ratio can't be computed" while still giving an amount.
      */
     fun rebalanceAmount(assetClass: AssetClass): Money? {
         if (netWorth.minorUnits <= 0L) return null
@@ -148,20 +168,23 @@ data class AllocationView(
         return goalAmount - exposure
     }
 
-    /** 有任何大类净敞口为负 —— 饼图画不出负数，UI 要显式标注。 */
+    /** Whether any top-level class has a negative net exposure — a pie chart can't render negative slices, so the UI must call this out explicitly. */
     val hasNegativeExposure: Boolean get() = exposures.values.any { it.isNegative }
 }
 
 /**
- * 这个金额乘上 [TargetAllocation.TOTAL_BP] 会不会溢出 Long。
- * 三处基点换算共用它：[NetWorthPoint.liabilityRatioBp]、[AllocationView.shareBp]、
- * [AllocationView.rebalanceAmount]。
+ * Whether multiplying this amount by [TargetAllocation.TOTAL_BP] would overflow Long.
+ * Shared by the three places that do basis-point conversion: [NetWorthPoint.liabilityRatioBp],
+ * [AllocationView.shareBp], [AllocationView.rebalanceAmount].
  *
- * 基点换算全都是「先乘 10000 再除」，而 **Long 溢出不抛异常，会安静地回绕**成一个
- * 荒谬的数 —— 那正是这个项目最不能接受的失败方式（AGENTS.md：金额宁可显示不出来，
- * 也不能静默算错）。阈值约 9.2 万亿元，现实里到不了，但闸门只要一行。
+ * Basis-point conversion always works by "multiply by 10000, then divide", and
+ * **Long overflow doesn't throw, it silently wraps around** into an absurd number —
+ * exactly the kind of failure this project cannot accept (AGENTS.md: better to fail to
+ * display an amount than to silently miscalculate it). The threshold is about 9.2
+ * trillion yuan, unreachable in practice, but the guard is only one line.
  *
- * 不写成 `abs(this) <= ...`：`abs(Long.MIN_VALUE)` 本身就是负数，比较会给出错的答案。
+ * Not written as `abs(this) <= ...`: `abs(Long.MIN_VALUE)` is itself negative, so the
+ * comparison would give the wrong answer.
  */
 private fun fitsBpMath(minorUnits: Long): Boolean {
     val limit = Long.MAX_VALUE / TargetAllocation.TOTAL_BP
@@ -169,10 +192,11 @@ private fun fitsBpMath(minorUnits: Long): Boolean {
 }
 
 /**
- * 浮动盈亏。这是**时点值**，不是区间值。
+ * Unrealized profit and loss. This is a **point-in-time value**, not a range value.
  *
- * 没有成本（用户没填、或负债）就没有盈亏，此时整个对象为 null 而不是零值 ——
- * 零和"未知"在这里意义完全不同。
+ * With no cost basis (not entered by the user, or a liability), there is no P&L, in
+ * which case the whole object is null rather than a zero value — zero and "unknown"
+ * mean completely different things here.
  */
 data class ProfitAndLoss(
     val cost: Money,
@@ -181,7 +205,7 @@ data class ProfitAndLoss(
     val absolute: Money get() = value - cost
 
     /**
-     * 盈亏率，基点。成本为 0 时返回 null（不是 0，也不是除零）。
+     * Return rate, in basis points. Returns null when cost is 0 (not 0, and not a divide-by-zero).
      */
     val returnBp: Int?
         get() {

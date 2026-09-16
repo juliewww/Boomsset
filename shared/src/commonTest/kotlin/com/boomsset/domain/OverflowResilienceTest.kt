@@ -7,14 +7,15 @@ import kotlin.test.Test
 import kotlin.time.Instant
 
 /**
- * 回归测试：**极端数值不能让 App 崩溃。**
+ * Regression test: **extreme values must not crash the app.**
  *
- * 实跑时输错一次份额（1 亿股茅台）就把 App 打死了 —— [FixedPoint] 的溢出保护抛
- * `ArithmeticException`，异常从 `localValue` 一路逃到 ViewModel 的 combine，
- * 整个进程挂掉。
+ * On a real run, a single mistyped share count (100 million shares of Moutai) killed the app --
+ * [FixedPoint]'s overflow guard threw an `ArithmeticException`, and the exception escaped all
+ * the way from `localValue` up to the ViewModel's `combine`, taking down the whole process.
  *
- * 抛异常本身是对的（金额绝不能静默回绕），但**异常不能到达 UI**。
- * 现在估值层把它降级成"无法估值"：既没有算错，也没有崩。
+ * Throwing is correct in itself (amounts must never silently wrap around), but **the exception
+ * must never reach the UI**. The valuation layer now downgrades it to "cannot be valued":
+ * neither a wrong number nor a crash.
  */
 class OverflowResilienceTest {
 
@@ -30,7 +31,7 @@ class OverflowResilienceTest {
         defaultValuationMode = ValuationMode.QUOTED,
     )
 
-    /** 复现实跑那次崩溃的确切数值：1.0012e8 股 × 1331.99 元。 */
+    /** Reproduces the exact numbers from that real-run crash: 1.0012e8 shares x 1331.99 yuan. */
     private fun absurdSnapshot() = Snapshot.Quoted(
         id = 1,
         assetId = 1,
@@ -45,12 +46,12 @@ class OverflowResilienceTest {
     )
 
     @Test
-    fun `溢出时返回null而不是抛异常`() {
+    fun `overflow returns null instead of throwing`() {
         PortfolioCalculator.localValue(absurdSnapshot(), realPrice).shouldBeNull()
     }
 
     @Test
-    fun `净值计算把溢出的资产列为无法估值而不是崩掉`() {
+    fun `net worth calculation lists an overflowing asset as unpriced instead of crashing`() {
         val point = PortfolioCalculator.netWorth(
             asOf = t,
             assets = listOf(asset(1)),
@@ -63,7 +64,7 @@ class OverflowResilienceTest {
     }
 
     @Test
-    fun `配置视图跳过溢出的资产而不是崩掉`() {
+    fun `the allocation view skips an overflowing asset instead of crashing`() {
         val view = PortfolioCalculator.allocation(
             asOf = t,
             assets = listOf(asset(1)),
@@ -74,8 +75,8 @@ class OverflowResilienceTest {
     }
 
     @Test
-    fun `汇率折算溢出也不崩`() {
-        // 一笔巨额本币金额 × 一个巨大汇率
+    fun `exchange rate conversion overflow does not crash either`() {
+        // A huge local-currency amount x a huge exchange rate
         val huge = Snapshot.Manual(
             id = 1, assetId = 1, asOf = t,
             value = Money(Long.MAX_VALUE / 2), recordedAt = t,
@@ -94,8 +95,8 @@ class OverflowResilienceTest {
     }
 
     @Test
-    fun `正常量级不受影响`() {
-        // 确认上面的保护没有把合法计算也吞掉
+    fun `ordinary magnitudes are unaffected`() {
+        // Confirms the guard above doesn't also swallow legitimate calculations
         val normal = Snapshot.Quoted(
             id = 1, assetId = 1, asOf = t,
             quantity = Quantity.ofUnits(100),

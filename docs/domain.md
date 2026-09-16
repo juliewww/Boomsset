@@ -1,457 +1,598 @@
-# 领域模型
+# Domain Model
 
-> 状态：**产品决策已定（2026-07-28），表结构可以照此实现。**
+> Status: **Product decisions finalized (2026-07-28); the schema can be implemented as described here.**
 
-## 设计前提
+## Design premise
 
-**快照式，不是流水式。** 用户不录入交易，而是定期回答"这项资产现在值多少"。
-这决定了整个数据模型的形状：核心是 (资产 × 时间 → 估值)，不是交易账本。
+**Snapshot-based, not ledger-based.** Users don't enter transactions — they periodically answer
+"what is this asset worth right now." This shapes the entire data model: the core is
+(asset × time → valuation), not a transaction ledger.
 
-## 一个关键拆分：行情 ≠ 快照
+## One key split: Quote ≠ Snapshot
 
-这两件事必须分开存，混在一张表会出两个 bug：
+These two things must be stored separately; combining them into one table causes two bugs:
 
-1. 行情刷新是高频的（每次打开 App）。如果刷新就写快照，一天开十次 App × N 个资产 =
-   快照表爆炸，历史曲线被高频噪点污染。
-2. 份额会变（加仓/减仓）。如果快照只存市值，用户今天加仓后，**历史净值会被按新份额重算** ——
-   过去的曲线凭空变了。
+1. Quote refresh is high-frequency (every time the app opens). If refreshing also wrote a
+   snapshot, ten app opens a day × N assets would blow up the snapshot table, and the
+   historical curve would get polluted with high-frequency noise.
+2. Share counts change (buying/selling more). If a snapshot only stored market value, then
+   after the user adds to a position today, **historical net worth would get recalculated
+   using the new share count** — the past curve would change out from under them.
 
-所以：
+So:
 
-- **`Quote`** 存**公开市场数据**，与用户无关，刷新只写这里
-- **`Snapshot`** 存**用户的持仓状态**，只有用户主动改动时才写
+- **`Quote`** stores **public market data**, independent of the user; refreshes only write here.
+- **`Snapshot`** stores **the user's holdings state**, written only when the user actively
+  makes a change.
 
-## 核心实体
+## Core entities
 
-### Asset — 一项资产或负债
+### Asset — one asset or liability
 
 - `id`
-- `name` — 用户自己起的名字，如"招行储蓄卡"、"公司期权"
-- `assetClass` — **五大类之一**，见「资产分类体系」。**负债也必须有**，用于归属抵扣
-- `subtypeId` — 品种（微信钱包 / 货币基金 / A股 …），预定义 + 用户自定义
-- `includeInAllocation` — 默认 `true`。是否计入资产配置比例。
-  留这个开关是为了：若将来发现自住房把饼图主导了想排除它，改一个布尔值而不是改表结构
-- `currency` — 该资产的计价币种（CNY / USD / HKD …）
-- `isLiability` — 负债标记。房贷、车贷、信用卡欠款在净值里做减项
-- `defaultValuationMode` — **`QUOTED` 或 `MANUAL`**，见下节。
-  ⚠️ 这只是"**新快照默认用哪种模式**"，**不是**估值时的判据 —— 估值按快照自己的 `mode` 走
-- `defaultQuoteSymbol` — 仅 `QUOTED` 默认时有值。同样只是新快照的默认值
-- `archivedAt` — 可选。已卖出/已结清的资产归档而非删除
+- `name` — a name the user picks, e.g. "CMB Savings Card," "Company Stock Options"
+- `assetClass` — **one of the five top-level classes**, see "Asset classification system."
+  **Liabilities must also have one**, used for attribution/offsetting
+- `subtypeId` — subtype (WeChat Wallet / money market fund / A-share stock ...), predefined
+  plus user-defined
+- `includeInAllocation` — defaults to `true`. Whether this asset counts toward allocation
+  percentages. This toggle exists so that if a primary residence later turns out to dominate
+  the pie chart and needs excluding, it's a boolean flip, not a schema change
+- `currency` — the currency this asset is denominated in (CNY / USD / HKD ...)
+- `isLiability` — liability flag. Mortgages, auto loans, credit card debt subtract from net worth
+- `defaultValuationMode` — **`QUOTED` or `MANUAL`**, see next section.
+  ⚠️ This is only "**which mode a new snapshot defaults to**," **not** the criterion used at
+  valuation time — valuation always follows the snapshot's own `mode`
+- `defaultQuoteSymbol` — only set when the default is `QUOTED`. Likewise, only a default for
+  new snapshots
+- `archivedAt` — optional. Sold or settled assets get archived rather than deleted
 
-### 估值模式：QUOTED vs MANUAL
+### Valuation modes: QUOTED vs MANUAL
 
 | | `QUOTED` | `MANUAL` |
 |---|---|---|
-| 适用 | 股票、基金、加密货币等有市场代码的 | 房产、存款、车、自定义资产 |
-| 市值 | **只读**，= 份额 × 市场单价 | 用户直接填 |
-| 用户能改的 | **份额 + 成本** | **市值 + 成本** |
-| 参与行情刷新 | 是 | 否 |
-| 显示浮动盈亏 | 是（填了成本就有） | 是（填了成本就有） |
+| Applies to | stocks, funds, crypto, anything with a market ticker | real estate, deposits, vehicles, custom assets |
+| Market value | **read-only**, = shares × market unit price | entered directly by the user |
+| What the user can edit | **shares + cost basis** | **market value + cost basis** |
+| Participates in quote refresh | yes | no |
+| Shows unrealized gain/loss | yes (once cost basis is filled in) | yes (once cost basis is filled in) |
 
-市值对 `QUOTED` 只读，不是"不许改"，而是**它是算出来的**。想让它变，要么改份额，
-要么等行情更新。
+Market value being read-only for `QUOTED` doesn't mean "not allowed to change" — it means
+**it's a computed value**. To change it, either change the share count, or wait for the
+quote to update.
 
-**成本对两种模式都可填、都可改**，因此两种模式都能显示浮动盈亏和收益率。
-成本是独立于估值模式的一个字段，不要把"市值只读"误推成"成本也只读"。
+**Cost basis is editable in both modes**, so both modes can show unrealized gain/loss and
+return rate. Cost basis is a field independent of valuation mode — don't infer from
+"market value is read-only" that "cost basis is read-only too."
 
-**取价失败的兜底**（已实现）：用最后一次成功获取的单价，并标记为 stale ——
-UI 上显示「单价 X · N 天前的行情」，超过 **3 天**加过期警告。不要因为取价失败就把资产当成 0。
+**Fallback for failed price fetches** (implemented): use the last successfully fetched unit
+price, marked as stale — the UI shows "unit price X · quoted N days ago," with a staleness
+warning past **3 days**. Don't treat an asset as worth 0 just because a price fetch failed.
 
-阈值取 3 天而不是 1 天：周末和节假日本来就没有行情，1 天会在每个周一之前都误报。
-**不建交易日历** —— 维护各市场节假日表的成本远高于收益，判断错了反而制造噪音。
+The threshold is 3 days rather than 1: weekends and holidays naturally have no quotes, so
+1 day would false-flag every Monday. **We deliberately don't build a trading calendar** —
+maintaining holiday tables per market costs far more than it's worth, and getting one wrong
+just adds noise.
 
-**用户可以手填单价覆盖。** 这是行情源失效时唯一的补救手段。手填的价写进同一张 `quote` 表，
-所以**当天一次成功的自动刷新会覆盖它** —— 这是有意的：手填是「自动取不到」时的兜底，
-真取到市场价当然更准。想「钉住」价格需要给 quote 加 `is_manual` 标记，那是另一个改动。
+**Users can manually override the unit price.** This is the only remedy when the quote
+source fails. A manual entry is written into the same `quote` table, so **a single
+successful automatic refresh that same day will overwrite it** — this is intentional: a
+manual entry is a fallback for "couldn't auto-fetch," and an actual market price is always
+more accurate. "Pinning" a price would require adding an `is_manual` flag to `quote`,
+which is a separate change.
 
-**退市后可以转成 MANUAL。** 见下方「模式转换」—— 这也是为什么模式必须记在快照上。
+**Can be converted to MANUAL after delisting.** See "Mode conversion" below — this is also
+why the mode has to live on the snapshot.
 
-### Snapshot — 用户持仓状态的快照
+### Snapshot — a snapshot of the user's holdings state
 
-**不可变、只追加。** 修正历史是插入新记录，不是原地改。这样历史永远可复现。
-**每条快照是该时点的完整持仓状态**（不是增量），UI 新建时从上一条预填。
+**Immutable, append-only.** Correcting history means inserting a new record, not editing in
+place. This way history is always reproducible. **Each snapshot is the complete holdings
+state at that point in time** (not a delta); the UI pre-fills a new one from the previous
+snapshot.
 
 - `id`
 - `assetId`
-- `asOf` — 该状态生效的时点
-- **`mode`** — `QUOTED` 或 `MANUAL`。**估值一律看这个字段，不看 `Asset`**
-- **`valueMinor`** — 仅 `mode = MANUAL`：自身币种下的市值，整数最小单位（分）
-- **`quantityScaled`** — 仅 `mode = QUOTED`：持有份额，定点整数（见「金额与份额表示」）
-- **`quoteSymbol`** — 仅 `mode = QUOTED`：这条快照该用哪个代码取价
-- **`costBasisMinor`** — 可选，自身币种下的持仓成本。见「成本与浮动盈亏」
-- `recordedAt` — 录入时间，和 `asOf` 分开（可以补录上个月的数据）
+- `asOf` — the point in time this state took effect
+- **`mode`** — `QUOTED` or `MANUAL`. **Valuation always follows this field, never `Asset`**
+- **`valueMinor`** — only when `mode = MANUAL`: market value in the asset's own currency,
+  as an integer in minor units (cents)
+- **`quantityScaled`** — only when `mode = QUOTED`: shares held, a fixed-point integer
+  (see "Representing amounts and shares")
+- **`quoteSymbol`** — only when `mode = QUOTED`: which ticker this snapshot should use to
+  fetch its price
+- **`costBasisMinor`** — optional, cost basis in the asset's own currency. See "Cost basis
+  and unrealized gain/loss"
+- `recordedAt` — when it was entered, kept separate from `asOf` (so past months' data can
+  be backfilled)
 
-**为什么 `mode` 和 `quoteSymbol` 在快照上而不在资产上：** 一支股票退市转成 MANUAL 后，
-它历史上那些按份额记的快照仍然要能估值。如果按 `Asset` 当前模式去判，代码会去读老快照里
-空的 `valueMinor`；如果清掉资产上的 `quoteSymbol`，老快照也不知道该查哪个代码。
-把两者记在快照上，转换就是**纯追加**，历史曲线完全不动，顺带还兼容了股票代码变更。
+**Why `mode` and `quoteSymbol` live on the snapshot rather than the asset:** once a stock
+is delisted and converted to MANUAL, its historical share-based snapshots still need to be
+valuable. If the code branched on `Asset`'s current mode, it would try to read the empty
+`valueMinor` on old snapshots; if the asset's `quoteSymbol` were cleared, old snapshots
+wouldn't know which ticker to look up. Recording both on the snapshot makes the conversion
+**purely additive** — the historical curve doesn't move at all, and as a bonus it also
+handles ticker changes.
 
-### 派生：更新记录（资产页底部那一栏）
+### Derived: update history (the section at the bottom of the asset list page)
 
-**不是新的表。** `snapshot` 那条不可变、只追加的链本身就是流水，
-`UpdateHistory.build(data, zone)` 只是把它按时间倒序摊平、给每条配上「链上紧邻的前一条」。
-另记一份「事件表」只会多出一个和快照对不上的事实来源。
+**Not a new table.** The `snapshot` chain — immutable and append-only — already is the
+event log. `UpdateHistory.build(data, zone)` simply flattens it in reverse chronological
+order and pairs each entry with "the record immediately preceding it in the chain."
+Keeping a separate event table would just create a second source of truth that could drift
+out of sync with the snapshots.
 
-事件类型三种，全部从快照本身推：
+There are three event types, all derived from the snapshot itself:
 
-| 判据 | 类型 |
+| Criterion | Type |
 |---|---|
-| `asset.archivedAt == snapshot.asOf` | 归档 |
-| 该资产链上的第一条 | 新增 |
-| 其余 | 更新 |
+| `asset.archivedAt == snapshot.asOf` | Archived |
+| First record in that asset's chain | Added |
+| Everything else | Updated |
 
-归档的判据成立是因为 `archiveAsset` 给两个字段写的是同一个 `now`。
-取消归档会清掉 `archivedAt`（归零快照留着），那条记录自动退回显示成普通「更新」—— 正确，
-归档确实被撤销了。
+The archive criterion works because `archiveAsset` writes the same `now` value to both
+fields. Un-archiving clears `archivedAt` (the zeroed-out snapshot stays), and that record
+automatically reverts to displaying as a plain "Updated" — which is correct, since the
+archive really was undone.
 
-**QUOTED 的记录只显示份额和成本，不显示市值。** 市值 = 份额 × 当时行情，
-而行情还没有做历史回补（见 AGENTS.md 开头那条已知问题）—— 历史时点大多取不到价，
-硬算要么得出「无法估值」，要么拿今天的价去解释三个月前那条记录。快照上真实存着的
-就是份额和成本，照原样显示。同理，**金额用资产自己的币种，不折算到基准币种**。
+**QUOTED records show only shares and cost basis, never market value.** Market value =
+shares × the quote at that time, and quotes still don't do historical backfill (see the
+known issue at the top of AGENTS.md) — most historical points can't be priced, so computing
+it would either produce "cannot value" or use today's price to explain a record from three
+months ago. What the snapshot actually stores — shares and cost basis — is shown as-is.
+Likewise, **amounts are shown in the asset's own currency, not converted to the base
+currency**.
 
-#### 保留策略：一条都不删
+#### Retention policy: nothing ever gets deleted
 
-这条是**产品决定**，不是还没做的优化：
+This is a **product decision**, not an optimization we haven't gotten to yet:
 
-- 快照是净值曲线的**唯一**数据源，而结转规则取「该时点前最近的一条」。
-  删掉「半年前」的记录后，一项半年没更新过的资产会连**今天**都取不到快照，
-  于是从净值、配置、资产列表里整个消失 —— 不是丢精度，是资产凭空蒸发，且不报错。
-- 存储上没有收益：一行快照约 100 字节，20 项资产按月更新存十年不到 250 KB。
-- 和「快照不可变」「归档不是删除」是同一条原则的延伸。
+- Snapshots are the **sole** data source for the net worth curve, and the carry-forward
+  rule takes "the most recent record at or before that point in time." Deleting records
+  "older than six months" would mean an asset that hasn't been updated in six months
+  couldn't get a snapshot for **today either**, and it would vanish entirely from net worth,
+  allocation, and the asset list — not a loss of precision, an asset disappearing into thin
+  air, silently.
+- There's no real storage benefit: one snapshot row is about 100 bytes; 20 assets updated
+  monthly for ten years is still under 250 KB.
+- This is an extension of the same principle as "snapshots are immutable" and "archiving is
+  not deleting."
 
-**分页只做在 UI 侧**：默认 20 条 + 「加载更多」。按条数而不是按时间窗口 ——
-按季度记账的人「近半年」只有两条（展开了跟坏了一样），每天记的人半年有上百条。
+**Pagination is UI-side only**: 20 records by default plus "load more." By record count, not
+by time window — someone who updates quarterly would only have two records in "the last six
+months" (expanding it would look broken), while someone who updates daily would have hundreds.
 
-量级上限沿用 `PortfolioData` 那条：几万条快照时全量加载会明显变慢，但不会静默出错。
+The scale ceiling follows the same one as `PortfolioData`: loading tens of thousands of
+snapshots at once will noticeably slow down, but it won't silently produce wrong results.
 
-### Quote — 市场行情
+### Quote — market data
 
 - `symbol` / `asOf` / `priceMinor` / `currency`
-- **同一 `symbol` 同一天只保留一条**（按天 upsert）
+- **Only one record per `symbol` per day** (upserted by day)
 
-打开 App 时刷新只往这里写。**不产生 Snapshot。**
+When the app opens, refresh only writes here. **It never produces a Snapshot.**
 
-### FxRate — 汇率
+### FxRate — exchange rates
 
 - `base` / `quote` / `asOf` / `rate`
 
-折算历史净值必须用**当时的汇率**，不是今天的。否则汇率波动会污染历史曲线，
-让用户看到自己从没经历过的涨跌。
+Converting historical net worth must use **the exchange rate at that time**, not today's.
+Otherwise exchange-rate fluctuations would pollute the historical curve, showing the user
+swings they never actually experienced.
 
-**「用当时的汇率」是一条对刷新层的硬要求，不只是查询层的规则。** 估值取的是
-「该时点前最近的一条汇率」，所以只存今天一条时，历史时点一条都取不到 →
-那些资产判成「无法估值」→ 那些时点的净值算成 0。表现是**回看时曲线从 0 起跳**，
-一个用户从未经历过的走势，而且不报错。
+**"Use the rate at that time" is a hard requirement on the refresh layer, not just a query-layer
+rule.** Valuation takes "the most recent exchange rate at or before that point in time," so
+if only today's rate is stored, historical points can't get one at all → those assets are
+judged "cannot value" → net worth at those points computes to 0. The visible symptom is
+**the curve starting from 0 when you look back** — a trajectory the user never actually
+lived through, and no error is raised.
 
-因此刷新层必须**按区间回补**：对每个非基准币种，覆盖 `[该币种最早的一条快照那天, 终点]`，
-终点是「还有未归档资产就到今天，全归档了就到最后一条快照那天」。
-起点不早于第一条快照 —— 那之前这些资产还不存在，净值里没有它们。
-判据在 `RateRefresher.requiredRanges`。
+So the refresh layer must **backfill by range**: for every non-base currency, cover
+`[the earliest snapshot date in that currency, the end point]`, where the end point is
+today if there are still unarchived assets, or the date of the last snapshot if everything
+has been archived. The start point is never earlier than the first snapshot — before that,
+those assets didn't exist yet, so they're not part of net worth. The logic lives in
+`RateRefresher.requiredRanges`.
 
-区间中间允许有空洞（只可能来自上一次部分失败）：结转规则是「取该时点前最近的一条」，
-空洞的后果是用稍旧的汇率，**不是估不出值** —— 和「一条都没有」是两种不同的严重程度。
+Gaps within the range are allowed (they can only come from a previous partial failure): the
+carry-forward rule takes "the most recent rate at or before that point," so a gap means
+using a slightly stale rate, **not** failing to value at all — a different, milder severity
+than "no rate at all."
 
-⚠️ **同样的要求也适用于 Quote，但目前只有汇率做到了。** 见 AGENTS.md 的已知问题。
+⚠️ **The same requirement applies to Quote too, but so far only FX rates do this.** See the
+known issue in AGENTS.md.
 
-### AssetSubtype — 品种
+### AssetSubtype — subtype
 
 - `id` / `name` / `assetClass` / `defaultValuationMode` / `isBuiltIn` / `hidden`
 
-内置品种**不允许删除**（历史资产会指向空品种），只能 `hidden` 隐藏。
+Built-in subtypes **cannot be deleted** (historical assets would end up pointing at nothing);
+they can only be hidden via `hidden`.
 
-### TargetAllocation / TargetAllocationItem — 目标配置
+### TargetAllocation / TargetAllocationItem — target allocation
 
-见「资产配置」一节。
+See "Asset allocation" section.
 
-### 派生：NetWorth 时间序列
+### Derived: NetWorth time series
 
-不是表，是查询结果。基准币种作为查询参数传入（不写死）。
+Not a table — a query result. Base currency is passed in as a query parameter (not hardcoded).
 
 ```
-某时点 T 的净值 =
-  Σ  资产: assetValue(asset, T) × fxRate(asset.currency → base, T)
-  -  Σ 负债: assetValue(asset, T) × fxRate(asset.currency → base, T)
+Net worth at time T =
+  Σ  assets: assetValue(asset, T) × fxRate(asset.currency → base, T)
+  -  Σ liabilities: assetValue(asset, T) × fxRate(asset.currency → base, T)
 
 assetValue(asset, T) =
-  let s = snapshot(asset, ≤T)              // 取该时点前最近的一条快照
+  let s = snapshot(asset, ≤T)              // take the most recent snapshot at or before T
   s.mode == MANUAL  → s.valueMinor
   s.mode == QUOTED  → s.quantityScaled × quote(s.quoteSymbol, ≤T).priceMinor
 ```
 
-注意分支是 `s.mode`，**不是** `asset.defaultValuationMode`。
+Note the branch is on `s.mode`, **not** `asset.defaultValuationMode`.
 
-**结转规则**：目标时点没有快照/行情，取**该时点之前最近的一条**（净值是存量概念，
-上次估值继续有效），而不是当它不存在。
+**Carry-forward rule**: if there's no snapshot/quote exactly at the target time, take the
+**most recent one before it** (net worth is a stock concept — the last valuation remains
+valid), rather than treating it as nonexistent.
 
-### 派生：浮动盈亏
+### Derived: unrealized gain/loss
 
 ```
-盈亏(asset, T)   = assetValue(asset, T) - snapshot(asset, ≤T).costBasisMinor
-盈亏率(asset, T) = 盈亏 / costBasisMinor
+Gain/loss(asset, T)      = assetValue(asset, T) - snapshot(asset, ≤T).costBasisMinor
+Gain/loss rate(asset, T) = gain/loss / costBasisMinor
 ```
 
-`costBasisMinor` 为 null 的资产不参与盈亏统计（负债、以及用户没填成本的资产）。
-组合层面的盈亏只累加有成本的那部分，**并且要在 UI 上说明覆盖范围** ——
-否则用户会拿一个只覆盖三成资产的盈亏数去理解全部身家。
+Assets where `costBasisMinor` is null don't participate in gain/loss statistics (liabilities,
+and assets where the user never filled in a cost basis). Portfolio-level gain/loss only
+sums the portion that has a cost basis, **and the UI must state the coverage** — otherwise
+a user could take a gain/loss figure that only covers 30% of their assets and read it as
+representing their whole net worth.
 
-## 已定的产品决策
+## Finalized product decisions
 
-1. **更新频率**：用户随时可更新，**不做提醒**。
-2. **行情刷新**：**每次打开 App 刷新**。只写 `Quote`，不写 `Snapshot`（见上文拆分）。
-   刷新失败用 stale 价格兜底，不阻塞界面。
-3. **能否改市值**：见「估值模式」—— `QUOTED` 市值只读、`MANUAL` 可改。
-   一项资产要么能自动取价、市值不可改；要么可改、但也就没有市场价可刷新。
-   两者互斥，不存在"手改了自动取价资产然后被覆盖"这种冲突。
-4. **基准币种**：**默认 CNY，可切换查看**。存在 DataStore Preferences 里，
-   作为参数传入净值查询 —— 不落到 Asset 或 Snapshot 上。
-5. **归档表现**：**数据层归零，展示层截断**。见「归档」。
-6. **模式转换**：`QUOTED` 退市后**允许转成 `MANUAL`**。见「模式转换」。
-7. **成本与浮动盈亏**：**要做。** 见下节。
-8. **分类体系**：两层 —— 五大类（SAA 四大类 + 保障）+ 可自定义品种。见「资产分类体系」。
-9. **资产配置视图**：要做。分母 = **全部净资产**（含自住房），负债按归属抵扣到大类。
-   目标配置**多套并存可对比**。见「资产配置」。
-10. **更新时间**：已有 —— `asOf`（估值属于哪个时点）和 `recordedAt`（何时录入）本就分开，
-    支持补录历史。按月统计变化天然可行，无需额外字段。
+1. **Update frequency**: users can update anytime; **no reminders are sent.**
+2. **Quote refresh**: **refreshes every time the app opens.** Only writes `Quote`, never
+   `Snapshot` (see the split above). A failed refresh falls back to the stale price and
+   doesn't block the UI.
+3. **Can market value be edited**: see "Valuation modes" — `QUOTED` market value is
+   read-only, `MANUAL` is editable. An asset either auto-fetches a price and can't have its
+   market value edited, or it's editable but then has no market price to refresh. The two
+   are mutually exclusive, so there's no conflict like "manually edited an auto-priced asset
+   and then it got overwritten."
+4. **Base currency**: **defaults to CNY, switchable for viewing.** Stored in DataStore
+   Preferences, passed as a parameter into the net worth query — it never lands on `Asset`
+   or `Snapshot`.
+5. **Archive behavior**: **zeroed at the data layer, truncated at the display layer.** See
+   "Archiving."
+6. **Mode conversion**: `QUOTED` **is allowed to convert to `MANUAL`** after delisting. See
+   "Mode conversion."
+7. **Cost basis and unrealized gain/loss**: **in scope.** See the section below.
+8. **Classification system**: two layers — five top-level classes (the four SAA classes plus
+   Protection) + customizable subtypes. See "Asset classification system."
+9. **Allocation view**: in scope. Denominator = **total net worth** (including a primary
+   residence), liabilities are attributed and offset against their class. Target allocations
+   **can coexist as multiple sets for comparison.** See "Asset allocation."
+10. **Update timing**: already handled — `asOf` (which point in time the valuation is for)
+    and `recordedAt` (when it was entered) are already separate, supporting backfilling
+    historical data. Monthly change statistics are naturally possible without any extra field.
 
-## 成本与浮动盈亏
+## Cost basis and unrealized gain/loss
 
-**这是对 AGENTS.md 里「不做流水明细」那条边界的一个明确例外，是产品决策，不要当成越界代码删掉。**
+**This is an explicit exception to the "no transaction ledger" boundary stated in AGENTS.md.
+It's a product decision — don't treat it as scope creep and delete it.**
 
-成本记在 **`Snapshot.costBasisMinor`**（自身币种，整数最小单位），不记在 `Asset` 上。理由：
+Cost basis is recorded on **`Snapshot.costBasisMinor`** (in the asset's own currency, as an
+integer in minor units), not on `Asset`. Reasons:
 
-1. 成本本身就是"持仓状态"的一部分，和份额同层级。
-2. 加仓时改份额本来就要写一条快照，成本在同一个动作里更新，不需要额外流程。
-3. 因此**盈亏自动成为时间序列**，能画盈亏曲线。记在 `Asset` 上就只有当前一个数。
+1. Cost basis is itself part of "holdings state," at the same level as share count.
+2. Adding to a position already requires writing a new snapshot; updating cost basis in the
+   same action requires no extra workflow.
+3. As a result, **gain/loss automatically becomes a time series**, so a gain/loss curve can
+   be charted. Recording it on `Asset` would only ever give you a single current number.
 
-**两种估值模式都支持填成本、都显示收益率。** `costBasisMinor` 是独立字段，
-和 `mode` 无关 —— `QUOTED` 的股票和 `MANUAL` 的房子都能有成本。
+**Both valuation modes support entering a cost basis, and both display a return rate.**
+`costBasisMinor` is an independent field, unrelated to `mode` — a `QUOTED` stock and a
+`MANUAL` house can both have a cost basis.
 
-### 录入形式：存总成本，均价作派生
+### Input form: store total cost, average price is derived
 
-`QUOTED` 场景下用户更习惯想"成本均价 10.5 元/股"而不是"总投入 105000"。所以：
+In `QUOTED` scenarios, users tend to think in terms of "average cost of ¥10.5/share" rather
+than "total invested ¥105,000." So:
 
-- **存储只存总成本** `costBasisMinor`，这是唯一事实来源
-- **均价是派生显示值**：`成本均价 = costBasisMinor / quantityScaled`
-- **录入时两个都能填**，填均价立刻换算成总成本再存
+- **Storage only keeps total cost** `costBasisMinor` — this is the single source of truth
+- **Average price is a derived display value**: `average cost = costBasisMinor / quantityScaled`
+- **Both fields are enterable**; entering an average price immediately converts it to a
+  total cost for storage
 
-**为什么存总成本而不是存均价**：如果存均价，用户加仓时把份额从 100 改成 200 却没更新均价，
-总成本会自动变成 `均价 × 200` —— 一个他从没付过的价格，而且**不会报错**。
-反过来存总成本的话，加仓后成本只是偏旧，且派生出的均价会明显往下掉，是个看得见的信号。
+**Why store total cost rather than average price**: if average price were stored, a user
+adding to a position and changing shares from 100 to 200 without updating the average price
+would have total cost silently become `average price × 200` — a price they never actually
+paid, **and no error would be raised**. Storing total cost instead means that after adding
+to a position, the cost is merely stale, and the derived average price will visibly drop —
+a signal the user can actually see.
 
-**换算的精度**：`均价 × 份额` 是定点数相乘，结果要按最小单位取整（四舍五入）。
-副作用是用户填 10.5 存下来再读回可能显示 10.499999 —— 派生均价的展示要按合理位数取整。
+**Precision in the conversion**: `average price × shares` is a fixed-point multiplication,
+and the result must be rounded to the nearest minor unit. A side effect is that a user
+entering 10.5 and reading it back might see 10.499999 — the displayed average price should
+be rounded to a reasonable number of digits.
 
-**不做逐笔均价推算。** 我们不做「买入 100 股 @10 + 买入 50 股 @12 → 均价 10.67」这种推导 ——
-那需要逐笔交易记录，正是这个 App 不做的东西。用户填的是当前的总投入或当前的均价，
-不是让我们从历史交易里算出来。
+**We don't do lot-by-lot average-cost derivation.** We don't support deriving something like
+"bought 100 shares @10 + bought 50 shares @12 → average 10.67" — that would require
+recording every individual transaction, exactly what this app is built not to do. What the
+user enters is their current total investment or current average price, not something we
+compute from a history of trades.
 
-### 一个要知道的取舍：汇率收益不单独拆出来
+### A tradeoff worth knowing: FX gain/loss is not broken out separately
 
-成本存的是**自身币种**的金额，和 `valueMinor` 一致。所以折算到基准币种时，
-成本和市值用**同一个汇率**，汇率影响相互抵消，得到的是**纯市场盈亏**。
+Cost basis is stored in the **asset's own currency**, consistent with `valueMinor`. So when
+converting to the base currency, cost basis and market value use **the same exchange rate**,
+and the effect of the exchange rate cancels out, yielding **pure market gain/loss**.
 
-具体地，持有美股：成本 $100（当时 USD/CNY = 7.0，实际支出 ¥700），现值 $110（现在 7.2，¥792）。
+Concretely, holding a US stock: cost basis $100 (USD/CNY was 7.0 at the time, actually paid
+¥700), current value $110 (rate is now 7.2, ¥792).
 
-- 我们显示的盈亏：`(110 - 100) × 7.2 = ¥72`（纯市场收益）
-- 用户的真实人民币收益：`792 - 700 = ¥92`（含 ¥20 汇率收益）
+- The gain/loss we display: `(110 - 100) × 7.2 = ¥72` (pure market return)
+- The user's actual RMB-denominated return: `792 - 700 = ¥92` (including ¥20 of FX gain)
 
-差的那 ¥20 是汇兑收益，当前模型**不体现**。要体现就得记下成本发生时的汇率，
-而成本是多次买入累积的、没有单一时点，做起来不便宜。
+That ¥20 difference is FX gain, and the current model **does not capture it**. Capturing it
+would require recording the exchange rate at the time each cost was incurred, but cost basis
+accumulates from multiple purchases with no single point in time, which isn't cheap to
+implement.
 
-v1 先这样，并且**在 UI 上把盈亏标注成"市场盈亏"**，别让用户误以为那是人民币口径的真实收益。
-如果之后要做，方案是额外存一个基准币种口径的成本快照。
+For v1 we accept this, and **the UI labels the gain/loss as "market gain/loss"** so users
+aren't misled into thinking it's their true RMB-denominated return. If this needs to be
+addressed later, the approach would be to additionally store a cost-basis snapshot
+denominated in the base currency.
 
-## 模式转换（QUOTED → MANUAL）
+## Mode conversion (QUOTED → MANUAL)
 
-股票退市、基金清盘、或者用户就是不想再自动取价时：
+When a stock is delisted, a fund is liquidated, or the user simply doesn't want
+auto-fetched pricing anymore:
 
-1. 用最后一次有效行情算出当前市值
-2. **追加**一条 `mode = MANUAL` 的快照，`valueMinor` = 上一步算出的值，
-   `costBasisMinor` 从上一条快照结转
-3. 把 `Asset.defaultValuationMode` 改成 `MANUAL`，`defaultQuoteSymbol` 置空
+1. Compute the current market value using the last valid quote.
+2. **Append** a new snapshot with `mode = MANUAL`, `valueMinor` = the value computed in
+   step 1, and `costBasisMinor` carried forward from the previous snapshot.
+3. Change `Asset.defaultValuationMode` to `MANUAL` and clear `defaultQuoteSymbol`.
 
-**历史快照一条都不动。** 它们的 `mode` 仍是 `QUOTED`、仍带着自己的 `quoteSymbol`，
-按 `Quote` 表里的历史行情估值 —— 所以历史曲线完全不变。这就是模式记在快照上的收益。
+**Not a single historical snapshot is touched.** They keep `mode = QUOTED` and their own
+`quoteSymbol`, and are still valued against historical quotes in the `Quote` table — so the
+historical curve is completely unchanged. This is the payoff of recording mode on the
+snapshot.
 
-反向转换（MANUAL → QUOTED）同理，但要注意用户得先填对 `quoteSymbol` 和份额。
+The reverse conversion (MANUAL → QUOTED) works the same way, but the user needs to fill in
+the correct `quoteSymbol` and share count first.
 
-## 归档
+## Archiving
 
-**方案：数据层归零，展示层截断。**
+**Approach: zeroed at the data layer, truncated at the display layer.**
 
-- **数据层**：归档时追加一条终止快照（`MANUAL` 则 `valueMinor = 0`；`QUOTED` 则
-  `quantityScaled = 0`）。这样"取 ≤T 最近一条"的结转规则天然返回 0，
-  不需要在每个查询里额外判 `archivedAt` —— 否则结转会让已卖出的资产永远续下去。
-- **展示层**：该资产的详情图在**最后一条真实快照处结束**，标注"已归档"，
-  **不画那道俯冲到 0 的线**（那看起来像资产暴跌，而不是卖掉了）。
+- **Data layer**: archiving appends a terminal snapshot (`valueMinor = 0` for `MANUAL`;
+  `quantityScaled = 0` for `QUOTED`). This way the "take the most recent snapshot at or
+  before T" carry-forward rule naturally returns 0, without needing to special-case
+  `archivedAt` in every query — otherwise carry-forward would make a sold asset continue
+  forever.
+- **Display layer**: the asset's detail chart **ends at the last real snapshot** and is
+  labeled "archived," **without drawing the line diving down to 0** (which would look like
+  the asset crashed, not that it was sold).
 
-**比这个方案更要紧的一件事**：把股票归档后，卖出拿到的现金若没录进另一项资产，
-**总净值会凭空掉一笔** —— 用户看到一个自己没经历过的亏损。这是快照式模型的固有特性，
-不是 bug，但必须在 UX 上处理：**归档流程里要问一句"这笔钱去哪了？"**，
-让用户顺手把 proceeds 加到现金或其他资产上。
+**Something more important than this mechanism**: after archiving a stock, if the cash
+received from selling it isn't recorded into another asset, **total net worth will drop by
+that amount out of nowhere** — the user sees a loss they never experienced. This is an
+inherent characteristic of the snapshot-based model, not a bug, but it must be handled in
+UX: **the archive flow needs to ask "where did this money go?"** so the user can conveniently
+add the proceeds into cash or another asset.
 
-## 资产分类体系（两层）
+## Asset classification system (two layers)
 
-分成两层，因为两层解决的是不同问题：**大类**服务于资产配置比例（必须少而稳定），
-**品种**服务于记账归类（可以多且可扩展）。
+Split into two layers because they solve different problems: **top-level class** serves
+allocation percentages (needs to be few and stable), **subtype** serves bookkeeping
+categorization (can be numerous and extensible).
 
-原来那种扁平一层（"现金存款、股票、基金、债券、房产…"）把两件事混在一起了，
-既没法做配置比例，也不好扩展。
+The original flat single layer ("cash & deposits, stocks, funds, bonds, real estate...")
+conflated the two, making allocation percentages impossible and extensibility awkward.
 
-### 第一层：五大类（框架 = SAA 四大类 + 保障）
+### Layer one: five top-level classes (framework = the four SAA classes + Protection)
 
-采用战略资产配置（SAA）的四大类，加一个「保障类」适配国内配置年金险/增额寿的习惯。
+Adopts the four Strategic Asset Allocation (SAA) classes, plus a "Protection" class to fit
+the domestic habit of including annuities/whole life insurance in one's allocation.
 
-| 大类 | 含什么 |
+| Class | Includes |
 |---|---|
-| `LIQUID` 流动资金 | 微信钱包、支付宝、银行活期、货币基金、现金 |
-| `FIXED_INCOME` 固定收益 | 银行定期、国债、债券基金、银行理财、企业债 |
-| `EQUITY` 权益类 | A股、港股、美股、股票基金、指数基金、期权 |
-| `ALTERNATIVE` 另类实物 | 房产、黄金、加密货币、车辆、收藏品 |
-| `PROTECTION` 保障类 | 年金险、增额终身寿（按现金价值计值） |
+| `LIQUID` Liquid funds | WeChat Wallet, Alipay, bank checking accounts, money market funds, cash |
+| `FIXED_INCOME` Fixed income | bank time deposits, government bonds, bond funds, bank wealth management products, corporate bonds |
+| `EQUITY` Equity | A-shares, Hong Kong stocks, US stocks, equity funds, index funds, options |
+| `ALTERNATIVE` Alternatives / physical assets | real estate, gold, crypto, vehicles, collectibles |
+| `PROTECTION` Protection | annuities, whole life insurance (valued at cash value) |
 
-> 关于"权威性"：资产配置领域没有单一最高权威。SAA 四大类是机构界最通用的顶层划分，
-> 理论基础是 Markowitz 的现代投资组合理论。中文理财圈流传的「标准普尔家庭资产象限图」
-> （4321 法则）**并非标普官方发布的研究**，是营销传播中形成的说法 —— 作为通俗框架好用，
-> 但不宜当权威依据。这一点如果要在 UI 上引用来源，别写成"标普研究表明"。
+> On "authority": there is no single top authority in the asset allocation space. The four
+> SAA classes are the most commonly used top-level split in institutional practice, grounded
+> in Markowitz's Modern Portfolio Theory. The "Standard & Poor's Family Asset Quadrant"
+> (the "4-3-2-1 rule") circulated in Chinese personal-finance circles **is not an official
+> S&P publication** — it's a phrase that emerged through marketing/word of mouth. It's a
+> useful popular framework, but shouldn't be cited as an authoritative source. If this is
+> ever referenced in the UI, don't write it as "S&P research shows..."
 
-### 第二层：品种（subtype）
+### Layer two: subtype
 
-预定义一批常用的（见上表右列），**同时支持用户自定义添加**。
-品种表要有 `isBuiltIn` 标记 —— 内置的不允许删除，只能隐藏，否则历史资产会指向空品种。
+A set of common subtypes is predefined (see the right-hand column of the table above),
+**and users can also add their own.** The subtype table needs an `isBuiltIn` flag — built-in
+subtypes cannot be deleted, only hidden, otherwise historical assets would end up pointing
+at nothing.
 
-品种决定 `defaultValuationMode` 的默认值（A股默认 `QUOTED`，房产默认 `MANUAL`）。
+Subtype determines the default value of `defaultValuationMode` (A-shares default to
+`QUOTED`, real estate defaults to `MANUAL`).
 
-## 资产配置：目标比例与偏离度
+## Asset allocation: target percentages and deviation
 
-这是 App 的第二个核心视图（第一个是净值曲线）：**我的配置和预期差多少。**
+This is the app's second core view (the first is the net worth curve): **how far is my
+allocation from what I intended.**
 
-### 分母：全部净资产
+### Denominator: total net worth
 
-**已定：分母是全部净资产**（含自住房，减去负债），不是只算可投资资产。
+**Decided: the denominator is total net worth** (including a primary residence, minus
+liabilities), not just investable assets.
 
-这个选择有一个必须解决的算术问题。分母是净资产、分子是各大类资产值的话，
-**比例加起来会超过 100%**：房 300 万 + 股 100 万、房贷 200 万 → 净资产 200 万，
-房产 300/200 = 150%、股票 50%，合计 200%。饼图画不出来。
+This choice creates an arithmetic problem that has to be solved. If the denominator is net
+worth and the numerator is each class's raw asset value, **the percentages sum to more than
+100%**: a ¥3M house + ¥1M in stocks, with a ¥2M mortgage → net worth ¥2M, real estate =
+300/200 = 150%, stocks = 50%, total 200%. That can't be drawn as a pie chart.
 
-**解法：负债按归属抵扣到对应大类**，每个大类显示**净敞口**。
-
-```
-大类净敞口(class) = Σ 该类资产 - Σ 归属到该类的负债
-配置比例(class)   = 大类净敞口(class) / 净资产
-```
-
-同一例子：房产净敞口 100 万（50%）+ 股票 100 万（50%）= 100%。✅
-
-归属规则：房贷 → `ALTERNATIVE`，车贷 → `ALTERNATIVE`，
-信用卡 / 消费贷 → `LIQUID`（无抵押债务归到你会用来偿还它的那类）。
-**每条负债都必须有 `assetClass`**，否则各大类加总不等于净资产、比例不闭合。
-
-**边界情况：某大类净敞口为负**（车 10 万但车贷 15 万，或信用卡欠款超过流动资金）。
-饼图画不出负数。规则：饼图里按 0 处理并显式标注该类为负，另在明细里给出真实负值。
-**不要静默截断成 0** —— 那会掩盖一个用户真正需要知道的问题。
-
-**一个诚实的预期管理**：因为自住房计入分母，有房的用户大概会看到 `ALTERNATIVE` 占 50%+，
-而预设配置里它只有 5%~10%。这不是 bug，是"算全部净资产"的直接结果。
-如果这让配置建议失去指导意义，最便宜的修法是把自住房的 `includeInAllocation` 关掉。
-
-### TargetAllocation — 目标配置，多套并存
-
-- `id` / `name`（"稳健" / "我的 2026 计划"）/ `isBuiltIn` / `isActive`
-- 关联多条 `TargetAllocationItem`：`assetClass` + `targetPercent`
-- **允许多套同时存在并排对比**（"我现在 vs 稳健 vs 激进"），其中一套标记为生效
-- 校验：一套配置的 `targetPercent` 之和必须为 100
-
-内置预设三套（稳健 / 平衡 / 激进）。**预设值是行业常见的起点，不是权威处方**，
-且必须允许用户编辑。
-
-**内置 vs 自定义的语义**：`isBuiltIn` 只意味着「随 App 出厂、不可删除」，**不意味着不可改** ——
-domain.md 一开始就要求预设可编辑。但改坏了要能回去，所以内置的提供「恢复默认」
-（重新写入 `BUILT_IN_PRESETS` 的值）。自定义的可以删。
-
-⚠️ **产品/合规上值得注意**：一个 App 告诉用户"你应该配置 30% 权益"，在部分司法辖区
-可能被认定为投资建议。建议 UI 上把预设呈现为**通用模板**而非针对该用户的推荐，
-并避免"我们建议你…"这类措辞。这不是技术问题，但比技术问题更贵。
-
-### 偏离度
+**Solution: attribute liabilities to their corresponding class and offset them there**,
+so each class displays its **net exposure**.
 
 ```
-偏离(class) = 配置比例(class) - 目标比例(class)
+Class net exposure(class) = Σ assets in that class - Σ liabilities attributed to that class
+Allocation percent(class) = class net exposure(class) / net worth
 ```
 
-正数超配、负数低配。这是派生值，不存表。
+Same example: real estate net exposure ¥1M (50%) + stocks ¥1M (50%) = 100%. ✅
 
-## 增长率：两种口径必须分开
+Attribution rules: mortgage → `ALTERNATIVE`, auto loan → `ALTERNATIVE`, credit card /
+consumer loan → `LIQUID` (unsecured debt is attributed to whichever class you'd use to pay
+it off). **Every liability must have an `assetClass`** — otherwise the classes won't sum to
+net worth and the percentages won't close.
 
-**净值增长 ≠ 投资收益。** 这个月存了 1 万工资进去，净值涨 1 万，但那不是"赚"的。
-两个数混在一起会让用户误判自己的投资能力。
+**Edge case: a class's net exposure is negative** (a ¥100K car against a ¥150K auto loan, or
+credit card debt exceeding liquid funds). A pie chart can't render a negative slice. Rule:
+in the pie chart, treat it as 0 and explicitly label that class as negative; show the true
+negative value in the detail view. **Don't silently clamp it to 0** — that would hide
+something the user genuinely needs to know.
+
+**An honest expectation to manage**: because a primary residence counts toward the
+denominator, a homeowner will likely see `ALTERNATIVE` at 50%+, while preset target
+allocations only put it at 5–10%. This isn't a bug — it's the direct consequence of using
+total net worth. If this makes target allocations lose their usefulness as guidance, the
+cheapest fix is to turn off `includeInAllocation` for the primary residence.
+
+### TargetAllocation — target allocation, multiple sets coexist
+
+- `id` / `name` ("Conservative" / "My 2026 Plan") / `isBuiltIn` / `isActive`
+- Linked to multiple `TargetAllocationItem` records: `assetClass` + `targetPercent`
+- **Multiple sets can exist simultaneously and be compared side by side** ("current vs.
+  Conservative vs. Aggressive"), with one marked as active
+- Validation: a set's `targetPercent` values must sum to 100
+
+Three presets are built in (Conservative / Balanced / Aggressive). **The preset values are
+common industry starting points, not authoritative prescriptions**, and users must be able
+to edit them.
+
+**The semantics of built-in vs. custom**: `isBuiltIn` only means "shipped with the app,
+cannot be deleted" — **it does not mean "cannot be edited."** domain.md requires from the
+outset that presets be editable. But if a user messes one up they need a way back, so
+built-ins offer "restore defaults" (re-writing the values from `BUILT_IN_PRESETS`). Custom
+sets can be deleted.
+
+⚠️ **Worth noting from a product/compliance standpoint**: an app telling a user "you should
+allocate 30% to equities" could, in some jurisdictions, be construed as investment advice.
+It's recommended that the UI present presets as **generic templates** rather than
+recommendations tailored to that user, and avoid phrasing like "we recommend that you...".
+This isn't a technical problem, but it's costlier than one.
+
+### Deviation
 
 ```
-净值增长率 = (期末净值 - 期初净值) / 期初净值          ← 含新增投入，衡量"身价变化"
-投资收益率 = 盈亏(期末) - 盈亏(期初) / 期初成本         ← 剔除新增投入，衡量"投资水平"
+Deviation(class) = allocation percent(class) - target percent(class)
 ```
 
-第二个依赖 `costBasisMinor`（见「成本与浮动盈亏」）—— 这正是成本价的价值所在。
-UI 上两个都要显示，且**标签要写清区别**。
+Positive means overweight, negative means underweight. This is a derived value, not stored.
 
-按月 / 按季 / 按年是查询层的分组（按用户本地时区的 `LocalDate` 归组），不需要额外建表。
+## Growth rate: two measures that must be kept separate
 
-**增长率必须连基准一起显示。** 同一个"+2%"在按月/按季/按年下比的起点完全不同，
-只给百分比等于没说清这个数是什么。而且**百分比要配金额**："+2%"记不住，"+¥12,345"才记得住。
-
-## 负债率：分母是总资产
+**Net worth growth ≠ investment return.** If ¥10,000 of salary gets deposited this month,
+net worth rises by ¥10,000, but that isn't "earned." Conflating the two would let a user
+misjudge their own investing skill.
 
 ```
-负债率 = 总负债 / 总资产
+Net worth growth rate  = (ending net worth - starting net worth) / starting net worth      ← includes new contributions, measures "change in wealth"
+Investment return rate = (gain/loss(end) - gain/loss(start)) / starting cost basis         ← excludes new contributions, measures "investing skill"
 ```
 
-**分母不是净资产。** "欠的钱占身家多大比例"这个问题里，净资产做分母会在高杠杆时
-给出超过 100% 的数（100 万净资产背 200 万贷款 → 200%），读不出意义。
+The second depends on `costBasisMinor` (see "Cost basis and unrealized gain/loss") — this is
+exactly what cost basis is for.
 
-**总资产 ≤ 0 时是 null，不是 0%。** 0% 会被读成"没有负债"，而"一分资产都没有、
-只录了一笔信用卡"是完全不同的状态。这条和「无法估值不按 0 计」是同一个原则：
-**不确定/无意义的量绝不能显示成 0**。
+Both must be shown in the UI, and **the labels must make the distinction clear.**
 
-## 数据新鲜度：最近一次记录是哪天
+Monthly / quarterly / yearly grouping is done at the query layer (grouped by `LocalDate` in
+the user's local time zone), requiring no additional table.
 
-「记快照不记流水」的直接后果：**净值不会自己更新**，三个月前的记录和今天的记录
-在界面上长得一模一样。所以顶部必须显示最近一次记快照的日期和距今天数 ——
-这是用户判断"这个净值还算不算数"的唯一线索。
+**The growth rate must always be shown alongside its baseline.** The same "+2%" starts from
+a completely different point depending on whether you're looking at month/quarter/year — the
+percentage alone doesn't say what it's relative to. And **the percentage needs an amount next
+to it**: "+2%" isn't memorable, but "+¥12,345" is.
 
-**只看未归档资产的快照。** 归档会追加一条 0 值快照，那是"结束维护"的动作；
-拿它当"最近记录"会让一次归档把整个组合伪装成刚更新过。
+## Liability ratio: the denominator is total assets
 
-不替用户下"该更新了"的结论：更新节奏因人而异，月度记账的人和季度记账的人
-对"旧"的容忍度差一个数量级。
+```
+Liability ratio = total liabilities / total assets
+```
 
-## 金额与份额表示：绝不用 Double
+**The denominator is not net worth.** For the question "what fraction of my wealth is debt,"
+using net worth as the denominator would produce figures over 100% under high leverage
+(¥1M net worth carrying a ¥2M loan → 200%), which doesn't mean anything readable.
 
-金额全程 `Long` 存**最小货币单位**（分）。净值是大量数字连加，浮点误差会累积并被放大，
-而这个 App 的全部价值就在于那个总数的可信度。
+**When total assets ≤ 0, the result is null, not 0%.** 0% would be read as "no debt," which
+is a completely different state from "zero assets recorded, just one credit card entry."
+This follows the same principle as "can't-value is never shown as 0": **an
+undefined/meaningless quantity must never be displayed as 0.**
 
-份额需要小数（基金份额、加密货币），用**定点整数** `quantityScaled` + 固定 scale
-（建议 scale=8，足够覆盖 BTC 的 satoshi 级别）。**不要用 Double。**
+## Data freshness: how recent is the latest record
 
-`份额 × 单价` 是两个定点数相乘，注意先乘后除、按 scale 归一，别中途转浮点。
+A direct consequence of "snapshots, not a ledger": **net worth doesn't update itself** — a
+record from three months ago and a record from today look identical in the UI. So the top
+of the screen must show the date of the most recent snapshot and how many days ago that was
+— this is the user's only clue for judging "does this net worth figure still mean anything."
 
-## 时间处理
+**Only unarchived assets' snapshots count.** Archiving appends a zero-value snapshot, which
+is the action of "ending upkeep" for that asset; treating it as "the latest record" would let
+a single archive action make the whole portfolio look freshly updated.
 
-- 存储用 `kotlin.time.Instant`（UTC）
-- 展示和"按日/按月分组"用用户本地时区的 `LocalDate`
-- 快照的 `asOf` 语义是"这一天结束时的状态"，跨时区要一致
+We don't presume to tell the user "it's time to update": update cadence varies by person —
+someone who tracks monthly and someone who tracks quarterly have wildly different tolerances
+for what counts as "stale."
 
-## 实现时容易写错的地方
+## Representing amounts and shares: never use Double
 
-1. **估值分支看 `Snapshot.mode`，不看 `Asset.defaultValuationMode`。** 这是模式转换和
-   历史正确性的关键，写反了在有转换发生前都不会报错，之后静默算错。
-2. **归档的 0 值快照要参与结转，但不要画进详情图。** 两处逻辑分别在数据层和展示层，别混。
-3. **盈亏的分母可能是 0 或 null。** 没填成本、以及负债，都不参与盈亏。
-4. **`份额 × 单价` 是两个定点数相乘**，先乘后除按 scale 归一，中途不要转浮点。
-5. **每条快照是完整状态而非增量。** 用户只改市值时，`costBasisMinor` 要从上一条预填带过来，
-   不要留空 —— 留空等于把成本抹掉。
-5b. **改份额的流程里要同时提示更新成本。** 加仓意味着又投了钱，份额涨了而成本没涨，
-   收益率会虚高。既然改份额本来就要写一条新快照，就在同一个表单里把成本一起收 ——
-   让"成本忘记更新"在结构上难以发生，而不是靠用户自觉。
-6. **配置比例的分子是「净敞口」，不是资产总额。** 忘了减归属负债，各大类加总会超过 100%。
-7. **每条负债都必须有 `assetClass`。** 漏了会让比例不闭合，而且不会报错 —— 只是数字悄悄不对。
-8. **净值增长率和投资收益率是两个不同的数**，别用一个糊弄两处 UI。
+Amounts are stored entirely as `Long` in **minor currency units** (cents). Net worth is a
+large sum of additions, and floating-point error accumulates and gets amplified — and the
+entire value of this app rests on that final total being trustworthy.
+
+Shares need fractional values (fund units, crypto), represented as a **fixed-point integer**
+`quantityScaled` with a fixed scale (recommend scale=8, enough to cover BTC down to the
+satoshi level). **Never use Double.**
+
+`shares × unit price` is a multiplication of two fixed-point numbers — multiply before
+dividing, normalize by the scale, and never convert to floating point along the way.
+
+## Time handling
+
+- Storage uses `kotlin.time.Instant` (UTC)
+- Display and "group by day/month" use `LocalDate` in the user's local time zone
+- A snapshot's `asOf` means "state as of the end of that day" — must stay consistent across
+  time zones
+
+## Easy mistakes to make when implementing this
+
+1. **Valuation must branch on `Snapshot.mode`, not `Asset.defaultValuationMode`.** This is
+   the crux of mode conversion and historical correctness — getting it backwards won't raise
+   any error until a conversion actually happens, and will then silently compute wrong values
+   from then on.
+2. **The archive's zero-value snapshot must participate in carry-forward, but must not be
+   drawn on the detail chart.** These two pieces of logic belong to the data layer and the
+   display layer respectively — don't conflate them.
+3. **The denominator for gain/loss can be 0 or null.** Assets with no cost basis entered, and
+   liabilities, don't participate in gain/loss.
+4. **`shares × unit price` is a multiplication of two fixed-point numbers** — multiply before
+   dividing, normalize by scale, never convert to floating point along the way.
+5. **Each snapshot is a complete state, not a delta.** When a user only changes market value,
+   `costBasisMinor` must be pre-filled forward from the previous snapshot — leaving it blank
+   is equivalent to erasing the cost basis.
+5b. **The flow for changing share count should also prompt for updating cost basis.** Adding
+   to a position means more money was invested; if shares go up but cost basis doesn't, the
+   return rate will look inflated. Since changing shares already requires writing a new
+   snapshot, collect cost basis in the same form — make "forgot to update cost basis"
+   structurally hard to happen, rather than relying on the user remembering.
+6. **The numerator for allocation percentage is "net exposure," not raw asset total.**
+   Forgetting to subtract attributed liabilities makes the classes sum to more than 100%.
+7. **Every liability must have an `assetClass`.** Missing one makes the percentages fail to
+   close, silently, with no error raised.
+8. **Net worth growth rate and investment return rate are two different numbers** — don't use
+   one to stand in for both in the UI.

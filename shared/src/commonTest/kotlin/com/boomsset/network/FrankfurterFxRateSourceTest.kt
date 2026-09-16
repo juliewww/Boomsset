@@ -15,10 +15,10 @@ import kotlinx.datetime.LocalDate
 import kotlin.test.Test
 
 /**
- * 用 MockEngine，**测试绝不打真网络**。
+ * Uses MockEngine -- **tests must never hit the real network**.
  *
- * 这里的响应报文是从真实 API 抓下来的（`api.frankfurter.dev`），
- * 包括周末那个案例 —— 那不是我编的，是实测确认的行为。
+ * The response payloads here were captured from the real API (`api.frankfurter.dev`),
+ * including the weekend case -- that wasn't made up, it's behavior confirmed by a real test run.
  */
 class FrankfurterFxRateSourceTest {
 
@@ -34,8 +34,8 @@ class FrankfurterFxRateSourceTest {
     }
 
     @Test
-    fun `解析区间响应`() = runTest {
-        // 区间报文的 rates 是**两层**（日期 → 币种 → 汇率），和单日的一层不一样
+    fun `parses a date-range response`() = runTest {
+        // A range response's rates are **two levels deep** (date -> currency -> rate), unlike a single-day response's one level
         val body = """{"amount":1.0,"base":"CNY","start_date":"2026-06-29","end_date":"2026-07-01",
             "rates":{"2026-06-29":{"USD":0.14719},"2026-06-30":{"USD":0.14737},
             "2026-07-01":{"USD":0.14718}}}"""
@@ -45,17 +45,17 @@ class FrankfurterFxRateSourceTest {
         rates.size shouldBe 3
         rates.map { it.asOfDay } shouldBe
             listOf("2026-06-29", "2026-06-30", "2026-07-01")
-        // 0.14719 → scale 8 定点。**没有经过 Double。**
+        // 0.14719 -> scale-8 fixed point. **Never passes through a Double.**
         rates.first().rate shouldBe ExchangeRate(14_719_000)
         rates.first().base shouldBe "CNY"
         rates.first().quote shouldBe "USD"
     }
 
     @Test
-    fun `日期取自报文的key而不是请求的区间`() = runTest {
-        // 实测：请求 2026-08-29..2026-08-30（周六周日），ECB 没有数据，
-        // 服务方把区间挪到 08-28（周五）再返回。存请求日期会把汇率错误归到
-        // ECB 从未发布的那两天
+    fun `the date is taken from the response's key, not the requested range`() = runTest {
+        // Observed behavior: requesting 2026-08-29..2026-08-30 (Saturday/Sunday), the ECB has
+        // no data, and the service shifts the range back to 08-28 (Friday) before responding.
+        // Storing the requested date would misattribute the rate to two days the ECB never published
         val body = """{"amount":1.0,"base":"CNY","start_date":"2026-08-28",
             "end_date":"2026-08-28","rates":{"2026-08-28":{"USD":0.14879}}}"""
 
@@ -66,8 +66,8 @@ class FrankfurterFxRateSourceTest {
     }
 
     @Test
-    fun `一天的区间也走同一条路径`() = runTest {
-        // start == end 是合法请求（实测），所以不需要再留一个单日接口
+    fun `a one-day range goes through the same code path`() = runTest {
+        // start == end is a valid request (confirmed by testing), so there's no need to keep a separate single-day endpoint
         val body = """{"amount":1.0,"base":"CNY","start_date":"2026-09-03",
             "end_date":"2026-09-03","rates":{"2026-09-03":{"USD":0.14883}}}"""
 
@@ -79,8 +79,8 @@ class FrankfurterFxRateSourceTest {
     }
 
     @Test
-    fun `汇率精度不因浮点丢失`() = runTest {
-        // 一个 Double 表示不精确的值
+    fun `exchange rate precision is not lost to floating point`() = runTest {
+        // A value that a Double cannot represent exactly
         val body = """{"amount":1.0,"base":"USD","start_date":"2026-07-01",
             "end_date":"2026-07-01","rates":{"2026-07-01":{"CNY":7.12345678}}}"""
         val rates = source(jsonEngine(body))
@@ -90,18 +90,18 @@ class FrankfurterFxRateSourceTest {
     }
 
     @Test
-    fun `同币种不发请求也不造记录`() = runTest {
+    fun `the same currency on both sides sends no request and creates no records`() = runTest {
         var called = false
         val engine = MockEngine { called = true; respondError(HttpStatusCode.InternalServerError) }
 
-        // 估值层对同币种直接用 IDENTITY，不需要落库
+        // The valuation layer uses IDENTITY directly for same-currency pairs; nothing needs to be persisted
         source(engine).fetchRange("CNY", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
             .isEmpty() shouldBe true
         called shouldBe false
     }
 
     @Test
-    fun `区间反过来时不发请求`() = runTest {
+    fun `no request is sent when the range is reversed`() = runTest {
         var called = false
         val engine = MockEngine { called = true; respondError(HttpStatusCode.InternalServerError) }
 
@@ -110,19 +110,19 @@ class FrankfurterFxRateSourceTest {
         called shouldBe false
     }
 
-    // ---------- 失败路径：一律返回空列表，让调用方退回 stale 汇率 ----------
+    // ---------- Failure paths: always return an empty list, letting the caller fall back to a stale rate ----------
 
     @Test
-    fun `HTTP 错误返回空列表而不是抛异常`() = runTest {
+    fun `an HTTP error returns an empty list instead of throwing`() = runTest {
         val engine = MockEngine { respondError(HttpStatusCode.TooManyRequests) }
         source(engine).fetchRange("USD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
             .isEmpty() shouldBe true
     }
 
     @Test
-    fun `不支持的币种返回空列表而不是当成一比一`() = runTest {
-        // TWD 不在 ECB 列表里，每天的 map 里都没有它。
-        // 绝不能退化成 1:1 —— 那会把台币资产按人民币等额计入净值。
+    fun `an unsupported currency returns an empty list instead of being treated as 1-to-1`() = runTest {
+        // TWD isn't in the ECB's list, so it's absent from every day's map.
+        // It must never degrade to 1:1 -- that would count a TWD asset toward net worth at face value in CNY.
         val body = """{"amount":1.0,"base":"TWD","start_date":"2026-07-01",
             "end_date":"2026-07-02","rates":{"2026-07-01":{},"2026-07-02":{}}}"""
         source(jsonEngine(body))
@@ -131,14 +131,14 @@ class FrankfurterFxRateSourceTest {
     }
 
     @Test
-    fun `响应不是合法JSON时返回空列表`() = runTest {
+    fun `an invalid-JSON response returns an empty list`() = runTest {
         source(jsonEngine("not json at all"))
             .fetchRange("USD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))
             .isEmpty() shouldBe true
     }
 
     @Test
-    fun `响应缺rates字段时返回空列表`() = runTest {
+    fun `a response missing the rates field returns an empty list`() = runTest {
         val body = """{"amount":1.0,"base":"USD","start_date":"2026-07-01"}"""
         source(jsonEngine(body))
             .fetchRange("USD", "CNY", LocalDate(2026, 7, 1), LocalDate(2026, 7, 2))

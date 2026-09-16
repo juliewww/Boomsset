@@ -29,11 +29,13 @@ import com.boomsset.ui.theme.chartColors
 import kotlinx.datetime.LocalDate
 
 /**
- * 「加载更多」一次放出多少条。
+ * How many records "load more" releases at a time.
  *
- * 按**条数**而不是按时间窗口分页：更新频率因人而异，按季度记账的人「近半年」只有两条
- * （展开了跟坏了一样），每天记的人半年有上百条（一次全渲染）。条数对两种节奏都稳定，
- * 也是移动端列表的通行做法。
+ * Paginated by **record count** rather than a time window: update frequency varies a lot by
+ * user — someone recording quarterly might have only two records in "the last six months"
+ * (expanding it would look broken), while someone recording daily might have hundreds in six
+ * months (rendering them all at once). Count-based pagination is stable for both cadences, and
+ * it's also the conventional approach for mobile lists.
  */
 internal const val HISTORY_PAGE_SIZE = 20
 
@@ -43,14 +45,18 @@ private const val HISTORY_TOOLTIP =
         "记录会一直保留：净值曲线就是从这些快照算出来的，删掉旧记录等于把过去的净值一起删掉。"
 
 /**
- * 资产页底部的「更新记录」。
+ * The "update history" section at the bottom of the assets page.
  *
- * 写成 [LazyListScope] 的扩展而不是一个独立 `@Composable` —— 记录可能有几百上千条，
- * 塞进一个 `Column` 会一次性组合完全部行。挂进资产页那个已有的 `LazyColumn` 才能按需组合。
+ * Written as a [LazyListScope] extension rather than a standalone `@Composable` — there could be
+ * hundreds or thousands of records, and stuffing them into a `Column` would compose every row at
+ * once. Attaching it to the assets page's existing `LazyColumn` allows on-demand composition.
  *
- * **这一段是无条件挂在列表末尾的，不在任何 `if (isEmpty)` 分支里面。** 全部资产都归档时
- * 资产页走的是空态文案那一支，但归档记录恰恰都在这里 —— 挂进分支就等于「一归档完就看不见
- * 自己归了什么」。这是 AGENTS.md 那条「空状态不能走一条不包含入口的渲染分支」的同一个坑。
+ * **This section is attached unconditionally at the end of the list, not inside any
+ * `if (isEmpty)` branch.** When all assets are archived, the assets page takes the empty-state
+ * text branch, but the archive records are exactly what live here — attaching it inside that
+ * branch would mean "the moment you finish archiving, you can no longer see what you archived".
+ * This is the same pitfall as AGENTS.md's rule that "an empty state must not take a rendering
+ * branch that omits the entry point".
  */
 internal fun LazyListScope.updateHistorySection(
     history: List<UpdateRecord>,
@@ -67,8 +73,9 @@ internal fun LazyListScope.updateHistorySection(
             Modifier.fillMaxWidth().padding(top = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 和「查看 N 项已归档 / 收起已归档」同一种写法 —— 同一页里的两个折叠区
-            // 不该一个用箭头图标、一个用换文字。
+            // Same pattern as "view N archived / collapse archived" — the two collapsible
+            // sections on the same page shouldn't use different conventions (one an arrow icon,
+            // the other swapped text).
             TextButton(onClick = onToggleExpanded) {
                 Text(
                     if (expanded) "收起更新记录" else "查看更新记录（${history.size} 条）",
@@ -100,15 +107,20 @@ internal fun LazyListScope.updateHistorySection(
 }
 
 /**
- * 一条记录一行。
+ * One record per row.
  *
- * 每种变化各占一行，不并排 —— `¥12,345,678.00 → ¥12,999,999.00` 这样一串在 360dp 的屏上
- * 已经占掉大半行宽，再并上成本变化必然断行（AGENTS.md 教训 17：中文界面要按最窄屏量）。
+ * Each kind of change gets its own line rather than being placed side by side — a string like
+ * `¥12,345,678.00 → ¥12,999,999.00` already takes up most of a row's width on a 360dp screen;
+ * putting the cost-basis change next to it would force a line break (AGENTS.md lesson 17:
+ * Chinese-text layouts must be measured against the narrowest screen).
  *
- * ⚠️ **金额一律用资产自己的币种 [com.boomsset.domain.Asset.currency]，不折算到基准币种。**
- * 快照里存的就是自身币种下的数；折算历史金额要用**当时**的汇率，而汇率回补是按持仓区间做的、
- * 不保证每条记录那天都有 —— 缺一条就得显示「无法估值」，把一栏本来完全确定的原始记录
- * 弄成有洞的。原始记录就该原样显示。
+ * ⚠️ **Amounts are always shown in the asset's own currency
+ * [com.boomsset.domain.Asset.currency], never converted to the base currency.** The snapshot
+ * stores the number in its own currency as-is; converting a historical amount would require the
+ * exchange rate **at that time**, and FX backfilling is done over the holding period's date
+ * range, not guaranteed to cover every single record's day — missing even one would force
+ * showing "can't be valued", turning a column of otherwise perfectly certain raw records into
+ * one full of holes. Raw records should be shown exactly as recorded.
  */
 @Composable
 private fun UpdateRecordRow(record: UpdateRecord, today: LocalDate) {
@@ -128,8 +140,9 @@ private fun UpdateRecordRow(record: UpdateRecord, today: LocalDate) {
                     .clip(CircleShape)
                     .background(chartColors.of(record.asset.assetClass)),
             )
-            // weight 给**名字**，日期永远完整 —— 净值页顶部卡片那条同样的取舍：
-            // Row 先按完整宽度量没有 weight 的子项，所以不够宽时折的是名字，不是日期。
+            // weight goes to the **name**, the date is always shown in full — the same tradeoff
+            // as the net worth page's top card: Row measures non-weighted children at their full
+            // width first, so when space is tight it's the name that wraps, not the date.
             Text(
                 record.asset.name,
                 style = MaterialTheme.typography.bodyMedium,
@@ -160,8 +173,10 @@ private fun UpdateRecordRow(record: UpdateRecord, today: LocalDate) {
             )
         }
 
-        // 成本变了才显示。份额没动而成本动了同样有意义（用户在修正填错的成本），
-        // 所以判据是「成本本身变了」，不是「份额变了顺带看看成本」。
+        // Only shown when the cost basis actually changed. It's still meaningful when the
+        // quantity didn't move but the cost did (the user is correcting a mis-entered cost),
+        // so the condition is "the cost basis itself changed", not "quantity changed, so also
+        // check the cost in passing".
         val costBefore = record.previousCost
         val costAfter = record.cost
         if (costBefore != null && costAfter != null && costBefore != costAfter) {
@@ -185,12 +200,15 @@ private fun UpdateRecordRow(record: UpdateRecord, today: LocalDate) {
 }
 
 /**
- * 主变化那一段文字。
+ * The main change-description text.
  *
- * **变化量不上色。** 这一栏里资产和负债混在一起，而红涨绿跌说的是「涨没涨」不是「好不好」——
- * 房贷从 ¥100 万降到 ¥95 万会被涂成「跌」的颜色，读起来像坏消息。前值和新值都摆着，
- * 箭头方向已经把变化说清楚了，颜色在这里只会添乱。
- * （盈亏那边可以上色，是因为「盈」和「亏」本身就没有歧义。）
+ * **The amount of change is not color-coded.** This column mixes assets and liabilities
+ * together, and the convention "red = up, green = down" reflects "did it go up" not "is this
+ * good" — a mortgage dropping from ¥1,000,000 to ¥950,000 would get painted the "down" color,
+ * reading like bad news. With both the before and after values shown, the arrow direction
+ * already makes the change clear, and color here would only add confusion.
+ * (The gain/loss section, by contrast, can be color-coded, because "gain" and "loss" are
+ * unambiguous on their own.)
  */
 private fun UpdateRecord.primaryChangeText(currency: String): String {
     val quantity = quantity

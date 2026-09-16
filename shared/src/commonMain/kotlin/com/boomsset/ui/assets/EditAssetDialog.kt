@@ -28,7 +28,7 @@ import com.boomsset.domain.AssetEditPolicy
 import com.boomsset.domain.AssetSubtype
 import com.boomsset.domain.AssetValuation
 
-/** 编辑后的资产元信息。 */
+/** The asset metadata after editing. */
 data class AssetMetaEdit(
     val name: String,
     val assetClass: AssetClass,
@@ -38,10 +38,10 @@ data class AssetMetaEdit(
 )
 
 /**
- * 编辑资产元信息。
+ * Edit asset metadata.
  *
- * 币种在有历史记录后会被锁住，并且**说明原因** —— 见 [AssetEditPolicy]。
- * 只把控件禁掉而不解释，用户会以为是 bug。
+ * The currency field gets locked once there's history, and **the reason is stated** — see
+ * [AssetEditPolicy]. Just disabling a control without explanation would make users think it's a bug.
  */
 @Composable
 fun EditAssetDialog(
@@ -63,7 +63,8 @@ fun EditAssetDialog(
     val currencyEditable = AssetEditPolicy.canChangeCurrencyAndLiability(valuation.snapshotCount)
     val classSubtypes = subtypes.filter { it.assetClass == assetClass }
 
-    // 换了大类之后原来的品种就不属于这个类了，自动落到该类的第一个
+    // After switching classes, the previous subtype no longer belongs to this class, so it falls
+    // back automatically to the first subtype of this class
     val effectiveSubtypeId = if (classSubtypes.any { it.id == subtypeId }) {
         subtypeId
     } else {
@@ -156,7 +157,7 @@ fun EditAssetDialog(
                     }
                 }
                 if (!currencyEditable) {
-                    // 说清为什么锁住，而不是只把 chip 变灰
+                    // State clearly why it's locked, rather than just graying out the chip
                     Text(
                         AssetEditPolicy.lockedReason(valuation.snapshotCount),
                         style = MaterialTheme.typography.labelSmall,

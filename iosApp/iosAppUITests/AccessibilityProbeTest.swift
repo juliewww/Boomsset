@@ -1,21 +1,22 @@
 import XCTest
 
-/// 探测性测试：**先确认 XCUITest 到底能不能看到 Compose Multiplatform 的元素。**
+/// Probe test: **first confirm whether XCUITest can even see Compose Multiplatform elements.**
 ///
-/// CMP 在 iOS 上把整个界面画在一个 Skia canvas 上，XCUITest 靠无障碍元素定位控件。
-/// 如果 Compose 的 semantics 没有映射到 UIAccessibility，XCUITest 就什么都找不到，
-/// 那么写一堆交互测试是白费功夫 —— 所以先只验这一件事。
+/// CMP on iOS renders the entire UI onto a single Skia canvas, and XCUITest locates
+/// controls via accessibility elements. If Compose's semantics don't map to
+/// UIAccessibility, XCUITest will find nothing at all, making a whole suite of
+/// interaction tests pointless —— so verify this one thing first.
 final class AccessibilityProbeTest: XCTestCase {
 
     func testDumpAccessibilityTree() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // 给 Compose 首帧留时间
+        // Give Compose time to render its first frame
         _ = app.wait(for: .runningForeground, timeout: 10)
         Thread.sleep(forTimeInterval: 3)
 
-        // 把整棵树打出来 —— 这就是这次探测的产出
+        // Dump the whole tree —— this is the actual output of this probe
         print("=== ACCESSIBILITY TREE START ===")
         print(app.debugDescription)
         print("=== ACCESSIBILITY TREE END ===")
@@ -25,7 +26,7 @@ final class AccessibilityProbeTest: XCTestCase {
         print("buttons: \(app.buttons.count)")
         print("otherElements: \(app.otherElements.count)")
 
-        // 找我们自己的文案
+        // Look for our own copy
         let title = app.staticTexts["猪满仓"]
         let emptyHint = app.staticTexts["还没有资产"]
         print("找到「猪满仓」: \(title.exists)")

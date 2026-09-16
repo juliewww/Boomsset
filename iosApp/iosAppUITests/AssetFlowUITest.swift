@@ -1,13 +1,14 @@
 import XCTest
 
-/// iOS 上的交互流程验证。
+/// Interaction flow verification on iOS.
 ///
-/// 为什么需要这个：项目里五个「实跑才发现」的 bug 全是在 Android 上点出来的。
-/// 大部分在共享层，所以 iOS 也一并修好了 —— 但 iOS 特有的行为
-/// （Compose 在 Skia canvas 上的输入、键盘、无障碍映射）从来没有人验过。
+/// Why this is needed: all five "only found by actually running it" bugs in this
+/// project were caught on Android. Most were in the shared layer, so they got fixed
+/// for iOS too —— but iOS-specific behavior (Compose input on a Skia canvas,
+/// keyboard, accessibility mapping) had never been verified by anyone.
 ///
-/// 前提已探明：CMP 的 semantics 会映射到 UIAccessibility，所以 XCUITest 能定位到
-/// Compose 画出来的控件（见 AccessibilityProbeTest 的输出）。
+/// Precondition already established: CMP's semantics do map to UIAccessibility, so
+/// XCUITest can locate the controls Compose renders (see AccessibilityProbeTest's output).
 final class AssetFlowUITest: XCTestCase {
 
     private var app: XCUIApplication!
@@ -15,13 +16,14 @@ final class AssetFlowUITest: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        // 每个测试从干净状态开始 —— 上一个测试建的资产不能影响下一个
+        // Each test starts from a clean state —— assets created by the previous test must not affect the next
         app.launchArguments = ["-uitest-reset"]
         app.launch()
         _ = app.wait(for: .runningForeground, timeout: 15)
     }
 
-    /// 等元素出现，失败时把当前树打出来 —— 否则「找不到元素」这条报错毫无线索
+    /// Waits for an element to appear; dumps the current tree on failure —— otherwise an
+    /// "element not found" failure gives no clue at all
     private func waitFor(
         _ element: XCUIElement,
         _ label: String,
@@ -36,13 +38,15 @@ final class AssetFlowUITest: XCTestCase {
 
     func testEmptyStateShowsOnboarding() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
-        // 三个 tab 都在
+        // All three tabs are present
         XCTAssertTrue(app.buttons["净值"].exists)
         XCTAssertTrue(app.buttons["配置"].exists)
         XCTAssertTrue(app.buttons["资产"].exists)
 
-        // 加号在"资产"页，不在"净值"页 —— 添加资产是资产页在做的事，
-        // 放在净值页（一个只读的趋势概览）会让用户在错的地方找入口（实机反馈）。
+        // The add button lives on the "Assets" tab, not "Net Worth" —— adding an asset
+        // is something the Assets tab does; putting it on the Net Worth tab (a read-only
+        // trend overview) would make users look for the entry point in the wrong place
+        // (real-device feedback).
         app.buttons["资产"].tap()
         XCTAssertTrue(app.buttons["＋"].exists, "资产页空状态下加号必须可见")
     }
@@ -51,18 +55,18 @@ final class AssetFlowUITest: XCTestCase {
         waitFor(app.staticTexts["还没有资产"], "空状态")
 
         app.buttons["配置"].tap()
-        // 配置页在零资产时也显示标题和目标比例，不再是一行"去添加资产"
+        // The Allocation tab shows its title and target percentages even with zero assets —— no longer just a single line saying "go add an asset"
         waitFor(app.staticTexts["资产配置"], "配置页")
 
         app.buttons["资产"].tap()
-        // 加号已经就在这一页了，不用再指去"净值"页
+        // The add button is already on this tab, no need to point users to "Net Worth" anymore
         waitFor(app.staticTexts["没有在持资产。点右下角加号添加。"], "资产页空态")
 
         app.buttons["净值"].tap()
         waitFor(app.staticTexts["还没有资产"], "回到净值页")
     }
 
-    /// 完整的添加资产流程 —— 对应 Android 上验过的那条
+    /// The complete add-asset flow —— mirrors the one verified on Android
     func testAddManualAssetComputesNetWorthAndPnL() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
         app.buttons["资产"].tap()
@@ -71,16 +75,16 @@ final class AssetFlowUITest: XCTestCase {
         waitFor(app.staticTexts["添加资产"], "添加资产页")
         pickSubtype("现金")
 
-        // 名称已由品种预填（"现金"），不用手输 —— 这正是新流程要省掉的步骤
+        // The name is already prefilled by the subtype ("现金"/Cash) —— no manual typing needed, which is exactly what the new flow set out to eliminate
         type("field-asset-amount", "100000")
         type("field-asset-cost", "95000")
 
         app.buttons["添加"].tap()
 
-        // 添加完从"资产"页弹回来（加号现在就在这一页），净值和盈亏要去"净值"页看
+        // After adding, it pops back to the "Assets" tab (the add button now lives there) —— net worth and P&L are checked on the "Net Worth" tab
         app.buttons["净值"].tap()
 
-        // 净值和盈亏都要对：100000 - 95000 = 5000，5000/95000 = 5.26%
+        // Both net worth and P&L must be correct: 100000 - 95000 = 5000, 5000/95000 = 5.26%
         waitFor(app.staticTexts["¥100,000.00"], "净值 ¥100,000.00")
         XCTAssertTrue(
             app.staticTexts["浮动盈亏 ¥5,000.00（+5.26%）"].exists,
@@ -88,22 +92,25 @@ final class AssetFlowUITest: XCTestCase {
         )
     }
 
-    /// 更新估值 —— 重点是预填格式能被自己的解析器读回（Android 上这里坏过）
+    /// Updating a valuation —— the focus here is that the prefilled value can be read back by its own parser (this used to be broken on Android)
     func testUpdateValuePrefillIsParseable() throws {
         try addCashAsset(value: "100000", cost: "95000")
 
         app.buttons["资产"].tap()
         waitFor(app.staticTexts["现金"], "资产列表里的现金")
-        // 更新估值现在有两条路：左滑露出「更新」按钮，或者直接点整行卡片。
-        // 这个测试关心的是预填格式，不是"怎么进入对话框"，所以走**最稳的那条路**——
-        // 直接点卡片。左滑手势本身的验证见 testUpdatingValueIsAVisibleAction 的注释：
-        // XCUITest 在这台模拟器上验不出 `SwipeToDismissBox` 的拖拽手势，不代表功能没做对。
+        // There are now two ways to update a valuation: swipe left to reveal the
+        // "Update" button, or tap the whole row card directly. This test cares about
+        // the prefill format, not "how to get into the dialog", so it takes **the most
+        // reliable path** —— tapping the card directly. Verification of the swipe
+        // gesture itself is in the comment on testUpdatingValueIsAVisibleAction:
+        // XCUITest can't get `SwipeToDismissBox`'s drag gesture to register on this
+        // simulator, which doesn't mean the feature itself is broken.
         app.staticTexts["现金"].tap()
 
         waitFor(app.staticTexts["更新「现金」"], "更新对话框")
 
-        // 预填必须是 100000.00（不带千分位）—— 带逗号的话保存会永久禁用
-        // TextView 的 value 就是当前文本内容
+        // The prefill must be 100000.00 (no thousands separator) —— with a comma, saving would be permanently disabled
+        // A TextView's value is just its current text content
         let allText = app.debugDescription
         XCTAssertTrue(
             allText.contains("100000.00"),
@@ -118,7 +125,7 @@ final class AssetFlowUITest: XCTestCase {
             "预填绝不能带千分位 —— 解析器拒绝逗号，保存会永久禁用"
         )
 
-        // 保存按钮必须是可用的 —— 这正是 Android 上坏掉的地方
+        // The save button must be enabled —— this is exactly what was broken on Android
         let save = app.buttons["保存"]
         waitFor(save, "保存按钮")
         XCTAssertTrue(save.isEnabled, "预填值必须能被解析，否则保存永久禁用")
@@ -130,28 +137,35 @@ final class AssetFlowUITest: XCTestCase {
         app.buttons["配置"].tap()
         waitFor(app.staticTexts["资产配置"], "配置页")
 
-        // 只有一项流动资金 → 该类 100%
+        // Only one liquid-assets holding → that class is 100%
         XCTAssertTrue(app.staticTexts["100.00%"].exists, "流动资金应占 100%")
         XCTAssertTrue(app.staticTexts["净资产 ¥100,000.00"].exists)
-        // 内置预设可切换
+        // Built-in presets can be switched
         XCTAssertTrue(app.staticTexts["平衡"].exists || app.buttons["平衡"].exists)
     }
 
-    /// **偏离百分比要折算成钱。**
+    /// **Deviation percentages must be converted into money.**
     ///
-    /// 「超配 90%」不等于知道该动多少钱 —— 用户得自己拿净资产去乘（实机反馈）。
+    /// "90% overallocated" doesn't tell you how much to move —— the user would have
+    /// to multiply by net worth themselves (real-device feedback).
     ///
-    /// 场景很干净：只有 ¥100,000 现金（品种「现金」→ 流动资金），对比内置的「平衡」
-    /// （流动 10% / 固收 35%）。流动资金 100% 超配 90% → 需减 ¥90,000；
-    /// 固定收益 0% 低配 35% → 需增 ¥35,000。口径是**总净资产不变**，所以五类的
-    /// 调整额加起来正好是 0 —— 那条不变量由 `AllocationRebalanceTest` 锁着，
-    /// 这里只验它真的显示在屏幕上、而且数字没在格式化层被搞坏。
+    /// The scenario is deliberately clean: only ¥100,000 in cash (subtype "现金" →
+    /// liquid assets), compared against the built-in "平衡"/Balanced preset (10%
+    /// liquid / 35% fixed income). Liquid assets at 100% is 90% overallocated → needs
+    /// ¥90,000 reduced; fixed income at 0% is 35% underallocated → needs ¥35,000 added.
+    /// The convention is that **total net worth stays constant**, so the five classes'
+    /// adjustment amounts must sum to exactly 0 —— that invariant is locked down by
+    /// `AllocationRebalanceTest`; this test only verifies it's actually shown on screen
+    /// and that the numbers weren't mangled by the formatting layer.
     ///
-    /// ⚠️ **条形上那根目标位置的竖线验不到。** 它是 `AllocationBar` 用 Canvas 画的图形，
-    /// 不产生无障碍元素，而项目里没有 Compose UI 测试（`compose-ui-test` 在
-    /// libs.versions.toml 里声明了但从没被引入过）。改 `AllocationBar` 必须手动在
-    /// 真机/模拟器上看一眼竖线的位置对不对 —— 这和左滑手势那条缺口是同一类：
-    /// 工具链验不到的地方，诚实写下来比硬凑一个测不到东西的断言更有用。
+    /// ⚠️ **The vertical line marking the target position on the bar can't be verified
+    /// here.** It's a shape drawn by `AllocationBar` using Canvas, so it produces no
+    /// accessibility element, and the project has no Compose UI tests
+    /// (`compose-ui-test` is declared in libs.versions.toml but never actually pulled
+    /// in). Changes to `AllocationBar` require manually eyeballing the line's position
+    /// on a real device/simulator —— this is the same category of gap as the swipe
+    /// gesture: being honest about what the toolchain can't verify is more useful than
+    /// forcing an assertion that doesn't actually test anything.
     func testAllocationShowsMoneyNeededToReachTarget() throws {
         try addCashAsset(value: "100000", cost: nil)
 
@@ -166,38 +180,44 @@ final class AssetFlowUITest: XCTestCase {
             "目标 35%，低配 35.00% · 距目标 +¥35,000",
             "低配的类要给出「需增加多少钱」"
         )
-        // 净敞口的正号也要打出来 —— 原来只有负数才带符号，看不出方向
+        // The explicit plus sign on net exposure must be shown too —— it used to only carry a sign when negative, giving no sense of direction
         assertAllocationRow("净敞口 +¥100,000.00", "净敞口要带显式正号")
     }
 
-    /// 断言配置页上某一行文字存在，**必要时先滚**。
+    /// Asserts that a given line of text exists on the Allocation tab, **scrolling first if needed**.
     ///
-    /// 不能只用 `exists`：无障碍树只报可见区域内的节点，第三第四个大类的卡片
-    /// 在小屏设备上落在折线以下，`exists` 会是 false，报错看起来像"文案不对"，
-    /// 其实只是没滚到（这个坑在 [scrollUntilVisible] 的注释里已经踩过一次）。
+    /// Can't just use `exists`: the accessibility tree only reports nodes within the
+    /// visible area, and the third/fourth asset-class cards fall below the fold on
+    /// small-screen devices, so `exists` would be false and the failure would look
+    /// like "wrong copy" when it's really just "hasn't scrolled there yet" (this
+    /// exact trap is noted in the comment on [scrollUntilVisible]).
     private func assertAllocationRow(_ text: String, _ why: String) {
         if app.staticTexts[text].exists { return }
         if scrollUntilVisible(text) != nil { return }
         XCTFail("\(why)：找不到「\(text)」，实际树：\n\(app.debugDescription)")
     }
 
-    /// 回归测试：**零资产时目标配置的入口必须够得到。**
+    /// Regression test: **the target-allocation entry point must be reachable even with zero assets.**
     ///
-    /// 曾经够不到 —— `AllocationScreen` 在 `state.isEmpty` 分支只渲染一行
-    /// "还没有资产，先去「净值」页添加"，而切换/编辑/新建目标配置的唯一入口
-    /// `AllocationPicker` 写在 `else` 分支里，整块被跳过。新用户于是根本设不了目标配置，
-    /// 而那恰恰是录第一笔资产**之前**就想做的事。
+    /// It once wasn't —— `AllocationScreen`'s `state.isEmpty` branch rendered only a
+    /// single line, "还没有资产，先去「净值」页添加" ("no assets yet, go add one on
+    /// the Net Worth tab"), while `AllocationPicker`, the sole entry point for
+    /// switching/editing/creating target allocations, lived in the `else` branch and
+    /// was skipped entirely. New users therefore had no way to set a target
+    /// allocation, which is exactly what someone wants to do **before** recording
+    /// their first asset.
     ///
-    /// 和「全部归档后取消不了归档」是同一类 bug（空状态走了一条不含入口的分支），
-    /// 第三次。数据层一直是对的，所以**只有 UI 测试能抓到它** ——
-    /// `AllocationUiStateTest` 只能证明数据在。
+    /// Same category of bug as "can't un-archive after archiving everything" (the
+    /// empty state takes a branch with no entry point), the third instance of it. The
+    /// data layer was always correct, so **only a UI test can catch this** ——
+    /// `AllocationUiStateTest` can only prove the data exists.
     func testAllocationTargetsReachableWithNoAssets() throws {
         waitFor(app.staticTexts["还没有资产"], "净值页空状态")
 
         app.buttons["配置"].tap()
         waitFor(app.staticTexts["资产配置"], "配置页标题")
 
-        // 三套内置预设都能切
+        // All three built-in presets must be selectable
         for preset in ["稳健", "平衡", "激进"] {
             XCTAssertTrue(
                 app.staticTexts[preset].exists || app.buttons[preset].exists,
@@ -209,16 +229,20 @@ final class AssetFlowUITest: XCTestCase {
             "零资产时必须能新建配置"
         )
 
-        // 目标比例本身要显示出来 —— 这一页在没有数据时也该是有用的。
-        // 「平衡」的权益类目标是 40%
+        // The target percentages themselves must be shown —— this tab should be
+        // useful even with no data.
+        // The "平衡"/Balanced preset's equities target is 40%
         XCTAssertTrue(
             app.staticTexts["目标 40%"].exists,
             "零资产时应显示目标比例，实际树：\n\(app.debugDescription)"
         )
 
-        // 编辑比例/恢复默认不再常驻，长按当前目标（"平衡"）才展开 —— 常驻按钮占地方，
-        // 实机反馈要求收起来。零资产时也要能长按到，因为设目标比例恰恰是加第一笔
-        // 资产之前就想做的事。
+        // Edit-ratios/restore-defaults are no longer always-visible buttons; they only
+        // expand on a long press of the current target ("平衡") —— the always-visible
+        // buttons took up space, and real-device feedback asked for them to be
+        // collapsed. Long-pressing must still work with zero assets, since setting a
+        // target allocation is exactly what someone wants to do before adding their
+        // first asset.
         let activeTarget = app.buttons["平衡"].exists ? app.buttons["平衡"] : app.staticTexts["平衡"]
         XCTAssertTrue(activeTarget.exists, "当前目标「平衡」应可见，实际树：\n\(app.debugDescription)")
         activeTarget.press(forDuration: 1.0)
@@ -228,7 +252,7 @@ final class AssetFlowUITest: XCTestCase {
             "长按当前目标后应展开「编辑比例」，实际树：\n\(app.debugDescription)"
         )
 
-        // 编辑对话框真的打得开，不只是按钮存在
+        // The edit dialog must actually open, not just have the button exist
         editButton.tap()
         XCTAssertTrue(
             app.staticTexts["编辑「平衡」"].waitForExistence(timeout: 5),
@@ -236,23 +260,26 @@ final class AssetFlowUITest: XCTestCase {
         )
     }
 
-    /// 添加资产是**独立页面**，第一步按品种选、大类自动带出，币种是下拉。
+    /// Adding an asset is a **standalone page**; the first step is picking the
+    /// subtype, with the asset class derived automatically, and currency is a dropdown.
     ///
-    /// 三条都是实际使用后的反馈：对话框太窄放不下这个表单；币种用一排 chip
-    /// 占掉表单最显眼的一块而它几乎从不改；以及**用户不知道自己要加的东西属于哪个大类**，
-    /// 所以不该让他先选大类。
+    /// All three points are feedback from actual use: a dialog is too narrow to fit
+    /// this form; a row of currency chips hogs the most prominent spot on the form
+    /// even though currency almost never changes; and **the user doesn't know which
+    /// asset class the thing they're adding belongs to**, so they shouldn't be made
+    /// to pick the class first.
     func testAddAssetIsAFullPagePickingBySubtype() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
         app.buttons["资产"].tap()
         app.buttons["＋"].tap()
         waitFor(app.staticTexts["添加资产"], "添加资产页")
 
-        // 独立页面：底部 tab 栏在录入期间必须收起，误点会丢掉已填内容
+        // Standalone page: the bottom tab bar must be hidden while entering data, since a stray tap would discard what's been filled in
         XCTAssertFalse(app.buttons["配置"].exists, "添加页不该还显示底部 tab")
         XCTAssertTrue(app.buttons["取消"].exists, "独立页面必须有退路")
 
-        // 第一步是品种，不是大类。用户认得的名字要直接可选。
-        // 支付宝和微信钱包在第一屏（流动资金排在最前，因为最常记）
+        // Step one is the subtype, not the class. Names the user recognizes must be directly selectable.
+        // Alipay and WeChat Wallet appear on the first screen (liquid assets come first since they're recorded most often)
         for subtype in ["支付宝", "微信钱包"] {
             XCTAssertTrue(
                 app.buttons[subtype].exists || app.staticTexts[subtype].exists,
@@ -261,31 +288,31 @@ final class AssetFlowUITest: XCTestCase {
         }
         pickSubtype("支付宝")
 
-        // 大类是**结果**而不是提问 —— 选完直接告诉用户它归到哪
+        // The asset class is a **result**, not a question —— once the subtype is picked, immediately tell the user which class it falls into
         XCTAssertTrue(
             app.staticTexts["归入流动资金"].exists,
             "应显示品种带出来的大类，实际树：\n\(app.debugDescription)"
         )
-        // 名称已预填品种名
+        // Name is already prefilled with the subtype name
         XCTAssertTrue(
             app.debugDescription.contains("支付宝"),
             "名称应预填品种名"
         )
-        // 币种是下拉，不是一排 chip
+        // Currency is a dropdown, not a row of chips
         XCTAssertTrue(
             textView("field-asset-currency").exists,
             "币种应为下拉框，实际树：\n\(app.debugDescription)"
         )
     }
 
-    /// 选了负债类品种，负债开关应当自动打开 —— 不用用户再想一遍"房贷是负债"
+    /// Picking a liability subtype should auto-enable the liability toggle —— the user shouldn't have to think through "a mortgage is a liability" again
     func testLiabilitySubtypePresetsTheLiabilityFlag() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
         app.buttons["资产"].tap()
         app.buttons["＋"].tap()
         waitFor(app.staticTexts["添加资产"], "添加资产页")
 
-        // 负债自成一组、排在列表末尾 —— 滚下去应当找到
+        // Liabilities form their own group at the end of the list —— scrolling down should find it
         XCTAssertNotNil(scrollUntilVisible("负债"), "负债应当单独成组")
         pickSubtype("房贷")
 
@@ -293,39 +320,51 @@ final class AssetFlowUITest: XCTestCase {
             app.staticTexts["负债 · 从另类实物抵扣"].exists,
             "房贷应预设为负债并说明抵扣哪一类，实际树：\n\(app.debugDescription)"
         )
-        // 负债没有"成本"和"估值方式"的概念，这两块要收起来
+        // Liabilities have no concept of "cost" or "valuation mode" —— these sections should be collapsed
         XCTAssertFalse(app.staticTexts["怎么估值"].exists, "负债不该显示估值方式")
     }
 
-    /// 回归测试：**更新估值不能只有隐形入口。**
+    /// Regression test: **updating a valuation must not have only a hidden entry point.**
     ///
-    /// 最早它真的只有隐形入口（整张卡片可点，没有任何按钮）。用户想把支付宝从
-    /// 10 万改成 12 万，看到的唯一两个可点的东西是「编辑信息」和「归档」，
-    /// 自然点前者 —— 但那个对话框**根本没有金额字段**，于是合理地得出
-    /// "改不了资产"的结论。这是实际使用反馈出来的。
+    /// It once really did have only a hidden entry point (the whole card was
+    /// tappable, with no buttons at all). A user wanting to change an Alipay balance
+    /// from 100k to 120k would see only two tappable things, "Edit info" and
+    /// "Archive", and naturally tap the former —— but that dialog **has no amount
+    /// field at all**, leading them to reasonably conclude "you can't change the
+    /// asset." This came from actual usage feedback.
     ///
-    /// 后来加了常驻的「更新估值」按钮修好了这个问题；这一轮反馈又要求把它收进
-    /// 左滑手势（常驻按钮占用了快一半的卡片高度）。**这条教训不能因此被绕开**：
-    /// 卡片本身仍然整张可点、直接打开更新对话框，"更新"是**不需要发现手势**
-    /// 就能触达的核心动作；左滑露出的按钮是给知道手势的用户的快捷方式，不是唯一入口。
+    /// An always-visible "Update valuation" button was later added, fixing the
+    /// problem; this round of feedback then asked for it to be tucked into a swipe
+    /// gesture instead (the always-visible button ate up nearly half the card's
+    /// height). **This shouldn't let that lesson be sidestepped**: the card itself
+    /// is still tappable as a whole and opens the update dialog directly —— "Update"
+    /// is a core action reachable **without needing to discover a gesture**; the
+    /// button revealed by swiping left is a shortcut for users who already know the
+    /// gesture, not the only way in.
     ///
-    /// **左滑本身没有自动化断言 —— 不是没做，是这台工具链验不出来。**
-    /// 依次试过 `swipeLeft()`、坐标级 `press(forDuration:thenDragTo:)`、
-    /// 带显式速度的重载，三种手势在这台模拟器上都无法让 `SwipeToDismissBox` 的
-    /// `anchoredDraggable` 识别成一次拖拽（每次之后的无障碍树里背后的「更新/编辑/归档」
-    /// 仍是未展开状态）。但这个手势本身的识别逻辑是**纯共享 Kotlin 代码**，iOS 和 Android
-    /// 走的是同一份 `anchoredDraggable`，唯一的平台差异只在"触摸事件怎么送进来"这一层——
-    /// 在 Android 上已经用更接近真实连续触摸的 `adb shell input draganddrop`（而不是
-    /// 更粗糙的 `input swipe`）手动验证过整条链路：左滑露出按钮、点「更新」能打开
-    /// 对话框。这里的结论是"XCUITest 合成手势的力度在这台模拟器上不够"，不是
-    /// "这个功能在 iOS 上没做对"——但**这确实是自动化覆盖的一个缺口**，改这块代码时
-    /// 除了跑这条测试，还应该在真机或模拟器上手动划一下确认。
+    /// **The swipe-left gesture itself has no automated assertion —— not because it
+    /// wasn't attempted, but because this toolchain can't verify it.**
+    /// Tried, in order: `swipeLeft()`, coordinate-level `press(forDuration:thenDragTo:)`,
+    /// and the overload with explicit velocity — none of the three gestures could get
+    /// `SwipeToDismissBox`'s `anchoredDraggable` to register as a drag on this
+    /// simulator (the "Update/Edit/Archive" buttons behind it remained collapsed in
+    /// the accessibility tree every time). But the recognition logic for this gesture
+    /// is **pure shared Kotlin code** —— iOS and Android run through the exact same
+    /// `anchoredDraggable`, and the only platform difference is in how touch events
+    /// get delivered. On Android, the whole chain has already been manually verified
+    /// using `adb shell input draganddrop` (which is closer to real continuous touch
+    /// than the coarser `input swipe`): swiping left reveals the buttons, and tapping
+    /// "Update" opens the dialog. The conclusion here is "XCUITest's synthetic
+    /// gestures aren't forceful enough on this simulator," not "this feature is
+    /// broken on iOS" —— but **this is a genuine gap in automated coverage**, and
+    /// changing this code should involve manually swiping on a real device or
+    /// simulator in addition to running this test.
     func testUpdatingValueIsAVisibleAction() throws {
         try addCashAsset(value: "100000", cost: nil)
         app.buttons["资产"].tap()
         waitFor(app.staticTexts["现金"], "资产列表里的现金")
 
-        // 不需要先发现左滑手势 —— 直接点整行就能打开更新对话框
+        // No need to discover the swipe-left gesture first —— tapping the whole row directly opens the update dialog
         app.staticTexts["现金"].tap()
         waitFor(app.staticTexts["更新「现金」"], "点整行应直接打开更新对话框")
         let field = textView("field-update-amount")
@@ -333,52 +372,56 @@ final class AssetFlowUITest: XCTestCase {
         XCTAssertTrue(field.isEnabled, "更新对话框里的市值必须可改")
     }
 
-    /// 净值页的空状态要给出上手指引，而不只是"点加号"
+    /// The Net Worth tab's empty state must give onboarding guidance, not just "tap the plus button"
     func testEmptyStateExplainsHowTheAppWorks() throws {
         waitFor(app.staticTexts["还没有资产"], "空状态")
 
-        // 关键概念：记快照不记流水。不说清楚，用户会按记账 App 的预期去用
+        // Key concept: it records snapshots, not transactions. If this isn't made clear, users will treat it like a bookkeeping app
         XCTAssertTrue(
             app.staticTexts.containing(
                 NSPredicate(format: "label CONTAINS %@", "不记流水")
             ).firstMatch.exists,
             "空状态必须说明这个 App 记快照而不是记流水"
         )
-        // 三步指引都在
+        // All three onboarding steps are present
         for step in ["1", "2", "3"] {
             XCTAssertTrue(app.staticTexts[step].exists, "缺第 \(step) 步指引")
         }
     }
 
-    // MARK: - 净值页图表的三个控件
+    // MARK: - The Net Worth chart's three controls
 
-    /// 周期是**下拉**，不是一排常驻 chip；三个都能选，当前项在菜单里有勾。
+    /// The period is a **dropdown**, not a row of always-visible chips; all three are selectable, and the current one has a checkmark in the menu.
     ///
-    /// 顺带守住 AGENTS.md 教训 14 那次真实闪退：**从按月切到按季/按年会崩**。
-    /// 原因是图表模型和 UI 状态必然差一帧 —— 切换的那一帧 composition 已经拿到点数更少的
-    /// 新序列，Vico 手里还是旧模型，formatter 被问到越界的 x 就返回空串，
-    /// 而 Vico 对每个轴标签都 `check(isNotBlank())`。**只有切到更粗的粒度才会崩**
-    /// （点数变少才取得到 null），所以这里必须按「月 → 季 → 年」这个方向走一遍。
+    /// Incidentally guards against the real crash from AGENTS.md lesson 14: **switching from monthly to quarterly/yearly used to crash**.
+    /// The cause was that the chart model and UI state are necessarily one frame out
+    /// of sync —— on the frame of the switch, composition already has the new series
+    /// (with fewer points), but Vico still holds the old model; the formatter is
+    /// asked for an out-of-range x and returns an empty string, and Vico calls
+    /// `check(isNotBlank())` on every axis label. **It only crashes when switching to
+    /// a coarser granularity** (only then does the point count shrink enough to hit
+    /// null), so this test must walk through the "month → quarter → year" direction.
     func testChartPeriodIsADropdown() throws {
         try addCashAsset(value: "100000", cost: nil)
         app.buttons["净值"].tap()
 
-        // 常驻的三个 chip 应该已经不在了 —— 收进下拉正是为了把那一行还给图表
+        // The three always-visible chips should be gone now —— tucking them into a dropdown is precisely to give that row back to the chart
         waitFor(periodButton("按月"), "周期下拉按钮")
         XCTAssertFalse(
             app.buttons["按季"].exists,
             "周期应收进下拉，不该有常驻的「按季」chip，实际树：\n\(app.debugDescription)"
         )
 
-        // 按月 → 按季 → 按年，逐级变粗，每一步都不能崩
+        // Month → quarter → year, progressively coarser, must not crash at any step
         for next in ["按季", "按年"] {
             let previous = currentPeriodLabel()
             let current = periodButton(previous)
             waitFor(current, "周期下拉按钮")
             current.tap()
 
-            // 菜单会盖住按钮自己，所以当前项必须在菜单里另有标记（打勾）——
-            // 只靠"按钮上写着按月"是不够的，那块正被菜单盖着
+            // The menu covers the button itself, so the current item must be marked
+            // some other way in the menu (a checkmark) —— relying on "the button says
+            // 月/month" isn't enough since that area is covered by the menu
             XCTAssertTrue(
                 app.staticTexts["✓"].waitForExistence(timeout: 5),
                 "菜单里应给当前的「\(previous)」打勾，实际树：\n\(app.debugDescription)"
@@ -394,29 +437,34 @@ final class AssetFlowUITest: XCTestCase {
                 periodButton(next).waitForExistence(timeout: 5),
                 "选完「\(next)」按钮文字应跟着变，实际树：\n\(app.debugDescription)"
             )
-            // 切粗粒度是那次闪退的方向，确认 App 还活着
+            // Switching to a coarser granularity is the direction that used to crash — confirm the app is still alive
             XCTAssertEqual(app.state, .runningForeground, "切到「\(next)」后 App 不该退出")
         }
     }
 
-    /// 两个开关（按大类 / 趋势图）四种组合都切得动，且每种都给出**可见的**内容。
+    /// All four combinations of the two switches (by-class / trend-line) must remain operable, and each must show **visible** content.
     ///
-    /// "可见的内容"是这条测试的重点，不是"没崩"。AGENTS.md 教训 10 就是这么来的：
-    /// 只有一个取样点时折线画不出线段，图表区域里只剩坐标轴 —— 数据全对、单测全绿、
-    /// 用户看到一片空白。这里刚加完一笔资产**正好只有一个点**，所以趋势图必须
-    /// 显式说明"点不够"，而不是给一张空图。
+    /// "Visible content" is the focus of this test, not just "doesn't crash".
+    /// AGENTS.md lesson 10 came from exactly this: with only one sample point, a line
+    /// chart can't draw a segment, so the chart area shows only axes —— data all
+    /// correct, unit tests all green, and the user sees a blank space. Right after
+    /// adding one asset here there is **exactly one point**, so the trend chart must
+    /// explicitly say "not enough points" rather than render an empty chart.
     func testChartModeAndStyleSwitchesStayUsable() throws {
         try addCashAsset(value: "100000", cost: nil)
         app.buttons["净值"].tap()
         waitFor(periodButton("按月"), "周期下拉按钮")
 
-        // ① 总资产 + 柱状图（默认）：一个点也要画得出柱子（幽灵系列，教训 13）。
-        //    图表是 Skia 画的、进不了无障碍树，所以这里只能反过来断言
-        //    "没有走到那两条说明分支"，也就是图确实画了。
+        // ① Total assets + bar chart (default): a bar must be drawable even with one
+        //    point (ghost series, lesson 13). The chart is drawn by Skia and doesn't
+        //    enter the accessibility tree, so the only way to assert here is the
+        //    reverse: "it did NOT fall into either of the explanatory branches",
+        //    i.e. the chart was actually drawn.
         XCTAssertFalse(trendTooShortNote.exists, "默认是柱状图，不该提示点数不够")
 
-        // ② 按大类 + 柱状图：图例出现，五个大类都有名字
-        //    （浅色模式下几类颜色低于 3:1，名字是补偿手段，不能只有色块）
+        // ② By-class + bar chart: the legend appears, all five classes have names
+        //    (a few class colors fall below 3:1 in light mode, so the name is the
+        //    compensating mechanism — can't rely on the color swatch alone)
         toggle("按大类")
         for name in ["流动资金", "固定收益", "权益类", "另类实物", "保障类"] {
             XCTAssertTrue(
@@ -431,21 +479,21 @@ final class AssetFlowUITest: XCTestCase {
             "按大类时必须说明这张图的口径是净敞口，否则合计和上面的净值对不上会被当成算错"
         )
 
-        // ③ 按大类 + 趋势图：只有一个点，必须**明说**画不了，而不是给一张空图
+        // ③ By-class + trend line: only one point, must **explicitly say** it can't be drawn rather than show a blank chart
         toggle("趋势图")
         XCTAssertTrue(
             trendTooShortNote.waitForExistence(timeout: 5),
             "只有一个取样点时趋势图应说明原因，实际树：\n\(app.debugDescription)"
         )
 
-        // ④ 总资产 + 趋势图：同样只有一个点，说明照旧
+        // ④ Total assets + trend line: still only one point, same explanation applies
         toggle("按大类")
         XCTAssertTrue(
             trendTooShortNote.waitForExistence(timeout: 5),
             "总资产趋势图在一个点时也该说明原因，实际树：\n\(app.debugDescription)"
         )
 
-        // 切回柱状图，说明收起、图重新画出来
+        // Switching back to bar chart, the explanation collapses and the chart redraws
         toggle("趋势图")
         XCTAssertFalse(
             trendTooShortNote.waitForExistence(timeout: 2),
@@ -454,12 +502,13 @@ final class AssetFlowUITest: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "四种组合切完 App 不该退出")
     }
 
-    /// 应用锁在 iOS 上的能力判断 —— 模拟器默认没录入生物识别
+    /// App-lock capability detection on iOS —— the simulator has no biometrics enrolled by default
     func testAppLockReportsCapabilityHonestly() throws {
         waitFor(app.staticTexts["应用锁"], "应用锁开关")
 
-        // 模拟器上没录 Face ID 也没设密码 → 应当告诉用户去系统设置加，
-        // 而不是含糊地说"不可用"
+        // The simulator has neither Face ID enrolled nor a passcode set → it should
+        // tell the user to go set one up in system settings, rather than vaguely
+        // saying "unavailable"
         let notEnrolled = app.staticTexts["这台设备还没设锁屏密码或生物识别 —— 去系统设置里加上就能用了。"]
         let available = app.staticTexts["开启后每次打开猪满仓都需要验证身份。开启时会先验一次。"]
         XCTAssertTrue(
@@ -468,27 +517,30 @@ final class AssetFlowUITest: XCTestCase {
         )
     }
 
-    // MARK: - 辅助
+    // MARK: - Helpers
 
-    /// 两件探测出来的事实：
+    /// Two facts established through probing:
     ///
-    /// 1. **Compose 的 OutlinedTextField 在 iOS 无障碍树里是 `TextView`，不是 `TextField`。**
-    ///    `app.textFields` 一个都找不到。
-    /// 2. **不能靠 OutlinedTextField 的 `label` 定位** —— 它只在部分状态下映射成无障碍
-    ///    label，聚焦后就消失了（连读屏用户都会听到空白）。所以共享层给这些输入框
-    ///    加了显式的 `contentDescription`。
-    /// 3. **Compose 把 contentDescription 和可见 label 拼接**成一个无障碍 label，
-    ///    所以要前缀匹配，不能精确匹配。见 [textView]。
-    /// 输入并**收起键盘**。
+    /// 1. **Compose's OutlinedTextField shows up as `TextView` in the iOS
+    ///    accessibility tree, not `TextField`.** `app.textFields` finds none at all.
+    /// 2. **Can't rely on OutlinedTextField's `label` for lookup** —— it only maps
+    ///    to an accessibility label in some states, and disappears once focused
+    ///    (even screen-reader users would hear nothing). So the shared layer adds an
+    ///    explicit `contentDescription` to these input fields.
+    /// 3. **Compose concatenates the contentDescription with the visible label**
+    ///    into one accessibility label, so lookups must be prefix matches, not exact
+    ///    matches. See [textView].
+    /// Types text and **dismisses the keyboard**.
     ///
-    /// 不收键盘的话，下一个字段可能落在键盘下面，`tap()` 打到的是键盘 ——
-    /// 报错是 "Neither element nor any descendant has keyboard focus"，
-    /// 看起来像找不到元素，其实是点错了地方。
-    /// 换行会触发 singleLine 字段的 ImeAction.Done，从而清掉焦点。
+    /// Without dismissing the keyboard, the next field might end up under the
+    /// keyboard, and `tap()` would hit the keyboard instead —— the failure is
+    /// "Neither element nor any descendant has keyboard focus", which looks like a
+    /// missing element but is really just tapping the wrong spot.
+    /// A newline triggers ImeAction.Done on single-line fields, clearing focus.
     private func type(_ fieldId: String, _ text: String) {
         let field = textView(fieldId)
         waitFor(field, "输入框「\(fieldId)」")
-        // 元素可能在键盘下面，先滚进可见区域
+        // The element might be under the keyboard; scroll it into view first
         if !field.isHittable {
             app.swipeUp()
         }
@@ -496,45 +548,53 @@ final class AssetFlowUITest: XCTestCase {
         field.typeText(text + "\n")
     }
 
-    /// 按 contentDescription 前缀匹配。
+    /// Matches by contentDescription prefix.
     ///
-    /// **必须用前缀而不是精确匹配** —— Compose 把 `contentDescription` 和输入框的
-    /// 可见 label **拼接**成一个无障碍 label：`'field-asset-name, 名称，如「招行活期」'`。
-    /// 用 `app.textViews["field-asset-name"]` 一个都匹配不到。
+    /// **Must use a prefix match, not an exact match** —— Compose **concatenates**
+    /// the `contentDescription` with the input field's visible label into one
+    /// accessibility label: `'field-asset-name, 名称，如「招行活期」'`. Using
+    /// `app.textViews["field-asset-name"]` matches nothing.
     private func textView(_ idPrefix: String) -> XCUIElement {
         app.textViews
             .matching(NSPredicate(format: "label BEGINSWITH %@", idPrefix))
             .firstMatch
     }
 
-    /// 往下滚直到某个标签可见可点。
+    /// Scrolls down until a given label is visible and tappable.
     ///
-    /// **品种列表比一屏长，所以必须滚。** 无障碍树只报**可见区域内**的节点 ——
-    /// 屏幕外的 chip 用 `exists` 判断就是 false，报错看着像"元素不存在"，
-    /// 其实只是还没滚到。Android 的 uiautomator 同理（实测：负债那一组要滚一屏才出现）。
+    /// **The subtype list is longer than one screen, so scrolling is required.** The
+    /// accessibility tree only reports nodes **within the visible area** —— an
+    /// off-screen chip's `exists` check will be false, and the failure looks like
+    /// "element doesn't exist" when it's really just not scrolled there yet. Same
+    /// applies to Android's uiautomator (verified in practice: the liabilities group
+    /// needs a full screen of scrolling before it appears).
     private func scrollUntilVisible(_ label: String, maxSwipes: Int = 8) -> XCUIElement? {
         let window = app.windows.firstMatch
         for _ in 0...maxSwipes {
             for candidate in [app.buttons[label], app.staticTexts[label]] {
                 guard candidate.exists && candidate.isHittable else { continue }
-                // **只判 isHittable 不够。** 卡在屏幕边缘的元素 isHittable 仍是 true，
-                // 但 tap 打的是它的中心点，而那个点在可视区之外 —— 于是"点了没反应"，
-                // 比"找不到元素"难查得多（实测：滚到负债组后点房贷一直不进详情页）。
-                // 要求元素**整个**落在窗口内，上边再留出 TopAppBar 的高度。
+                // **`isHittable` alone isn't enough.** An element stuck at the edge of
+                // the screen still reports `isHittable == true`, but a tap hits its
+                // center point, which can be outside the visible area —— resulting in
+                // "tapped, nothing happened", which is much harder to debug than
+                // "element not found" (verified in practice: after scrolling to the
+                // liabilities group, tapping "mortgage" never opened the detail page).
+                // Require the element to fall **entirely** within the window, leaving
+                // extra headroom for the TopAppBar height.
                 let f = candidate.frame
                 if f.minY > window.frame.minY + 96 && f.maxY < window.frame.maxY - 24 {
                     return candidate
                 }
             }
             app.swipeUp()
-            // 惯性滚动没停时元素还在移动，立刻 tap 也会打偏。等它停下来。
+            // While inertial scrolling hasn't settled, the element is still moving, and tapping immediately would miss. Wait for it to stop.
             Thread.sleep(forTimeInterval: 0.5)
         }
         return nil
     }
 
 
-    /// 选品种。**新流程的第一步** —— 大类由品种带出，用户不用判断"现金算哪一类"。
+    /// Picks a subtype. **Step one of the new flow** —— the asset class is derived from the subtype, so the user never has to decide "which class does cash belong to".
     private func pickSubtype(_ name: String) {
         guard let chip = scrollUntilVisible(name) else {
             print(app.debugDescription)
@@ -542,37 +602,41 @@ final class AssetFlowUITest: XCTestCase {
             return
         }
         chip.tap()
-        // 选完进入详情表单，标志是那张"已选品种"卡片上的「换一个」
+        // Once picked, it moves to the detail form; the marker for that is the "change" button on the "selected subtype" card
         waitFor(app.buttons["换一个"], "详情表单")
     }
 
-    // MARK: - 图表控件的辅助
+    // MARK: - Chart control helpers
 
-    /// 只有一个取样点时趋势图给出的说明。见 [testChartModeAndStyleSwitchesStayUsable]。
+    /// The explanation the trend chart gives when there's only one sample point. See [testChartModeAndStyleSwitchesStayUsable].
     private var trendTooShortNote: XCUIElement {
         app.staticTexts.containing(
             NSPredicate(format: "label CONTAINS %@", "两个以上的取样点")
         ).firstMatch
     }
 
-    /// 周期下拉的按钮。
+    /// The period dropdown button.
     ///
-    /// **必须前缀匹配**：按钮上写的是「按月 ▾」（带那个下拉三角），
-    /// `app.buttons["按月"]` 精确匹配一个都找不到。而下拉**菜单项**没有三角，
-    /// 所以精确匹配那几个名字命中的一定是菜单项、不会误伤按钮 ——
-    /// `testChartPeriodIsADropdown` 里"不该有常驻 chip"那条断言正是靠这个区分。
+    /// **Must be a prefix match**: the button reads "按月 ▾" (with the dropdown
+    /// triangle), so an exact match on `app.buttons["按月"]` finds nothing. The
+    /// dropdown's **menu items**, on the other hand, have no triangle, so an exact
+    /// match on those names is guaranteed to hit a menu item and never mistakenly
+    /// hit the button —— that's exactly what the "no always-visible chip" assertion
+    /// in `testChartPeriodIsADropdown` relies on to tell them apart.
     private func periodButton(_ label: String) -> XCUIElement {
         app.buttons
             .matching(NSPredicate(format: "label BEGINSWITH %@", label))
             .firstMatch
     }
 
-    /// 等下拉菜单里的某一项出现。
+    /// Waits for a given item to appear in the dropdown menu.
     ///
-    /// **菜单项的元素类型探不准**（`DropdownMenuItem` 里就是一个 `Text`，可能落成
-    /// button 也可能落成 staticText），所以两种都等一等再判断 —— 不能像
-    /// `app.buttons[x].exists ? ... : ...` 那样立刻取值：菜单是弹出来的，
-    /// 判断的那一刻它可能还没画上去，于是必然落到另一个分支上去空等。
+    /// **The element type of a menu item can't be predicted reliably** (a
+    /// `DropdownMenuItem` is just a `Text` internally, which may land as a button or
+    /// as a staticText), so both are waited on before deciding —— it can't be
+    /// resolved immediately like `app.buttons[x].exists ? ... : ...`: the menu is a
+    /// popup, and at the moment of checking it might not have been drawn yet,
+    /// which would inevitably fall into the wrong branch and wait on nothing.
     private func menuItem(_ name: String, timeout: TimeInterval = 5) -> XCUIElement? {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
@@ -591,12 +655,14 @@ final class AssetFlowUITest: XCTestCase {
         return "按月"
     }
 
-    /// 点一个带文字标签的开关（「按大类」/「趋势图」）。
+    /// Taps a switch with a text label ("按大类"/by-class or "趋势图"/trend line).
     ///
-    /// 共享层给这两个 `Switch` 加了显式 `contentDescription`（标签是相邻的兄弟节点，
-    /// 不会并进开关自己的无障碍节点）。**元素类型是探不准的** —— Compose 的开关在
-    /// iOS 无障碍树里可能落成 switch / button / other，取决于 toggleable 语义怎么映射，
-    /// 所以这里逐个类型试，和 [scrollUntilVisible] 同一个思路。
+    /// The shared layer adds an explicit `contentDescription` to these two
+    /// `Switch`es (the label is a sibling node and doesn't get merged into the
+    /// switch's own accessibility node). **The element type can't be predicted
+    /// reliably** —— a Compose switch may land as switch / button / other in the iOS
+    /// accessibility tree depending on how the toggleable semantics get mapped, so
+    /// each type is tried in turn here, same approach as [scrollUntilVisible].
     private func toggle(_ name: String) {
         let predicate = NSPredicate(format: "label BEGINSWITH %@", name)
         for query in [app.switches, app.buttons, app.otherElements] {

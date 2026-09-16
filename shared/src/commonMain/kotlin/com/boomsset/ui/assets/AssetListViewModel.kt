@@ -29,23 +29,24 @@ import kotlin.time.Clock
 data class AssetListUiState(
     val loading: Boolean = true,
     val baseCurrency: String = "CNY",
-    /** 按大类分组，组内按名字。已归档的不在这里。 */
+    /** Grouped by class, sorted by name within each group. Archived assets are not included here. */
     val grouped: Map<AssetClass, List<AssetValuation>> = emptyMap(),
     val archivedCount: Int = 0,
-    /** 已归档的资产，供「取消归档」用。 */
+    /** Archived assets, used for "unarchive". */
     val archived: List<AssetValuation> = emptyList(),
     val subtypes: List<AssetSubtype> = emptyList(),
     /**
-     * 全部更新记录，最新在前。**不做保留期截断** —— 分页只在 UI 侧做，理由见
-     * [com.boomsset.domain.UpdateHistory]。
+     * All update records, newest first. **No retention-period truncation is applied** —
+     * pagination is done purely on the UI side; see [com.boomsset.domain.UpdateHistory] for why.
      */
     val history: List<UpdateRecord> = emptyList(),
     /**
-     * 今天。只被更新记录那一栏用来决定日期要不要带年份。
+     * Today. Only used by the update-history section to decide whether a date needs its year shown.
      *
-     * 加载完成前这个值取不到（还没订上 clock），但那时 [history] 也是空的、没有行会用它，
-     * 所以给个明显是占位的默认值即可 —— 真被用到了会显示成「1970年…」，一眼能看出是 bug，
-     * 不会静默地少写一个年份。
+     * This value isn't available before loading completes (the clock hasn't been subscribed to
+     * yet), but at that point [history] is also empty and no row will use it, so a default that
+     * is obviously a placeholder is enough — if it were ever actually used it would show up as
+     * "1970...", instantly recognizable as a bug, rather than silently dropping a year.
      */
     val today: LocalDate = LocalDate(1970, 1, 1),
 ) {
@@ -102,14 +103,16 @@ class AssetListViewModel(
     )
 
     /**
-     * 更新手动估值资产的市值。
+     * Update the market value of a manually-valued asset.
      *
-     * [costBasis] 由 UI 从上一条快照预填后传进来 —— **不要让它默认为 null**，
-     * 那等于把成本抹掉，收益率会凭空消失。见 docs/domain.md「实现时容易写错的地方」第 5 条。
+     * [costBasis] is passed in after the UI prefills it from the previous snapshot — **don't let
+     * it default to null**, which would wipe out the cost basis and make the return rate vanish
+     * out of nowhere. See item 5 of "easy-to-get-wrong spots" in docs/domain.md.
      *
-     * [asOf] 不给就是"现在"；给了就是**补录历史**——这条快照会落到那一天**结束时**
-     * （`endOfDayIn`，和净值曲线取样的语义一致，见 docs/domain.md「时间处理」）。
-     * `recordedAt` 不受影响，始终是真实点击"保存"的时间。
+     * If [asOf] is omitted it means "now"; if given, it means **backfilling a historical
+     * record** — this snapshot lands at the **end** of that day (`endOfDayIn`, consistent with
+     * the net-worth-curve sampling semantics; see "time handling" in docs/domain.md).
+     * `recordedAt` is unaffected and is always the actual moment "Save" was tapped.
      */
     fun updateManualValue(assetId: Long, value: Money, costBasis: Money?, asOf: LocalDate? = null) {
         viewModelScope.launch {
@@ -118,9 +121,10 @@ class AssetListViewModel(
     }
 
     /**
-     * 更新按份额计值资产的持仓。
+     * Update the holding of a share-quantity-valued asset.
      *
-     * 份额和成本一起收 —— 加仓意味着又投了钱，份额涨了而成本没涨会让收益率虚高。
+     * Quantity and cost basis are collected together — adding to a position means more money was
+     * invested; if quantity goes up but cost basis doesn't, the return rate would be inflated.
      */
     fun updateQuotedHolding(
         assetId: Long,
@@ -134,14 +138,14 @@ class AssetListViewModel(
         }
     }
 
-    /** 归档。会追加一条归零快照，历史曲线不受影响。 */
+    /** Archive. Appends a zero-value snapshot; the historical curve is unaffected. */
     fun archive(assetId: Long) {
         viewModelScope.launch { repository.archiveAsset(assetId) }
     }
 
     /**
-     * 取消归档。只清 archivedAt，那条归零快照留着 ——
-     * 所以资产会以 0 出现，用户需要自己再更新一次估值。
+     * Unarchive. Only clears archivedAt; the zero-value snapshot stays —
+     * so the asset will appear at 0, and the user needs to update its valuation again themselves.
      */
     fun unarchive(assetId: Long) {
         viewModelScope.launch { repository.unarchiveAsset(assetId) }
@@ -156,7 +160,8 @@ class AssetListViewModel(
                 subtypeId = edit.subtypeId,
                 currency = edit.currency,
                 includeInAllocation = edit.includeInAllocation,
-                // 估值模式不在这里改 —— 转换要走「追加一条新模式快照」的流程
+                // The valuation mode is not changed here — switching modes has to go through the
+                // "append a new-mode snapshot" flow
                 defaultValuationMode = valuation.asset.defaultValuationMode,
                 defaultQuoteSymbol = valuation.asset.defaultQuoteSymbol,
             )
@@ -164,14 +169,17 @@ class AssetListViewModel(
     }
 
     /**
-     * 手动设置某个行情代码今天的单价。
+     * Manually set today's unit price for a given quote symbol.
      *
-     * 存在的理由：腾讯接口是非官方的，可能失效或返回垃圾数据。没有这个入口的话，
-     * 一旦取不到价，QUOTED 资产会永久显示「无法估值」而用户毫无补救手段。
+     * Reason it exists: the Tencent quote API is unofficial and can fail or return garbage data.
+     * Without this entry point, once a price can't be fetched, a QUOTED asset would permanently
+     * show "can't be valued" with no way for the user to recover.
      *
-     * ⚠️ **写的是同一张 `quote` 表，所以当天一次成功的自动刷新会覆盖它。**
-     * 这是有意的：手动价是「自动取不到」时的兜底，真取到了市场价当然比手填的准。
-     * 想要「钉住」价格需要给 quote 加一个 is_manual 标记，那是另一个改动。
+     * ⚠️ **Writes to the same `quote` table, so a successful automatic refresh later that same
+     * day will overwrite it.** This is intentional: a manual price is a fallback for when the
+     * automatic fetch fails — a real market price is naturally more accurate than a hand-entered
+     * one. "Pinning" a price would require adding an is_manual flag to `quote`, which is a
+     * separate change.
      */
     fun setManualPrice(symbol: String, price: UnitPrice, currency: String) {
         viewModelScope.launch {

@@ -22,55 +22,67 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
 
 /**
- * 金额被藏起来时替换掉数字的占位符。
+ * Placeholder that replaces the digits when an amount is hidden.
  *
- * **固定长度，不按位数生成。** 用 `"•".repeat(digits)` 会让占位符的宽度随金额的量级变化 ——
- * 七位数和四位数一眼就能分辨，等于把"大概多少钱"这件事漏出去了，而那正是要藏的东西。
+ * **Fixed length, not generated from the digit count.** Using `"•".repeat(digits)` would
+ * make the placeholder's width vary with the amount's magnitude — a seven-digit and a
+ * four-digit number would be distinguishable at a glance, leaking "roughly how much money"
+ * out, which is exactly what's supposed to be hidden.
  *
- * 不带币种符号：符号本身没有信息量（旁边「查看币种」就写着），
- * 而拼上符号之后 `-¥••••••` 里的负号又会把方向漏出来。
+ * No currency symbol: the symbol carries no information on its own (the "view currency"
+ * control next to it already states it), and appending it would let the minus sign in
+ * `-¥••••••` leak the sign back out.
  */
 const val MASKED_AMOUNT: String = "••••••"
 
 /**
- * 金额可见时给原文、藏起来时给占位符。
+ * Returns the original text when the amount is visible, the placeholder when hidden.
  *
- * 调用方一律走这一个函数，不要各自写 `if (hidden)` —— 漏一处就是漏一个数字，
- * 而"藏了但漏一个"比"根本没藏"更糟：用户以为已经藏好了。
+ * Callers should always go through this one function rather than each writing their own
+ * `if (hidden)` — missing one spot means one leaked number, and "hidden but leaking one"
+ * is worse than "not hidden at all": the user believes it's already hidden.
  */
 fun maskAmount(hidden: Boolean, text: String): String = if (hidden) MASKED_AMOUNT else text
 
 /**
- * 眼睛图标：点一下切换"金额是否可见"。
+ * Eye icon: tap to toggle "are amounts visible."
  *
- * **图形是手画的，没有引图标依赖。** 项目里的"＋""ⓘ""▾""✓"都是直接写字形，
- * 但眼睛没有能用的字形可写：Unicode 里的 👁 是彩色 emoji（吃不到主题色、
- * 两端字体各画一个样），而"划掉的眼睛"根本没有单码点，只能靠组合字符拼，
- * 落到真机字体上不一定拼得出来。为一个图标引 material-icons-extended 又太重
- * （那个包在 CMP 上还得单独加依赖）。手画的好处是跟着 [LocalContentColor] 走，
- * 深浅色模式和卡片底色都不用另外处理。
+ * **The shape is hand-drawn, no icon dependency pulled in.** The "+"/"ⓘ"/"▾"/"✓" elsewhere
+ * in the project are all written directly as glyphs, but there's no usable glyph for an
+ * eye: Unicode's 👁 is a color emoji (doesn't pick up the theme color, and renders
+ * differently per platform font), and a "crossed-out eye" has no single code point at all —
+ * it would have to be pieced together from combining characters, which isn't guaranteed to
+ * render on real device fonts. Pulling in material-icons-extended for one icon is too heavy
+ * (that package needs a separate dependency on CMP). The advantage of hand-drawing it is
+ * that it follows [LocalContentColor] automatically, so light/dark mode and card background
+ * colors don't need separate handling.
  *
- * ⚠️ **Canvas 画的图形不产生无障碍节点**，所以 [contentDescription] 是必须的 ——
- * 不给的话读屏用户听到的只是"按钮"。描述写的是**动作**而不是状态
- * （"隐藏金额"而不是"金额可见"），因为它挂在一个按钮上，读屏读出来的应该是点下去会发生什么。
- * 这也是 UI 测试唯一能定位到它的办法。
+ * ⚠️ **Shapes drawn on Canvas don't produce accessibility nodes**, so [contentDescription]
+ * is mandatory — without it, screen reader users would just hear "button." The description
+ * states the **action**, not the state ("hide amounts" rather than "amounts visible"),
+ * because it's attached to a button — what a screen reader should announce is what happens
+ * when you tap it. This is also the only way UI tests can locate it.
  *
- * ⚠️ 图形本身**没有自动化覆盖**（和 AllocationBar 那根竖线同类的缺口）——
- * 改这里的画法必须在真机/模拟器上看一眼。
+ * ⚠️ The shape itself has **no automated coverage** (the same kind of gap as the vertical
+ * line in AllocationBar) — changing the drawing logic here must be eyeballed on a real
+ * device/simulator.
  */
 @Composable
 fun AmountVisibilityToggle(hidden: Boolean, onToggle: (Boolean) -> Unit) {
     val color = LocalContentColor.current
     IconButton(
         onClick = { onToggle(!hidden) },
-        // ⚠️ 无障碍语义要**整个自己声明**（名字 + 按钮角色 + 点击动作），别只挂一个描述。
-        // `IconButton` 把 `clickable` 装在它内部，所以外面挂的语义节点是那个可点节点的
-        // **祖先**。逐个试过、每次都拿 `uiautomator dump` 核对（不核对根本看不出来）：
-        // - `semantics { contentDescription }`：两个节点，28dp 那个有名字但 `clickable=false`，
-        //   48dp 可点的那个没名字 —— 读屏停两次，一次读出名字却点不动，一次只报"按钮"
-        // - `semantics(mergeDescendants = true)`：并成了一个 48dp 节点、有名字，
-        //   但 `clickable` 仍然是 false（动作没跟着并上来）
-        // - `clearAndSetSemantics` + 显式 `onClick`：一个节点，有名字、可点、48dp ✅
+        // ⚠️ The accessibility semantics must be **declared entirely from scratch**
+        // (name + button role + click action) — don't just attach a description.
+        // `IconButton` installs `clickable` internally, so the semantics node attached
+        // from outside is an **ancestor** of that clickable node. Tried each option in turn,
+        // verifying with `uiautomator dump` every time (there's no seeing this without it):
+        // - `semantics { contentDescription }`: two nodes — the 28dp one has a name but
+        //   `clickable=false`, the 48dp clickable one has no name — the screen reader stops
+        //   twice, once announcing the name without being able to tap, once just saying "button"
+        // - `semantics(mergeDescendants = true)`: merges into one 48dp node with a name,
+        //   but `clickable` is still false (the action doesn't get merged along with it)
+        // - `clearAndSetSemantics` + explicit `onClick`: one node, named, clickable, 48dp ✅
         modifier = Modifier
             .size(TOUCH_SIZE)
             .clearAndSetSemantics {
@@ -85,8 +97,9 @@ fun AmountVisibilityToggle(hidden: Boolean, onToggle: (Boolean) -> Unit) {
         Canvas(
             Modifier
                 .size(GLYPH_SIZE)
-                // 斜杠要在眼睛上"挖"出一条透明的缝（见下面），`BlendMode.Clear` 只有在
-                // 自己的离屏图层里才是"擦成透明"，否则会去擦整块卡片底色。
+                // The slash needs to "cut" a transparent gap through the eye (see below);
+                // `BlendMode.Clear` only erases to transparent within its own offscreen
+                // layer — otherwise it would erase the entire card background instead.
                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen },
         ) {
             val w = size.width
@@ -95,39 +108,50 @@ fun AmountVisibilityToggle(hidden: Boolean, onToggle: (Boolean) -> Unit) {
             val strokeWidth = h * STROKE
             val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
 
-            // 杏仁形的眼眶：上下两条对称的二次贝塞尔。
-            // 控制点算的是"让曲线顶点正好落在 cy ± RADIUS"：二次贝塞尔的中点是
-            // (P0 + 2·P1 + P2) / 4，两端都在 cy 上，所以 ctrlY = cy ∓ 2·RADIUS。
-            // 控制点本身会跑到画布外（被裁掉无所谓），曲线顶点仍在画布内。
+            // Almond-shaped eye outline: two symmetric quadratic Béziers, top and bottom.
+            // The control points are computed so the curve's peak lands exactly at
+            // cy ± RADIUS: a quadratic Bézier's midpoint is (P0 + 2·P1 + P2) / 4, and
+            // both endpoints sit at cy, so ctrlY = cy ∓ 2·RADIUS. The control point itself
+            // ends up off-canvas (fine, since it gets clipped), while the curve's peak
+            // stays within the canvas.
             val lens = Path().apply {
                 moveTo(0f, cy)
                 quadraticTo(w / 2f, cy - 2f * h * RADIUS, w, cy)
                 quadraticTo(w / 2f, cy + 2f * h * RADIUS, 0f, cy)
             }
             drawPath(lens, color, style = stroke)
-            // 瞳孔**只在"看得见"的状态画**。斜杠是从正中间穿过去的，而瞳孔正好在正中间 ——
-            // 两个都画的话瞳孔会被擦成左右两个小碎点（实机放大看确认过），
-            // 18dp 的方框里多两个碎点只会更乱。眼眶 + 斜杠已经足够读出"划掉了"。
+            // The pupil is **drawn only in the "visible" state**. The slash cuts straight
+            // through the center, and the pupil sits exactly at the center — drawing both
+            // would erase the pupil into two small fragments (confirmed by zooming in on a
+            // real device), and two extra fragments in an 18dp box only adds clutter. The
+            // outline + slash alone is already enough to read as "crossed out."
             if (!hidden) {
                 drawCircle(color, radius = h * PUPIL_RADIUS, center = Offset(w / 2f, cy))
             }
 
-            // 藏起来的状态多一条斜杠。**不能只靠"瞳孔填不填"之类的细微差别** ——
-            // 两个状态在 18dp 上必须一眼分得开，否则用户不知道现在是藏着还是显示着。
+            // The hidden state adds a slash. **Can't rely on a subtle difference like
+            // "whether the pupil is drawn" alone** — the two states must be distinguishable
+            // at a glance at 18dp, or the user won't know whether amounts are currently
+            // hidden or shown.
             //
-            // ⚠️ 这条斜杠**画错过一次，只有装到设备上放大才看得出来**（实机反馈"图标显示有误"）：
-            // 当时是 0.1..0.9 的短斜线，两端正好停在眼眶的曲线上，而中段又和瞳孔粘成一坨 ——
-            // 放大之后是一团缠在一起的线，读不出"眼睛被划掉"。两条都要治：
-            // 1. **贯穿到角**（0.02..0.98）：两端必须明显伸出眼眶之外，才读作"划掉"，
-            //    而不是"眼睛里多了一笔"。
-            // 2. **先擦出一条缝再画线**：用 `BlendMode.Clear` 以三倍粗的同一条线擦掉底下的
-            //    眼眶和瞳孔，斜杠才是压在眼睛"上面"的一层，而不是和它糊在一起。
-            //    Material 的 VisibilityOff 就是这么做的，这条缝是它看起来干净的关键。
+            // ⚠️ This slash **was drawn wrong once, and it only showed up when zoomed in on
+            // a real device** (real-device feedback: "the icon looks wrong"): it used to be
+            // a short line from 0.1..0.9, with both ends landing right on the eye-outline
+            // curve while the middle blended into the pupil — zoomed in, it read as a tangled
+            // knot of lines, not "eye crossed out." Two fixes were needed:
+            // 1. **Run edge to edge** (0.02..0.98): both ends must clearly extend past the
+            //    eye outline to read as "crossed out," rather than "one extra stroke inside
+            //    the eye."
+            // 2. **Erase a gap before drawing the line**: use `BlendMode.Clear` with the same
+            //    line at 3x the width to erase the outline and pupil underneath first, so the
+            //    slash sits as a layer "on top of" the eye rather than blending into it.
+            //    Material's VisibilityOff icon does exactly this — that gap is the key to why
+            //    it looks clean.
             if (hidden) {
                 val start = Offset(w * 0.02f, h * 0.98f)
                 val end = Offset(w * 0.98f, h * 0.02f)
                 drawLine(
-                    color = Color.Black, // Clear 模式下颜色不参与运算，只用它的覆盖范围
+                    color = Color.Black, // color is irrelevant under Clear mode, only its coverage area matters
                     start = start,
                     end = end,
                     strokeWidth = strokeWidth * GAP_RATIO,
@@ -146,19 +170,22 @@ fun AmountVisibilityToggle(hidden: Boolean, onToggle: (Boolean) -> Unit) {
     }
 }
 
-/** 和 [InfoTooltip] 的 (i) 一样大 —— 两个都可能出现在同一行，大小不一致会看出来。 */
+/** Same size as the (i) in [InfoTooltip] — both can appear on the same line, and a size
+ * mismatch would be noticeable. */
 private val TOUCH_SIZE = 28.dp
 private val GLYPH_SIZE = 18.dp
 
-/** 眼眶顶点离中线多远（占高度的比例）。 */
+/** How far the eye outline's peak sits from the center line (as a fraction of height). */
 private const val RADIUS = 0.30f
 private const val PUPIL_RADIUS = 0.13f
 private const val STROKE = 0.085f
 
 /**
- * 斜杠两侧那条缝有多宽 —— 擦除线是笔画的几倍粗。
+ * How wide the gap on either side of the slash is — the erase line is a multiple of the
+ * stroke width.
  *
- * 太小看不出缝，太大会把眼眶啃断成两截不相连的弧（3 倍时实机上就是这样）。
+ * Too small and the gap doesn't show; too large and it bites the outline into two
+ * disconnected arcs (which is what happened on a real device at 3x).
  */
 private const val GAP_RATIO = 2.1f
 

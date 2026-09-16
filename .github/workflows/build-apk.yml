@@ -1,18 +1,18 @@
 name: Build Android APK
 
-# 只建 Android 那一半——iOS 目标需要真正的 Xcode，GitHub 的 Linux/macOS 免费 runner
-# 上没有完整装好，硬跑只会在链接那一步失败（本地这次犯过同样的错，见 AGENTS.md）。
-# `:androidApp:assembleDebug` 不会触发任何 iOS 编译/链接任务，用便宜又快的 ubuntu-latest
-# 就够，不需要 macOS runner。
+# Only builds the Android half — the iOS target needs a real Xcode, which isn't fully set up
+# on GitHub's free Linux/macOS runners; forcing it would only fail at the linking step (we made
+# this exact mistake locally before, see AGENTS.md). `:androidApp:assembleDebug` doesn't trigger
+# any iOS compile/link tasks, so the cheap and fast ubuntu-latest is enough — no macOS runner needed.
 
-# 只手动触发——不跟着每次 push 自动跑。debug APK 不是每次改动都需要一个新包，
-# 手动 run 需要的时候再点，省 Actions 分钟数，Releases 里那份"最新构建"也不会
-# 跟着每次小改动来回抖。
+# Manual trigger only — doesn't run automatically on every push. Not every change needs a fresh
+# debug APK; click "run" manually when one is actually needed. This saves Actions minutes, and
+# keeps the "latest build" Release from churning with every small change.
 on:
   workflow_dispatch: {}
 
-# 默认的 GITHUB_TOKEN 只有只读权限——发 Release 需要显式声明 contents: write，
-# 不然 softprops/action-gh-release 那一步会报 403。
+# The default GITHUB_TOKEN is read-only — publishing a Release needs contents: write declared
+# explicitly, otherwise the softprops/action-gh-release step reports a 403.
 permissions:
   contents: write
 
@@ -29,10 +29,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # 项目锁定 compileSdk 37——`platforms;android-37` 这个包名在公开 sdkmanager
-      # 仓库里根本不存在（第一次跑直接报 "Failed to find package"），说明本地能编译
-      # 靠的是 AGP 自己按需下载 SDK 组件,不是提前用 sdkmanager 装好的。这里只接受
-      # license、不指定具体包，把下载工作交给 Gradle/AGP 自己在编译时去做。
+      # The project is pinned to compileSdk 37 — the package name `platforms;android-37` doesn't
+      # actually exist in the public sdkmanager repository (the first run failed outright with
+      # "Failed to find package"), which shows that local builds work because AGP downloads SDK
+      # components on demand itself, not because sdkmanager pre-installed them. Here we only
+      # accept the license and don't specify a concrete package, leaving the download work to
+      # Gradle/AGP at compile time.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -49,25 +51,27 @@ jobs:
           path: androidApp/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # 带 commit 短 hash 重命名一份——直接叫 androidApp-debug.apk 的话，
-      # Release 里挂的永远是同名文件，看不出这是哪次构建产出的。
+      # Rename with the short commit hash — if we just called it androidApp-debug.apk,
+      # the file attached to the Release would always have the same name, with no way
+      # to tell which build produced it.
       - name: Rename APK with commit SHA
         run: |
           mkdir -p release
           cp androidApp/build/outputs/apk/debug/androidApp-debug.apk \
              "release/boomsset-debug-${GITHUB_SHA::7}.apk"
 
-      # 一个滚动的 "debug-latest" Release，每次构建直接覆盖，而不是每次都新开一个——
-      # 这只是给自己测试用的持续 debug 包，不是正式版本号发布，堆一堆 tag 没有意义。
-      # 想保留某次构建的历史版本，去 Actions 的 workflow artifact 里翻（90 天内）。
+      # A single rolling "debug-latest" Release that gets overwritten by every build, instead of
+      # opening a new one each time — this is just a continuous debug build for my own testing,
+      # not a versioned release, so piling up tags serves no purpose. To keep a historical build,
+      # go dig it out of the Actions workflow artifacts (retained for 90 days).
       - name: Publish/update debug release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: debug-latest
           name: "Debug build (${{ github.sha }})"
           body: |
-            自动构建，不是正式版本。对应提交：${{ github.sha }}
+            Automated build, not an official release. Corresponding commit: ${{ github.sha }}
 
-            这个 Release 每次 push 到 main 都会被覆盖——只保留最新一次构建。
+            This Release is overwritten on every push to main — only the latest build is kept.
           prerelease: true
           files: release/*.apk
