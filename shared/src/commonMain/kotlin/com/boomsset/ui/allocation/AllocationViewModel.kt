@@ -22,7 +22,7 @@ import kotlin.time.Clock
 data class AllocationUiState(
     val loading: Boolean = true,
     val view: AllocationView? = null,
-    /** 全部目标配置，用于切换和对比。 */
+    /** All target allocations, used for switching and comparison. */
     val allocations: List<TargetAllocation> = emptyList(),
 ) {
     val isEmpty: Boolean get() = !loading && view?.exposures?.values?.all { it.assets.isZero } != false
@@ -65,10 +65,11 @@ class AllocationViewModel(
     }
 
     /**
-     * 保存目标比例。
+     * Save target ratios.
      *
-     * 之和必须是 100% —— UI 应当在按钮上先挡住，这里再校验一次。
-     * 不闭合的配置存进去会让偏离度全错，而且不报错。
+     * They must sum to 100% — the UI should already block this at the button, this is a second
+     * check here. Saving a configuration that doesn't sum to 100% would make every deviation
+     * value wrong, and silently so.
      */
     fun saveTargets(id: Long, targetsBp: Map<AssetClass, Int>) {
         if (targetsBp.values.sum() != TargetAllocation.TOTAL_BP) return
@@ -88,10 +89,11 @@ class AllocationViewModel(
     }
 
     /**
-     * 把内置配置恢复成出厂值。
+     * Restore a built-in allocation to its factory values.
      *
-     * 内置配置是**可编辑但不可删除**的 —— domain.md 要求预设必须允许用户改。
-     * 但改坏了要能回去，否则「稳健」这类参考基准就永久丢失了。
+     * Built-in allocations are **editable but not deletable** — domain.md requires that presets
+     * be user-editable. But if edited into a bad state, there must be a way back, otherwise a
+     * reference baseline like "conservative" would be permanently lost.
      */
     fun restoreBuiltIn(allocation: TargetAllocation) {
         val preset = BUILT_IN_PRESETS.firstOrNull { it.name == allocation.name } ?: return

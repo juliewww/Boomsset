@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  深色模式下的开屏底。**必须和 Theme.kt 的 DarkScheme.surface 同值** ——
-  不给这一份的话，深色模式会先闪一片浅色开屏再切进深色界面。
+  Splash screen background for dark mode. **Must match Theme.kt's DarkScheme.surface** —
+  without this, dark mode would briefly flash a light splash screen before switching to the dark UI.
 -->
 <resources>
     <color name="splash_bg">#16120D</color>

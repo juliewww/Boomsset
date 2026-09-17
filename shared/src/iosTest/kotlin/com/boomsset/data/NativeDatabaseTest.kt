@@ -12,15 +12,17 @@ import kotlin.test.Test
 import kotlin.test.assertFails
 
 /**
- * 在**真实 iOS 模拟器**上验证 SQLDelight 的 NativeSqliteDriver。
+ * Verifies SQLDelight's NativeSqliteDriver on a **real iOS simulator**.
  *
- * 为什么必须单独写一份：`DatabaseSchemaTest` 等三个数据库测试都在 `androidHostTest`，
- * 用的是 JVM 的 JDBC driver。它们证明了 SQL 和约束在 SQLite 上成立，但**完全没有触碰
- * iOS 的 driver**。docs/stack.md 一直把「SQLDelight 在真实 iOS 上的运行」标为未验证 ——
- * 这份测试就是来清掉那一项的。
+ * Why this must be written separately: `DatabaseSchemaTest` and the other two database
+ * tests all live in `androidHostTest`, using the JVM's JDBC driver. They prove that the
+ * SQL and constraints hold on SQLite, but **never touch the iOS driver at all**.
+ * docs/stack.md had always flagged "SQLDelight running on real iOS" as unverified —
+ * this test file is here to clear that item off the list.
  *
- * 尤其值得验的是 **CHECK 约束**：Android 和 iOS 用的是不同的 SQLite 构建，
- * 约束能不能拦住写入是运行时行为，不是编译期能保证的事。
+ * The **CHECK constraints** are especially worth verifying: Android and iOS use
+ * different SQLite builds, and whether a constraint actually blocks a write is
+ * runtime behavior, not something compile time can guarantee.
  */
 class NativeDatabaseTest {
 
@@ -31,7 +33,7 @@ class NativeDatabaseTest {
     )
 
     @Test
-    fun `native driver 能创建 schema 并写入内置数据`() {
+    fun `native driver can create the schema and write built-in data`() {
         val db = createDatabase(freshDriver())
 
         db.assetSubtypeQueries.selectAll().executeAsList() shouldHaveSize BUILT_IN_SUBTYPES.size
@@ -39,8 +41,8 @@ class NativeDatabaseTest {
     }
 
     @Test
-    fun `枚举 adapter 在 native 上双向工作`() {
-        // EnumColumnAdapter 按名字存 TEXT。Native 没有反射，这条是真的要验。
+    fun `enum adapter works in both directions on native`() {
+        // EnumColumnAdapter stores as TEXT by name. Native has no reflection, so this genuinely needs verifying.
         val db = createDatabase(freshDriver())
         val aShare = db.assetSubtypeQueries.selectAll().executeAsList().first { it.name == "A股" }
 
@@ -49,8 +51,8 @@ class NativeDatabaseTest {
     }
 
     @Test
-    fun `CHECK 约束在 iOS 的 SQLite 上同样生效`() {
-        // Android 和 iOS 是不同的 SQLite 构建，约束是否拦得住属于运行时行为
+    fun `CHECK constraints take effect on iOS's SQLite the same way`() {
+        // Android and iOS are different SQLite builds; whether a constraint blocks a write is runtime behavior
         val driver = freshDriver()
         val db = createDatabase(driver)
         val subtypeId = db.assetSubtypeQueries.selectAll().executeAsList().first().id
@@ -62,7 +64,7 @@ class NativeDatabaseTest {
         )
         val assetId = db.assetQueries.lastInsertedId().executeAsOne()
 
-        // 对照组：合法的原始 SQL 能写入，证明这条路径本身是通的
+        // Control group: legal raw SQL can be written, proving this path itself works
         driver.execute(
             null,
             "INSERT INTO snapshot(asset_id, as_of, mode, value_minor, recorded_at) " +
@@ -71,7 +73,7 @@ class NativeDatabaseTest {
         ).value
         db.snapshotQueries.selectForAsset(assetId).executeAsList() shouldHaveSize 1
 
-        // mode=QUOTED 但没有 quantity —— 必须被 CHECK 拦掉
+        // mode=QUOTED but no quantity — must be blocked by the CHECK constraint
         assertFails {
             driver.execute(
                 null,
@@ -83,7 +85,7 @@ class NativeDatabaseTest {
     }
 
     @Test
-    fun `事务和读写在 native 上正常`() {
+    fun `transactions and reads-writes work normally on native`() {
         val db = createDatabase(freshDriver())
         val allocation = db.targetAllocationQueries.selectAll().executeAsList().first()
 
@@ -97,7 +99,7 @@ class NativeDatabaseTest {
     }
 
     @Test
-    fun `按天 upsert 在 native 上同样只留一条`() {
+    fun `upsert by day likewise keeps only one entry on native`() {
         val db = createDatabase(freshDriver())
 
         db.quoteQueries.upsert("sh600519", "2026-07-29", 133_405_000_000, "CNY", 1)

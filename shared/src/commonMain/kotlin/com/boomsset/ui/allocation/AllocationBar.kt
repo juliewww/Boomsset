@@ -16,37 +16,44 @@ import com.boomsset.ui.theme.chartColors
 
 private val TRACK_HEIGHT = 10.dp
 private val MARKER_WIDTH = 3.dp
-/** 竖线上下各探出轨道这么多 —— 完全齐平的话，压在填充色上几乎看不出来。 */
+/** How far the marker line overhangs the track on each side — if perfectly flush, it would be nearly invisible against the fill color. */
 private val MARKER_OVERHANG = 3.dp
-/** 竖线外面那圈浅色描边的单边宽度。 */
+/** Width of the light halo stroke around the marker line, per side. */
 private val MARKER_HALO = 1.dp
 
 /**
- * 配置比例的条形：**填充 = 一个比例，竖线 = 另一个比例。**
+ * The allocation bar: **fill = one ratio, marker line = another ratio.**
  *
- * 替掉了原来的 `LinearProgressIndicator` —— 它画不了第二个标记，而"当前在哪、
- * 目标在哪"要放在同一根条上才比得出来（不然目标只是下面一行字，得自己在脑子里换算）。
+ * Replaces the original `LinearProgressIndicator` — it can't draw a second marker, and
+ * "where is current vs. where is target" needs to be on the same bar to be comparable
+ * (otherwise the target is just a line of text below, and the user has to do the mental math).
  *
- * ## 量程固定 0~100%，不按行自适应
+ * ## The scale is fixed at 0~100%, not per-row adaptive
  *
- * 跨行可比是这根条唯一的价值：五行用同一把尺子，「另类 71%」的条就该比「保障 10%」长。
- * 自适应量程会让两者一样长，条形就退化成纯装饰。代价是目标 5%、当前 2% 这种小数值
- * 在条上只差十几 dp，分辨勉强 —— 精确数字在同一张卡片的文字里，这个取舍是有意的。
+ * Cross-row comparability is the whole point of this bar: all five rows share the same ruler,
+ * so the "alternatives 71%" bar should be longer than the "protection 10%" bar. An adaptive
+ * scale would make them the same length and the bar would degrade into pure decoration. The cost
+ * is that small values like a 5% target / 2% current only differ by a dozen-odd dp on the bar,
+ * making them hard to distinguish — the precise numbers are in the text on the same card, so this
+ * tradeoff is intentional.
  *
- * ## 竖线的含义**不能只靠图形传达**
+ * ## The marker line's meaning **must not be conveyed by graphics alone**
  *
- * 每一行都同时显示「目标 X%」的文字（见 `ClassRow`），竖线只是让它可扫视。
- * 这是 [com.boomsset.ui.theme.ChartColors] 那条硬规则的延续：身份和数值不能只靠
- * 颜色或图形编码。**改版式时不要把那些文字去掉。**
+ * Every row also displays "target X%" as text (see `ClassRow`); the marker line is only there
+ * to make it scannable. This continues the hard rule from [com.boomsset.ui.theme.ChartColors]:
+ * identity and values must not be encoded by color or shape alone. **Don't remove that text when
+ * redesigning the layout.**
  *
- * 没有挂无障碍语义（`LinearProgressIndicator` 自带的那份进度语义因此丢了）：
- * 这一行的当前占比 / 目标 / 偏离 / 折算金额四个数都已经是可朗读的文字，
- * 再给条形加一份描述只会把同样的信息读两遍。
+ * No accessibility semantics are attached (so the progress semantics that `LinearProgressIndicator`
+ * provides out of the box are lost here): the four numbers on this row — current share / target /
+ * deviation / converted amount — are already readable text, and adding a description to the bar
+ * itself would just read the same information twice.
  *
- * @param fillBp 填充到哪个比例（基点）。null 或负数按 0 处理 —— 负净敞口画不出长度，
- *   真实数值由调用方在文字里给出。
- * @param markerBp 竖线画在哪个比例（基点）。null 就不画（零资产预览时填充本身就是目标，
- *   再画一根重合的竖线是重复）。
+ * @param fillBp Which ratio (in basis points) to fill up to. Null or negative is treated as 0 —
+ *   a negative net exposure can't be drawn as a length; the actual value is given as text by the caller.
+ * @param markerBp Which ratio (in basis points) the marker line is drawn at. Null means don't draw it
+ *   (in the zero-asset preview the fill itself already is the target, so drawing a coincident marker
+ *   line would be redundant).
  */
 @Composable
 fun AllocationBar(
@@ -56,8 +63,9 @@ fun AllocationBar(
     modifier: Modifier = Modifier,
 ) {
     val trackColor = chartColors.track
-    // 描边取卡片底色，让竖线在填充色上也能读出来。用 surface 而不是固定白色：
-    // 深色模式下白描边会比竖线本身更抢眼。
+    // The halo takes the card's background color so the marker line still reads against the
+    // fill color. Use `surface` rather than a fixed white: in dark mode a white halo would stand
+    // out more than the marker line itself.
     val haloColor = MaterialTheme.colorScheme.surface
     val markerColor = MaterialTheme.colorScheme.onSurface
 
@@ -94,7 +102,8 @@ fun AllocationBar(
         markerFraction?.let { fraction ->
             val markerW = MARKER_WIDTH.toPx()
             val haloW = markerW + MARKER_HALO.toPx() * 2
-            // 夹住两端，目标 0% / 100% 时竖线也要整根留在条内而不是被裁掉一半
+            // Clamp both ends so that at a target of 0% / 100% the marker line still stays
+            // entirely within the bar instead of being clipped in half
             val centerX = (size.width * fraction).coerceIn(haloW / 2f, size.width - haloW / 2f)
             val markerTop = top - MARKER_OVERHANG.toPx()
             val markerH = trackH + MARKER_OVERHANG.toPx() * 2

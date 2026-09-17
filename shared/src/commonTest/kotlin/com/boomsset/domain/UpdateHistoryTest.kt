@@ -66,12 +66,12 @@ class UpdateHistoryTest {
         PortfolioData(assets, snapshots, emptyList(), emptyList())
 
     @Test
-    fun `没有快照时是空列表`() {
+    fun `an empty list when there are no snapshots`() {
         UpdateHistory.build(PortfolioData.EMPTY, zone).shouldHaveSize(0)
     }
 
     @Test
-    fun `最新的记录排在最前面`() {
+    fun `the newest record comes first`() {
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1)),
@@ -88,7 +88,7 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `第一条快照是新增，之后的是更新`() {
+    fun `the first snapshot is a creation, later ones are updates`() {
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1)),
@@ -104,7 +104,7 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `归档追加的那条归零快照标成归档`() {
+    fun `the zeroing snapshot appended by archiving is labeled ARCHIVED`() {
         val archivedAt = at(2026, 3, 1)
         val records = UpdateHistory.build(
             data(
@@ -123,9 +123,9 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `取消归档后那条退回显示成普通更新`() {
-        // unarchiveAsset 只清 archivedAt，归零快照留着 —— 归档确实被撤销了，
-        // 那条记录就不该再自称「归档」。
+    fun `after unarchiving, that record reverts to showing as a plain update`() {
+        // unarchiveAsset only clears archivedAt; the zeroing snapshot stays -- since the
+        // archiving was genuinely undone, that record should no longer call itself "archived".
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1, archivedAt = null)),
@@ -141,7 +141,7 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `MANUAL 的前值取链上紧邻的一条`() {
+    fun `a MANUAL record's previous value is the immediately preceding one in the chain`() {
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1)),
@@ -166,9 +166,10 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `QUOTED 记的是份额，不推算市值`() {
-        // 快照里根本没有市值字段；市值要靠当时的行情，而行情还没有历史回补。
-        // 这条锁住「不去猜一个历史市值出来」。
+    fun `QUOTED records the share count, it does not infer a market value`() {
+        // Snapshots have no market-value field at all; market value depends on the quote at
+        // that time, and quotes don't have historical backfill yet.
+        // This locks in "don't guess at a historical market value".
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1)),
@@ -189,8 +190,8 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `估值方式变了就没有可比的前值`() {
-        // 退市转 MANUAL：上一条是份额、这一条是市值，减不出变化量。
+    fun `once the valuation mode changes, there is no comparable previous value`() {
+        // Delisted, converted to MANUAL: the previous record is a share count, this one is a market value -- there's no change amount to subtract out.
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1)),
@@ -211,7 +212,7 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `份额没动但成本动了也算一次有内容的更新`() {
+    fun `an unchanged share count but a changed cost still counts as a meaningful update`() {
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1)),
@@ -229,7 +230,7 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `没填成本时成本变化是 null 而不是零`() {
+    fun `when no cost is filled in, the cost change is null, not zero`() {
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1)),
@@ -245,7 +246,7 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `多个资产的记录按时间合并成一条流水`() {
+    fun `records from multiple assets are merged into a single timeline by time`() {
         val records = UpdateHistory.build(
             data(
                 assets = listOf(asset(1, name = "活期"), asset(2, name = "茅台")),
@@ -263,7 +264,7 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `已归档资产的记录仍然出现在流水里`() {
+    fun `an archived asset's records still appear in the timeline`() {
         val archivedAt = at(2026, 3, 1)
         val records = UpdateHistory.build(
             data(
@@ -280,10 +281,12 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `不做任何保留期截断，几年前的记录照样在`() {
-        // 这条锁的是一个**产品决定**，不是实现细节：快照是净值曲线的唯一数据源，
-        // 按「只留半年」去删会让一项半年没更新过的资产连今天都取不到快照，
-        // 从净值里整个消失。分页只能做在 UI 侧。
+    fun `no retention-period truncation is applied - records from years ago are still there`() {
+        // This locks in a **product decision**, not an implementation detail: snapshots are
+        // the sole data source for the net worth curve. Deleting anything older than "the last
+        // six months" would make an asset that hasn't been updated in six months fail to
+        // resolve a snapshot even for today, vanishing from net worth entirely. Pagination can
+        // only be done on the UI side.
         val old = (0 until 40).map { i ->
             manual(id = i + 1L, assetId = 1, on = at(2018 + i / 12, i % 12 + 1, 1), value = 100_00L + i)
         }
@@ -294,14 +297,14 @@ class UpdateHistoryTest {
     }
 
     @Test
-    fun `记录日期按传入的时区落地`() {
+    fun `the recorded date lands according to the given time zone`() {
         val newYearEveInShanghai = LocalDateTime(2026, 1, 1, 3, 0).toInstant(TimeZone.UTC)
         val records = UpdateHistory.build(
             data(listOf(asset(1)), listOf(manual(1, 1, newYearEveInShanghai, 100_00))),
             TimeZone.of("Asia/Shanghai"),
         )
 
-        // UTC 的 1 月 1 日 03:00 在东八区是 11:00 —— 同一天；换成 UTC-8 才会退回去年。
+        // UTC January 1st 03:00 is 11:00 in UTC+8 -- same day; only switching to UTC-8 rolls it back to the previous year.
         records.single().recordedDate shouldBe LocalDate(2026, 1, 1)
 
         val utcMinus8 = UpdateHistory.build(

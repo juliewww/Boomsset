@@ -42,17 +42,21 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 /**
- * 更新估值。这是 App 的核心动作 —— 不记流水，只定期回答"这项资产现在值多少"。
+ * Update a valuation. This is the app's core action — it doesn't record transactions, only
+ * periodically answers "what is this asset worth right now".
  *
- * **关键规则：成本从上一条快照预填。** 快照是完整状态而非增量，用户只改市值时若
- * 成本字段留空，新快照的成本就是 null，收益率会凭空消失。所以两个字段都预填，
- * 让"忘记带上成本"在结构上不会发生。
+ * **Key rule: the cost basis is prefilled from the previous snapshot.** A snapshot is a complete
+ * state rather than a delta; if the user only changes the market value while leaving the cost
+ * field blank, the new snapshot's cost basis would become null and the return rate would vanish
+ * out of nowhere. So both fields are prefilled, making "forgetting to carry over the cost basis"
+ * structurally impossible.
  *
- * **默认记为"现在"，但可以改成补录某一天。** `asOf` 和 `recordedAt` 本就分开
- * （见 docs/domain.md「时间处理」），数据模型一直支持补录历史，只是这个入口之前
- * 没接出来。日期选择器**默认折叠**——大多数更新就是"现在"，常驻一个日期选择器
- * 会让最常见的操作多一步，和 InfoTooltip/AllocationPicker 那些"点开才用"的入口
- * 是同一个思路。
+ * **Defaults to recording "now", but can be changed to backfill a specific day.** `asOf` and
+ * `recordedAt` were already separate (see "time handling" in docs/domain.md); the data model has
+ * always supported backfilling history, it's just that this entry point hadn't wired it up yet.
+ * The date picker is **collapsed by default** — most updates are for "now", and always showing
+ * a date picker would add a step to the most common operation, the same idea as the "only shown
+ * on tap" entry points like InfoTooltip/AllocationPicker.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,7 +70,8 @@ fun UpdateValueDialog(
     val snapshot = valuation.snapshot
     val previousCost = snapshot?.costBasisMinor
 
-    // 预填：市值/份额取当前值，成本取上一条 —— 不留空
+    // Prefill: market value/quantity takes the current value, cost basis takes the previous
+    // snapshot's — never left blank
     var amountText by remember {
         mutableStateOf(
             when (snapshot) {
@@ -81,11 +86,12 @@ fun UpdateValueDialog(
         )
     }
     var costText by remember { mutableStateOf(previousCost?.formatForInput() ?: "") }
-    // 单价预填当前行情（可能是 stale 的），空着表示不覆盖
+    // Unit price is prefilled with the current quote (which may be stale); left blank means don't override it
     var priceText by remember {
         mutableStateOf(valuation.quote?.price?.formatForInput() ?: "")
     }
-    // 补录日期。null 表示"现在"——这是绝大多数更新的情况，不给它默认值。
+    // The backfill date. Null means "now" — the case for the vast majority of updates, so it's
+    // given no other default.
     var asOfDate by remember { mutableStateOf<LocalDate?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
 
@@ -175,8 +181,9 @@ fun UpdateValueDialog(
                     style = MaterialTheme.typography.labelSmall,
                 )
 
-                // 补录日期：默认折叠成一句话 + 一个按钮，点了才展开日期选择器 ——
-                // 常驻一个日期选择器会让"现在"这个最常见的情况多一步操作。
+                // Backfill date: collapsed by default into one line of text + a button, only
+                // expanding the date picker on tap — always showing a date picker would add a
+                // step to "now", the most common case.
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -199,9 +206,12 @@ fun UpdateValueDialog(
                 enabled = canConfirm,
                 onClick = {
                     if (isQuoted) {
-                        // 单价改了就写一条今天的行情 —— 顺序在前，好让快照写完后立刻能用上。
-                        // ⚠️ 这条**始终写今天的行情**，不跟着 asOfDate 走 —— 手填单价本来就
-                        // 是"我现在知道的价"，补录历史市值和"今天的行情是多少"是两件事。
+                        // If the unit price changed, write a quote for today — done first, so it's
+                        // immediately usable once the snapshot is written.
+                        // ⚠️ This **always writes today's quote**, regardless of asOfDate — a
+                        // manually entered unit price is inherently "the price I know right now";
+                        // backfilling a historical market value and "what's today's quote" are
+                        // two separate things.
                         if (manualPrice != null && manualPrice != valuation.quote?.price) {
                             onSetManualPrice(
                                 snapshot.quoteSymbol,
@@ -211,7 +221,7 @@ fun UpdateValueDialog(
                         }
                         onConfirmQuoted(
                             quantity!!,
-                            // isQuoted 已经保证了类型，智能转换在这里成立
+                            // isQuoted already guarantees the type, so the smart cast holds here
                             snapshot.quoteSymbol,
                             cost?.let { Money(it) },
                             asOfDate,
@@ -226,15 +236,18 @@ fun UpdateValueDialog(
     )
 
     if (showDatePicker) {
-        // M3 的 DatePicker 内部按 **UTC** 存取 selectedDateMillis（不管用户本地时区，
-        // 都是"那一天 00:00 UTC"）——这是它文档里明说的设计，混用本地时区会在时区偏移
-        // 跨天时选错一天。所以这里用 TimeZone.UTC 做换算，不用 currentSystemDefault()。
+        // M3's DatePicker internally stores/reads selectedDateMillis in **UTC** (regardless of
+        // the user's local timezone, it's always "00:00 UTC on that day") — this is documented
+        // as intentional design, and mixing in the local timezone would pick the wrong day
+        // whenever the timezone offset crosses a day boundary. So TimeZone.UTC is used for the
+        // conversion here, not currentSystemDefault().
         val state = rememberDatePickerState(
             initialSelectedDateMillis = (asOfDate ?: Clock.System.now()
                 .toLocalDateTime(TimeZone.currentSystemDefault()).date)
                 .atStartOfDayIn(TimeZone.UTC).toEpochMilliseconds(),
             selectableDates = object : SelectableDates {
-                // 不能补录未来 —— "这项资产明天值多少"不是一个能回答的问题。
+                // Can't backfill into the future — "what will this asset be worth tomorrow" is
+                // not an answerable question.
                 override fun isSelectableDate(utcTimeMillis: Long): Boolean =
                     utcTimeMillis <= Clock.System.now().toEpochMilliseconds()
             },
@@ -257,11 +270,11 @@ fun UpdateValueDialog(
     }
 }
 
-/** 更新弹窗里输入框的无障碍标识，UI 测试按这些字符串定位。 */
+/** Accessibility identifiers for the input fields in the update dialog; UI tests locate them by these strings. */
 const val FIELD_UPDATE_AMOUNT = "field-update-amount"
 const val FIELD_UPDATE_COST = "field-update-cost"
 
 /**
- * 份额字符串 → 定点整数（scale = 8）。委托给 [com.boomsset.domain.parseQuantity]。
+ * Quantity string → fixed-point integer (scale = 8). Delegates to [com.boomsset.domain.parseQuantity].
  */
 internal fun String.toQuantityOrNull(): Quantity? = parseQuantity(this)

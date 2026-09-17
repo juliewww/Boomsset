@@ -19,18 +19,18 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 interface PortfolioRepository {
-    /** 全量数据流。任何写入都会让它重新发射。 */
+    /** The full data stream. Any write causes it to re-emit. */
     fun observePortfolio(): Flow<PortfolioData>
 
-    /** 生效中的目标配置。没有则发射 null。 */
+    /** The currently active target allocation. Emits null if there is none. */
     fun observeActiveTarget(): Flow<TargetAllocation?>
 
-    /** 全部目标配置（内置 + 自定义）。允许多套并存对比。 */
+    /** All target allocations (built-in + custom). Multiple can coexist for comparison. */
     fun observeAllocations(): Flow<List<TargetAllocation>>
 
     fun observeSubtypes(): Flow<List<AssetSubtype>>
 
-    /** 新建资产，同时写入第一条快照。返回资产 id。 */
+    /** Creates a new asset and writes its first snapshot at the same time. Returns the asset id. */
     suspend fun createAsset(
         name: String,
         assetClass: AssetClass,
@@ -46,15 +46,19 @@ interface PortfolioRepository {
     ): Long
 
     /**
-     * 追加一条快照。**不修改已有记录** —— 快照不可变，修正历史就是追加。
+     * Appends a snapshot. **Never modifies an existing record** — snapshots are immutable;
+     * correcting history means appending, not editing.
      *
-     * 调用方要把成本一并传进来（从上一条结转），别留空 ——
-     * 留空等于把成本抹掉，收益率会凭空消失。
+     * The caller must pass along the cost basis (carried forward from the previous one) —
+     * don't leave it null. Leaving it null erases the cost basis, and the return rate would
+     * vanish for no reason.
      *
-     * [asOf] 是这个市值**属于哪个时点**，null 表示"现在"。给了它就是**补录历史**：
-     * `asOf` 落到指定时点，而 `recordedAt` 始终是真实的录入时间 —— 两者本来就分开
-     * （见 docs/domain.md），净值曲线按 `asOf` 排，更新记录按 `recordedAt` 排，
-     * 所以补录一条上个月的数据不会把它显示成"今天刚记的"。
+     * [asOf] is the point in time this valuation **belongs to**; null means "now". Supplying
+     * it means **backfilling history**: `asOf` lands on the specified point in time, while
+     * `recordedAt` is always the actual time of entry — the two are intentionally separate
+     * (see docs/domain.md). The net worth curve is ordered by `asOf`, while the update history
+     * is ordered by `recordedAt`, so backfilling last month's data won't make it show up as
+     * "just recorded today".
      */
     suspend fun appendManualSnapshot(
         assetId: Long,
@@ -74,14 +78,15 @@ interface PortfolioRepository {
     suspend fun archiveAsset(assetId: Long)
 
     /**
-     * 修改资产元信息。
+     * Updates an asset's metadata.
      *
-     * ⚠️ **`currency` 和 `isLiability` 会追溯性地重新解释全部历史快照**，
-     * 所以只在该资产仅有一条快照（刚建、还没历史）时才允许改 —— 由调用方用
-     * [AssetEditPolicy] 判断，这里也再挡一道。
+     * ⚠️ **`currency` and `isLiability` retroactively reinterpret every historical
+     * snapshot**, so they may only be changed while the asset has just a single snapshot
+     * (freshly created, no history yet) — the caller determines this via
+     * [AssetEditPolicy], and this is checked here again as a second line of defense.
      *
-     * `name` / `assetClass` / `subtypeId` / `includeInAllocation` 可以随时改：
-     * 它们只改变归类和展示，不改变任何记录下来的金额。
+     * `name` / `assetClass` / `subtypeId` / `includeInAllocation` can be changed at any
+     * time: they only affect categorization and display, never any recorded amount.
      */
     suspend fun updateAssetMeta(
         assetId: Long,
@@ -95,61 +100,66 @@ interface PortfolioRepository {
     )
 
     /**
-     * 取消归档。**只清 `archivedAt`，不动快照。**
+     * Unarchives an asset. **Only clears `archivedAt`; doesn't touch snapshots.**
      *
-     * 归档时追加的那条 0 值快照是真实记录，不能撤 —— 所以取消归档后资产会显示 0，
-     * 用户需要自己更新一次估值。伪造一条"恢复原值"的快照才是错的。
+     * The zero-value snapshot appended at archive time is a real record and can't be undone
+     * — so after unarchiving, the asset will show 0 and the user needs to update its
+     * valuation themselves. Fabricating a "restore original value" snapshot would be wrong.
      */
     suspend fun unarchiveAsset(assetId: Long)
 
-    /** 新增自定义品种。domain.md 要求品种可自定义扩展。 */
+    /** Adds a new custom subtype. domain.md requires that subtypes be user-extensible. */
     suspend fun createSubtype(
         name: String,
         assetClass: AssetClass,
         defaultValuationMode: ValuationMode,
     ): Long
 
-    /** 按天 upsert 汇率。同一币种对同一天只留一条 —— 主键保证，不需要应用层查重。 */
+    /** Upserts an FX rate by day. Only one record per currency pair per day — guaranteed by the primary key, so no app-level dedup is needed. */
     suspend fun upsertFxRate(rate: com.boomsset.domain.FxRate)
 
     /**
-     * 批量按天 upsert 汇率，**一个事务**。
+     * Batch upserts FX rates by day, **in a single transaction**.
      *
-     * 历史回补一次会写几百到几千条。逐条写会让数据流发射同样多次，
-     * 每次都触发一遍净值曲线重算 —— 事务把它们收成一次发射。
+     * A single historical backfill can write anywhere from hundreds to thousands of rows.
+     * Writing them one at a time would make the data stream emit the same number of times,
+     * triggering a net worth curve recalculation on every emission — the transaction
+     * collapses them into a single emission.
      */
     suspend fun upsertFxRates(rates: List<com.boomsset.domain.FxRate>)
 
-    /** 按天 upsert 行情。同上。 */
+    /** Upserts a quote by day. Same as above. */
     suspend fun upsertQuote(quote: com.boomsset.domain.Quote)
 
-    /** 切换生效的目标配置。同时只有一套生效。 */
+    /** Switches the active target allocation. Only one can be active at a time. */
     suspend fun setActiveAllocation(id: Long)
 
     /**
-     * 保存某套配置的目标比例。
+     * Saves the target percentages for an allocation.
      *
-     * 调用方必须先校验之和为 [TargetAllocation.TOTAL_BP] —— 不闭合的配置存进去
-     * 会让偏离度全错，而且不报错。这里也再挡一道。
+     * The caller must first verify they sum to [TargetAllocation.TOTAL_BP] — saving an
+     * unclosed allocation would make every deviation figure wrong, silently. This is
+     * checked here again as a second line of defense.
      */
     suspend fun saveAllocationTargets(id: Long, targetsBp: Map<AssetClass, Int>)
 
-    /** 新建自定义配置，返回 id。 */
+    /** Creates a new custom allocation, returning its id. */
     suspend fun createAllocation(name: String, targetsBp: Map<AssetClass, Int>): Long
 
     suspend fun renameAllocation(id: Long, name: String)
 
-    /** 只能删自定义的。内置的删不掉是有意为之。 */
+    /** Only custom allocations can be deleted. Built-in ones being undeletable is intentional. */
     suspend fun deleteAllocation(id: Long)
 }
 
 class SqlDelightPortfolioRepository(
     private val db: BoomssetDatabase,
     /**
-     * 数据库读写用的 dispatcher。
+     * The dispatcher used for database reads/writes.
      *
-     * 用 Default 而不是 IO：`Dispatchers.IO` 不在 commonMain 的公共 API 面上，
-     * 而本地 SQLite 在这个数据量级下开销可忽略。真成为瓶颈时改成按平台注入 IO。
+     * Uses Default rather than IO: `Dispatchers.IO` isn't part of commonMain's public API
+     * surface, and local SQLite has negligible overhead at this data volume. If it ever
+     * becomes a real bottleneck, switch to injecting IO per platform.
      */
     private val dispatcher: CoroutineDispatcher,
     private val clock: Clock = Clock.System,
@@ -170,11 +180,12 @@ class SqlDelightPortfolioRepository(
     }
 
     /**
-     * ⚠️ 必须 combine **两个**流。
+     * ⚠️ Must combine **two** streams.
      *
-     * 原来只监听 allocation 表、在 map 里同步查 items —— 那样编辑目标比例（写 items 表）
-     * 不会让这个流重新发射，配置页看不到改动。改成两个流 combine 之后，
-     * 改名和改比例都会触发刷新。
+     * Originally this only observed the allocation table and synchronously queried items
+     * inside the map — which meant editing target percentages (writing the items table)
+     * never made this stream re-emit, so the allocation screen wouldn't see the change.
+     * After combining two streams, both renaming and changing percentages trigger a refresh.
      */
     override fun observeActiveTarget(): Flow<TargetAllocation?> =
         observeAllocations().map { list -> list.firstOrNull { it.isActive } }
@@ -261,7 +272,7 @@ class SqlDelightPortfolioRepository(
             as_of = asOf?.toEpochMilliseconds() ?: now,
             value_minor = value.minorUnits,
             cost_basis_minor = costBasis?.minorUnits,
-            recorded_at = now,   // 补录时 recordedAt 仍是真实录入时间，不是 asOf
+            recorded_at = now,   // Even when backfilling, recordedAt is still the real entry time, not asOf
         )
     }
 
@@ -284,10 +295,11 @@ class SqlDelightPortfolioRepository(
     }
 
     /**
-     * 归档 = 打 archivedAt + **追加一条归零快照**。
+     * Archiving = setting archivedAt + **appending a zeroed-out snapshot**.
      *
-     * 归零快照是必须的：结转规则会让最后一条快照永远续下去，不归零的话已卖出的资产
-     * 会一直贡献净值。详见 docs/domain.md「归档」。
+     * The zeroed snapshot is mandatory: the carry-forward rule keeps repeating the last
+     * snapshot indefinitely, so without zeroing it out, a sold asset would keep
+     * contributing to net worth forever. See docs/domain.md, "Archiving", for details.
      */
     override suspend fun archiveAsset(assetId: Long): Unit = withContext(dispatcher) {
         val now = clock.now().toEpochMilliseconds()
@@ -302,7 +314,7 @@ class SqlDelightPortfolioRepository(
                     cost_basis_minor = last.cost_basis_minor,
                     recorded_at = now,
                 )
-                // 没有历史快照的资产也补一条 0，保持"归档即归零"的一致性
+                // Assets with no prior snapshot also get a 0 record, to keep "archiving means zeroing out" consistent
                 else -> db.snapshotQueries.insertManual(
                     asset_id = assetId,
                     as_of = now,
@@ -322,8 +334,10 @@ class SqlDelightPortfolioRepository(
         withContext(dispatcher) {
             if (rates.isEmpty()) return@withContext
             val now = clock.now().toEpochMilliseconds()
-            // 一个事务：历史回补一次几百到几千条，逐条提交会让 selectAllRates 那条流
-            // 发射同样多次，每次都重算整条净值曲线（十年数据 ≈ 2500 次）
+            // A single transaction: a single historical backfill is hundreds to thousands of
+            // rows; committing one at a time would make the selectAllRates stream emit that
+            // many times, recalculating the whole net worth curve every time (≈2500 times for
+            // ten years of data)
             db.transaction {
                 rates.forEach {
                     db.fxRateQueries.upsert(
@@ -389,7 +403,7 @@ class SqlDelightPortfolioRepository(
     ): Unit = withContext(dispatcher) {
         requireClosed(targetsBp)
         db.transaction {
-            // 先清再写：否则删掉某个大类的条目会残留旧值
+            // Clear then rewrite: otherwise removing an asset class's entry would leave a stale value behind
             db.targetAllocationQueries.deleteItems(id)
             targetsBp.forEach { (assetClass, bp) ->
                 db.targetAllocationQueries.upsertItem(id, assetClass, bp.toLong())
@@ -424,7 +438,7 @@ class SqlDelightPortfolioRepository(
         }
 
     override suspend fun deleteAllocation(id: Long): Unit = withContext(dispatcher) {
-        // SQL 里带了 is_built_in = 0 的条件，内置的删不掉
+        // The SQL includes an is_built_in = 0 condition, so built-in ones can't be deleted
         db.targetAllocationQueries.deleteAllocation(id)
     }
 

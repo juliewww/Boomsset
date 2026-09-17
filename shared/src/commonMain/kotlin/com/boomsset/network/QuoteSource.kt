@@ -9,47 +9,54 @@ import io.ktor.http.isSuccess
 import kotlinx.datetime.LocalDate
 import kotlin.time.Clock
 
-/** 取股票/基金行情。实现可替换 —— 测试用 fake，将来换供应商只改这一层。 */
+/** Fetches stock/fund quotes. Implementation is swappable — tests use a fake, and switching vendors in the future only touches this layer. */
 interface QuoteSource {
     /**
-     * 批量取价。
+     * Batch-fetches prices.
      *
-     * @return 成功取到的行情。**取不到的代码不出现在返回值里**，不返回 0 价 ——
-     *   0 价会让资产静默归零。
+     * @return The quotes successfully fetched. **Symbols that couldn't be fetched don't
+     *   appear in the return value**; never returns a zero price — a zero price would
+     *   silently zero out the asset.
      */
     suspend fun fetch(symbols: Set<String>, on: LocalDate): List<Quote>
 }
 
 /**
- * 腾讯财经行情（`qt.gtimg.cn`）。
+ * Tencent Finance quotes (`qt.gtimg.cn`).
  *
- * ## 为什么用它，以及风险
+ * ## Why this source, and the risks
  *
- * A 股和场内基金的行情没有像 ECB 汇率那样的官方免费源 —— 交易所数据有授权成本。
- * 实测下来（2026-07）腾讯这个接口是唯一无需 key 且 A 股覆盖完整的可用选项：
- * 新浪返回 403、天天基金返回 HTML、Yahoo 非官方接口 429 限流。
+ * A-share and on-exchange fund quotes have no official free source like ECB does for FX
+ * rates — exchange data carries licensing costs. Testing (2026-07) found Tencent's
+ * endpoint to be the only key-free option with full A-share coverage: Sina returns 403,
+ * Tiantian Fund returns HTML, and Yahoo's unofficial endpoint is rate-limited with 429s.
  *
- * ⚠️ **这是非官方接口**：公开无鉴权，但没有文档、没有 ToS 保障、可能随时变更或失效。
- * 产品定位是自用/小范围，这个风险是明确接受的。失效时的表现是**取不到价 → 资产显示
- * "无法估值"**，不会静默算错数 —— 这一点由 [QuoteSource] 的契约保证。
+ * ⚠️ **This is an unofficial API**: publicly accessible without authentication, but with
+ * no documentation and no ToS guarantee — it could change or stop working at any time.
+ * The product is positioned for personal/small-scale use, and this risk is knowingly
+ * accepted. When it fails, the behavior is **unable to fetch a price → the asset shows
+ * "unable to value"**, never a silently wrong number — this is guaranteed by the
+ * [QuoteSource] contract.
  *
- * ## 代码格式
+ * ## Symbol format
  *
- * - A 股：`sh600519`（上交所）、`sz000858`（深交所）
- * - 港股：`hk00700`
- * - 美股：`usAAPL`
+ * - A-shares: `sh600519` (Shanghai Stock Exchange), `sz000858` (Shenzhen Stock Exchange)
+ * - Hong Kong stocks: `hk00700`
+ * - US stocks: `usAAPL`
  *
- * 前缀决定币种，见 [currencyOf]。
+ * The prefix determines the currency — see [currencyOf].
  *
- * ## 响应格式与 GBK
+ * ## Response format and GBK
  *
- * 返回形如：`v_sh600519="1~贵州茅台~600519~1329.62~1320.00~...";`
- * 字段按 `~` 分隔，**索引 3 是当前价**。
+ * The response looks like: `v_sh600519="1~贵州茅台~600519~1329.62~1320.00~...";`
+ * Fields are separated by `~`, and **index 3 is the current price**.
  *
- * **报文是 GBK 编码的**，而 Kotlin/Native 没有内置 GBK 解码器。做法是把字节按
- * Latin-1（byte → char 一一对应）读进来 —— 这样 ASCII 部分（价格、代码、日期）
- * 完全无损，只有中文名称字段会是乱码，而我们**根本不用那个字段**（资产名是用户自己起的）。
- * 这比引入一套 GBK 码表简单得多，也没有解码失败的可能。
+ * **The payload is GBK-encoded**, and Kotlin/Native has no built-in GBK decoder. The
+ * approach here is to read the bytes as Latin-1 (byte → char, one to one) — this leaves
+ * the ASCII portions (price, symbol, date) completely intact; only the Chinese name field
+ * comes out garbled, and we **never use that field anyway** (the asset name is something
+ * the user chooses themselves). This is far simpler than introducing a full GBK code
+ * table, and there's no possibility of a decoding failure.
  */
 class TencentQuoteSource(
     private val client: HttpClient,
@@ -62,7 +69,7 @@ class TencentQuoteSource(
 
         val response = runCatching {
             client.get(baseUrl) {
-                // 一次请求拿多只，少发请求也少暴露信息
+                // Fetch multiple symbols in one request — fewer requests and less information exposed
                 url.parameters.append("q", symbols.joinToString(","))
             }
         }.getOrNull() ?: return emptyList()
@@ -74,11 +81,13 @@ class TencentQuoteSource(
     }
 
     /**
-     * 按 Latin-1 解码：每个字节映射成同码位的字符。
+     * Decodes as Latin-1: each byte maps to the character at the same code point.
      *
-     * ASCII 字节（价格、代码）完全无损；GBK 的中文字节会变成无意义字符，但我们不读那些字段。
-     * **不要改成 UTF-8 解码** —— GBK 字节序列不是合法 UTF-8，解码器会插入替换字符，
-     * 可能吃掉相邻的分隔符从而错位。
+     * ASCII bytes (price, symbol) survive completely intact; GBK's Chinese-character bytes
+     * turn into meaningless characters, but we never read those fields. **Do not switch
+     * this to UTF-8 decoding** — GBK byte sequences aren't valid UTF-8, and the decoder
+     * would insert replacement characters that could swallow adjacent delimiters and shift
+     * everything out of alignment.
      */
     internal fun decodeLatin1(bytes: ByteArray): String =
         buildString(bytes.size) {
@@ -103,11 +112,11 @@ class TencentQuoteSource(
 
         val payload = trimmed.substring(eq + 1).trim().trim('"')
         val fields = payload.split('~')
-        // 停牌或代码不存在时腾讯返回极短的串，字段不够就当取不到
+        // Tencent returns a very short string when a symbol is suspended or doesn't exist; treat too few fields as unfetchable
         if (fields.size <= PRICE_INDEX) return null
 
         val price = parseUnitPrice(fields[PRICE_INDEX]) ?: return null
-        // 价格为 0 通常意味着停牌或无效代码 —— 当作取不到，绝不写 0 价
+        // A price of 0 usually means suspended trading or an invalid symbol — treat it as unfetchable, never write a 0 price
         if (price.isZero) return null
 
         return Quote(
@@ -122,23 +131,25 @@ class TencentQuoteSource(
     companion object {
         private const val VAR_PREFIX = "v_"
 
-        /** `~` 分隔后当前价的下标。实测确认：0=市场标志 1=名称 2=代码 **3=当前价** 4=昨收 5=今开 */
+        /** Index of the current price after splitting on `~`. Confirmed via real testing: 0=market flag 1=name 2=symbol **3=current price** 4=previous close 5=today's open */
         internal const val PRICE_INDEX = 3
 
         /**
-         * 从代码前缀推断币种。
+         * Infers currency from the symbol prefix.
          *
-         * 这很重要：估值时市值按 `asset.currency` 折算，而价格是 [Quote.currency] 计价的。
-         * 两者不一致就会算错，所以创建 QUOTED 资产时要用这个函数强制对齐资产币种。
+         * This matters: when valuing, market value is converted via `asset.currency`,
+         * while the price is denominated in [Quote.currency]. A mismatch between the two
+         * would produce a wrong calculation, so this function is used to force alignment
+         * with the asset's currency when creating a QUOTED asset.
          */
         fun currencyOf(symbol: String): String = when {
             symbol.startsWith("hk") -> "HKD"
             symbol.startsWith("us") -> "USD"
-            // sh / sz 以及基金代码都是人民币计价
+            // sh / sz symbols, as well as fund symbols, are all RMB-denominated
             else -> "CNY"
         }
 
-        /** 代码是否是我们认得的格式。UI 上用来在创建资产前挡住明显的错误输入。 */
+        /** Whether the symbol matches a format we recognize. Used in the UI to block obviously invalid input before creating an asset. */
         fun isRecognized(symbol: String): Boolean {
             val s = symbol.trim()
             return when {

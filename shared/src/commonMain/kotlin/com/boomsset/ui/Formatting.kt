@@ -11,8 +11,9 @@ import kotlinx.datetime.LocalDate
 import kotlin.math.abs
 
 /**
- * 展示层的格式化。手写而不是用平台 NumberFormat —— commonMain 里没有它，
- * 而且这里的需求很窄（人民币金额、基点转百分比）。
+ * Presentation-layer formatting. Hand-written rather than using platform NumberFormat —
+ * commonMain doesn't have it, and the needs here are narrow anyway (RMB amounts,
+ * basis-point-to-percentage conversion).
  */
 
 private val currencySymbols = mapOf(
@@ -27,10 +28,10 @@ private val currencySymbols = mapOf(
 fun currencySymbol(code: String): String = currencySymbols[code] ?: "$code "
 
 /**
- * 例：Money(123456) → "1,234.56"
+ * Example: Money(123456) → "1,234.56"
  *
- * @param grouped 是否加千分位。**预填到输入框时必须传 false** ——
- *   见 [formatForInput]。
+ * @param grouped whether to add thousands separators. **Must pass false when pre-filling
+ *   an input field** — see [formatForInput].
  */
 fun Money.formatAmount(showDecimals: Boolean = true, grouped: Boolean = true): String {
     val negative = minorUnits < 0
@@ -52,37 +53,44 @@ fun Money.formatAmount(showDecimals: Boolean = true, grouped: Boolean = true): S
 }
 
 /**
- * 预填到可编辑输入框用的格式：**不带千分位**。
+ * Format used to pre-fill an editable input field: **no thousands separators**.
  *
- * 存在的理由是一个实跑时才发现的 bug：预填用了带逗号的 [formatAmount]，
- * 而 [toMinorUnitsOrNull] 明确拒绝逗号，于是任何 ≥1000 的资产打开更新弹窗后
- * 「保存」永久禁用 —— 核心循环对真实金额直接是坏的。
+ * Reason for existing: a bug only discovered by running on a real device — pre-filling
+ * used the comma-formatted [formatAmount], while [toMinorUnitsOrNull] explicitly rejects
+ * commas, so opening the update dialog for any asset ≥1000 would leave "Save" permanently
+ * disabled — the core loop was flatly broken for real-world amounts.
  *
- * 不选择"让解析器容忍逗号"是有意的：那样 `"1,23"` 会被当成 123，
- * 而用户很可能想输 1.23 —— 100 倍的静默错误比一个禁用的按钮糟糕得多。
+ * Deliberately not choosing "make the parser tolerate commas": that would make `"1,23"`
+ * parse as 123, when the user most likely meant to type 1.23 — a silent 100x error is far
+ * worse than a disabled button.
  *
- * 不变量：**本函数的输出必须能被 [toMinorUnitsOrNull] 解析回原值。** 有测试锁着。
+ * Invariant: **this function's output must be parseable back to the original value by
+ * [toMinorUnitsOrNull].** Enforced by a test.
  */
 fun Money.formatForInput(): String = formatAmount(showDecimals = true, grouped = false)
 
 /**
- * 例：Money(123456) + "CNY" → "¥1,234.56"，Money(-123456) → "-¥1,234.56"
+ * Example: Money(123456) + "CNY" → "¥1,234.56", Money(-123456) → "-¥1,234.56"
  *
- * 负号在**币种符号外面**。原来是 `symbol + formatAmount()`，负数会排成 "¥-1,234.56" ——
- * 负号被塞进了数字内部，中英文习惯都不这么写；[formatCompact] 一直是对的，这里对齐它。
+ * The minus sign sits **outside the currency symbol**. It used to be
+ * `symbol + formatAmount()`, which laid negatives out as "¥-1,234.56" — the sign ends up
+ * stuffed inside the number, which neither Chinese nor English convention does;
+ * [formatCompact] always had this right, so this is aligned to match it.
  */
 fun Money.formatWithCurrency(currency: String, showDecimals: Boolean = true): String =
     signPrefix(withPlus = false) + currencySymbol(currency) + magnitude().formatAmount(showDecimals)
 
 /**
- * 带**显式正号**的金额。例：+¥564.00 / -¥564.00 / ¥0.00
+ * Amount with an **explicit plus sign**. Example: +¥564.00 / -¥564.00 / ¥0.00
  *
- * 变化量必须一眼看出涨还是跌，不能靠"有没有减号"去反推
- * （配置页的净敞口是同一条理由，见 AllocationScreen）。
- * 零不加号：`+¥0.00` 读起来像"涨了 0"，而事实是"没有变化"。
+ * A change amount must show whether it rose or fell at a glance, without the reader having
+ * to infer it from "is there a minus sign" (the allocation page's net exposure follows the
+ * same reasoning — see AllocationScreen). Zero gets no sign: `+¥0.00` reads like "rose by 0,"
+ * when the fact is "no change."
  *
- * @param showDecimals 规划用的量级（配置页「距目标」的调整额）不显示分 ——
- *   那个数是"大概该挪多少钱"，两位小数是假精度，还把整行挤长。
+ * @param showDecimals planning-scale figures (the allocation page's "distance to target"
+ *   adjustment amount) don't show cents — that number is "roughly how much to move," and
+ *   two decimal places would be false precision while also lengthening the whole line.
  */
 fun Money.formatSigned(currency: String, showDecimals: Boolean = true): String =
     signPrefix(withPlus = true) + currencySymbol(currency) + magnitude().formatAmount(showDecimals)
@@ -96,9 +104,11 @@ private fun Money.signPrefix(withPlus: Boolean): String = when {
 private fun Money.magnitude(): Money = Money(abs(minorUnits))
 
 /**
- * 大额缩写，用于概览卡片。例：¥12,345,678.00 → "¥1234.6万"
+ * Abbreviation for large amounts, used on overview cards. Example: ¥12,345,678.00 →
+ * "¥1234.6万"
  *
- * 中文语境用「万 / 亿」而不是 K/M —— 后者对中文用户要多算一步。
+ * Chinese-context uses "万/亿" rather than K/M — the latter requires Chinese-speaking users
+ * to do an extra mental conversion step.
  */
 fun Money.formatCompact(currency: String): String {
     val symbol = currencySymbol(currency)
@@ -112,7 +122,7 @@ fun Money.formatCompact(currency: String): String {
     return (if (negative) "-" else "") + symbol + body
 }
 
-/** 把「放大了 10^scale 倍的整数」还原成小数字符串，避免用 Double。 */
+/** Restores an "integer scaled up by 10^scale" back into a decimal string, avoiding Double. */
 private fun Long.toDecimalString(scale: Int): String {
     val divisor = generateSequence(1L) { it * 10 }.take(scale + 1).last()
     val whole = this / divisor
@@ -122,13 +132,14 @@ private fun Long.toDecimalString(scale: Int): String {
 }
 
 /**
- * 份额预填到输入框用的格式。
+ * Format used to pre-fill quantities into an input field.
  *
- * **不能用 `toDisplayDouble().toString()`** —— 那对小份额会产出科学计数法
- * （`Quantity(1)` → `"1.0E-8"`），而 `toQuantityOrNull` 解析不了，
- * 于是「保存」被禁用。和金额那个 bug 是同一类。
+ * **Cannot use `toDisplayDouble().toString()`** — for small quantities it produces
+ * scientific notation (`Quantity(1)` → `"1.0E-8"`), which `toQuantityOrNull` can't parse,
+ * leaving "Save" disabled. Same class of bug as the one with amounts.
  *
- * 不变量：本函数的输出必须能被 [com.boomsset.ui.assets.toQuantityOrNull] 解析回原值。
+ * Invariant: this function's output must be parseable back to the original value by
+ * [com.boomsset.ui.assets.toQuantityOrNull].
  */
 fun Quantity.formatForInput(): String {
     val whole = scaled / Quantity.ONE
@@ -139,26 +150,34 @@ fun Quantity.formatForInput(): String {
 }
 
 /**
- * 份额展示。规则和 [Quantity.formatForInput] 完全一样，只是叫法不同 ——
- * 份额没有千分位，也不补固定小数位，「预填给输入框」和「显示给人看」在这里恰好同一个格式。
+ * Quantity display. The rule is exactly the same as [Quantity.formatForInput], just a
+ * different name — quantities have no thousands separators and no padded decimal places,
+ * so "pre-fill into input field" and "display for humans to read" happen to be the same
+ * format here.
  *
- * 单独起个名字是为了让展示代码不出现 `formatForInput()` 这种读起来像写错了的调用；
- * 真要分叉（比如展示侧加千分位）时改这一个函数就行，不会连带破坏输入框那条
- * 「预填必须能被自己的解析器读回原值」的不变量。
+ * A separate name exists so display code doesn't call something that reads like a typo,
+ * `formatForInput()`; if it ever needs to diverge (e.g. adding thousands separators on the
+ * display side), only this function needs to change, without dragging along the input
+ * field's "pre-fill must be parseable back by its own parser" invariant.
  */
 fun Quantity.formatDisplay(): String = formatForInput()
 
 /**
- * 更新记录里的日期。同年只写月日，跨年补上年份。
+ * Date shown in the update history. Same-year entries write only month/day; entries from a
+ * different year get the year prepended.
  *
- * 这个列表会一路翻到几年前，全都写「9月7日」分不出是哪一年；但每行都带上年份又太啰嗦
- * （绝大多数记录都是今年的）。和 [periodLabel] 那条"年份不能省"不冲突 ——
- * 那里最多只有 12 个标签、跨年是常态，这里是一条按时间倒序、绝大部分集中在近期的流水。
+ * This list can scroll all the way back several years, and writing "Sep 7" for all of them
+ * wouldn't tell which year; but putting the year on every line would be too verbose (the
+ * vast majority of entries are from this year). This doesn't conflict with [periodLabel]'s
+ * "the year can't be omitted" rule — that one has at most 12 labels where crossing years is
+ * the norm, while this one is a reverse-chronological log mostly concentrated in the recent
+ * past.
  */
 fun LocalDate.historyDateLabel(today: LocalDate): String =
     if (year == today.year) monthDayLabel() else "${year}年${monthDayLabel()}"
 
-/** 单价预填到输入框：scale-8 定点 → 不带多余 0 的小数串。 */
+/** Unit price pre-filled into an input field: scale-8 fixed-point → decimal string with no
+ * trailing zeros. */
 fun UnitPrice.formatForInput(): String {
     val whole = scaled / UnitPrice.ONE
     val frac = scaled % UnitPrice.ONE
@@ -166,7 +185,8 @@ fun UnitPrice.formatForInput(): String {
     return "$whole.${frac.toString().padStart(UnitPrice.SCALE, '0').trimEnd('0')}"
 }
 
-/** 单价展示：默认两位小数，但小数位有效就多显示（低价股/代币需要）。 */
+/** Unit price display: two decimal places by default, but shows more when the extra
+ * digits are significant (needed for low-priced stocks/tokens). */
 fun UnitPrice.formatDisplay(currency: String): String {
     val whole = scaled / UnitPrice.ONE
     val frac = scaled % UnitPrice.ONE
@@ -180,10 +200,11 @@ fun UnitPrice.formatDisplay(currency: String): String {
 }
 
 /**
- * 行情的日期与新鲜度描述。
+ * Description of a quote's date and freshness.
  *
- * domain.md 要求「UI 上要能看出来这个价格是 3 天前的」——
- * 取价失败时会退回 stale 价格，用户必须知道自己看的不是当前市价。
+ * domain.md requires "the UI must be able to show that this price is from 3 days ago" —
+ * when fetching the price fails, it falls back to the stale price, and the user must know
+ * they're not looking at the current market price.
  */
 fun AssetValuation.priceDescription(): String {
     val q = quote ?: return "还没有这个代码的行情。可以手填一个单价先用着。"
@@ -199,14 +220,16 @@ fun AssetValuation.priceDescription(): String {
     }
 }
 
-/** 例：LocalDate(2026, 8, 4) → "8月4日"。年份留给 [periodLabel]，日常场景不需要。 */
+/** Example: LocalDate(2026, 8, 4) → "8月4日". The year is left to [periodLabel] — not
+ * needed in everyday contexts. */
 fun LocalDate.monthDayLabel(): String = "${month.ordinal + 1}月${day}日"
 
 /**
- * 取样点所在周期的名字，**带年份**。
+ * The name of the period a sample point falls in, **with the year included**.
  *
- * 年份不能省：净值页最多回看 12 个周期，"相比 9月"在按月下跨年就有歧义
- * （去年 9 月还是今年 9 月？），而这个标签的全部作用就是把基准说清楚。
+ * The year can't be omitted: the net worth page looks back at most 12 periods, and "vs.
+ * September" would be ambiguous under the by-month view once years are crossed (last
+ * September, or this one?) — and this label's entire job is to state the baseline clearly.
  */
 fun LocalDate.periodLabel(period: Period): String = when (period) {
     Period.MONTH -> "${year}年${month.ordinal + 1}月"
@@ -215,14 +238,17 @@ fun LocalDate.periodLabel(period: Period): String = when (period) {
 }
 
 /**
- * 最近一次记快照是什么时候。
+ * When the most recent snapshot was recorded.
  *
- * 「记快照不记流水」的直接后果：净值这个数字**不会自己更新**，三个月前的记录
- * 和今天的记录在界面上长得一样。所以日期和"多久以前"都要说，
- * 让用户自己判断顶上那个数还算不算数 —— 这里不替他下"该更新了"的结论，
- * 更新节奏因人而异（月度记账的人和季度记账的人对"旧"的容忍度差一个数量级）。
+ * A direct consequence of "record snapshots, not transactions": the net worth figure
+ * **doesn't update itself** — a record from three months ago looks identical on screen to
+ * one from today. So both the date and "how long ago" must be stated, letting the user
+ * judge for themselves whether the number at the top still counts — this doesn't hand down
+ * a conclusion of "you should update now"; update cadence varies by person (someone who
+ * records monthly and someone who records quarterly have tolerances for "stale" that differ
+ * by an order of magnitude).
  *
- * @return 一条快照都没有时返回 null，调用方不显示这一行。
+ * @return null when there isn't a single snapshot yet; the caller doesn't show this line.
  */
 fun lastRecordDescription(date: LocalDate?, ageDays: Int?): String? {
     if (date == null) return null
@@ -236,12 +262,12 @@ fun lastRecordDescription(date: LocalDate?, ageDays: Int?): String? {
 }
 
 /**
- * 基点 → 百分比字符串。例：1234 → "12.34%"，-500 → "-5.00%"
+ * Basis points → percentage string. Example: 1234 → "12.34%", -500 → "-5.00%"
  */
 fun Int.bpToPercent(decimals: Int = 2, withSign: Boolean = false): String {
     val negative = this < 0
     val magnitude = abs(this)
-    // 基点：10000 = 100%，所以 1% = 100bp
+    // Basis points: 10000 = 100%, so 1% = 100bp
     val whole = magnitude / 100
     val frac = magnitude % 100
 
@@ -259,19 +285,20 @@ fun Int.bpToPercent(decimals: Int = 2, withSign: Boolean = false): String {
 }
 
 /**
- * 变化量的百分比：正数带 `+`、负数带 `-`、**零不带号**。
+ * Percentage for a change amount: positive gets `+`, negative gets `-`, **zero gets no sign**.
  *
- * `bpToPercent(withSign = true)` 会把 0 排成 "+0.00%" —— 读起来像"涨了 0"，
- * 和金额那边 [Money.formatSigned] 的处理保持一致。
+ * `bpToPercent(withSign = true)` would lay 0 out as "+0.00%" — reads like "rose by 0" —
+ * kept consistent with how [Money.formatSigned] handles amounts.
  */
 fun Int.bpToSignedPercent(): String = bpToPercent(withSign = this > 0)
 
 /**
- * 基点预填到百分比输入框用的格式：**不带 % 号、不带多余的 0**。
- * 3000 → "30"，1250 → "12.5"
+ * Format used to pre-fill basis points into a percentage input field: **no `%` sign, no
+ * trailing zeros**. 3000 → "30", 1250 → "12.5"
  *
- * 不变量：本函数的输出必须能被 [parsePercentToBp] 解析回原值。有测试锁着 ——
- * 这是从「预填带千分位导致保存永久禁用」那个 bug 学到的教训。
+ * Invariant: this function's output must be parseable back to the original value by
+ * [parsePercentToBp]. Enforced by a test — this is the lesson learned from the
+ * "pre-filling with thousands separators permanently disables Save" bug.
  */
 fun Int.bpToInputPercent(): String {
     val whole = this / 100
@@ -281,14 +308,16 @@ fun Int.bpToInputPercent(): String {
 }
 
 /**
- * 百分比字符串 → 基点。`"30"` → 3000，`"12.5"` → 1250。
+ * Percentage string → basis points. `"30"` → 3000, `"12.5"` → 1250.
  *
- * 复用统一的定点解析器：百分比保留两位小数正好等于基点（1% = 100bp），
- * 所以 scale 就是 2 —— 和金额用同一条代码路径，不走 Double。
+ * Reuses the unified fixed-point parser: keeping percentages to two decimal places maps
+ * exactly onto basis points (1% = 100bp), so scale is just 2 — the same code path as
+ * amounts, no Double involved.
  */
 fun parsePercentToBp(text: String): Int? =
     parseMoneyMinor(text)?.takeIf { it in 0..TargetAllocation.TOTAL_BP }?.toInt()
 
-/** 目标配置比例之和的可读描述，用于校验提示。 */
+/** A human-readable description of the target allocation percentages' sum, used for
+ * validation hints. */
 fun TargetAllocation.sumDescription(): String =
     "${sumBp.bpToPercent(decimals = 0)} / 100%"

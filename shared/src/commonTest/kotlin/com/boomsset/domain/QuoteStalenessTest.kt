@@ -8,11 +8,13 @@ import kotlin.test.Test
 import kotlin.time.Instant
 
 /**
- * 行情新鲜度。
+ * Quote freshness.
  *
- * 这块的意义：腾讯接口是**非官方**的，随时可能失效。失效时 `RateRefresher` 什么都不写，
- * 结转规则会继续用最后一条已存行情 —— 数值不会错，但用户会以为看的是当前市价。
- * domain.md 因此要求「UI 上要能看出来这个价格是 3 天前的」。
+ * Why this matters: the Tencent API is **unofficial** and can stop working at any time.
+ * When it does, `RateRefresher` writes nothing, and the carry-forward rule keeps using the
+ * last stored quote -- the number itself won't be wrong, but the user will think they're
+ * looking at the current market price. domain.md therefore requires that "the UI must make
+ * it visible that this price is 3 days old."
  */
 class QuoteStalenessTest {
 
@@ -45,29 +47,30 @@ class QuoteStalenessTest {
     }
 
     @Test
-    fun `当天的行情不算过期`() {
+    fun `a same-day quote does not count as stale`() {
         val row = stockWithQuote("2026-07-30")
         row.priceAgeDays shouldBe 0
         row.isPriceStale shouldBe false
     }
 
     @Test
-    fun `三天内不算过期 因为周末本来就没有行情`() {
-        // 阈值取 3 天而不是 1 天：周末+节假日会让 1 天在每个周一之前都误报。
-        // 这里不建交易日历 —— 维护各市场节假日表的成本远高于收益。
-        stockWithQuote("2026-07-28").isPriceStale shouldBe false   // 2 天前
-        stockWithQuote("2026-07-27").isPriceStale shouldBe false   // 3 天前
+    fun `within three days does not count as stale, since weekends have no quotes anyway`() {
+        // The threshold is 3 days, not 1: weekends and holidays would make a 1-day threshold
+        // falsely trigger before every Monday. We don't build a trading calendar here --
+        // maintaining per-market holiday tables costs far more than it's worth.
+        stockWithQuote("2026-07-28").isPriceStale shouldBe false   // 2 days ago
+        stockWithQuote("2026-07-27").isPriceStale shouldBe false   // 3 days ago
     }
 
     @Test
-    fun `超过三天算过期`() {
+    fun `more than three days counts as stale`() {
         val row = stockWithQuote("2026-07-25")
         row.priceAgeDays shouldBe 5
         row.isPriceStale shouldBe true
     }
 
     @Test
-    fun `没有行情时不是过期而是没有`() {
+    fun `having no quote is not stale, it's absent`() {
         val data = PortfolioData(
             assets = listOf(
                 Asset(
@@ -89,13 +92,14 @@ class QuoteStalenessTest {
 
         row.quote.shouldBeNull()
         row.priceAgeDays.shouldBeNull()
-        // 「没有行情」和「行情过期」是两件事 —— 前者要引导用户手填，后者只是提醒
+        // "no quote" and "stale quote" are two different things -- the former should prompt
+        // the user to fill in a value manually, the latter is just a heads-up
         row.isPriceStale shouldBe false
         row.isUnpriced shouldBe true
     }
 
     @Test
-    fun `MANUAL 资产没有行情概念`() {
+    fun `MANUAL assets have no concept of a quote`() {
         val data = PortfolioData(
             assets = listOf(
                 Asset(
@@ -117,7 +121,7 @@ class QuoteStalenessTest {
     }
 
     @Test
-    fun `非法日期字符串返回null而不是崩溃或猜`() {
+    fun `an invalid date string returns null instead of crashing or guessing`() {
         daysBetween("not-a-date", today).shouldBeNull()
         daysBetween("2026-07-25", today) shouldBe 5
     }

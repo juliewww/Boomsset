@@ -34,11 +34,11 @@ class PortfolioSeriesCalculatorTest {
             recordedAt = Instant.fromEpochMilliseconds(0),
         )
 
-    // ---------- 取样日期 ----------
+    // ---------- Sample dates ----------
 
     @Test
-    fun `按月取样最后一个点是今天而不是月末`() {
-        // 当前周期还没结束，用未来的月末取样会得到和"现在"不符的净值
+    fun `sampling by month, the last point is today, not the end of the month`() {
+        // The current period hasn't ended yet; sampling at a future month-end would give a net worth that doesn't match "now"
         val dates = periodSampleDates(today, Period.MONTH, count = 3)
         dates shouldHaveSize 3
         dates.last() shouldBe today
@@ -47,26 +47,26 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `按季取样落在季度末`() {
+    fun `sampling by quarter lands on quarter-end`() {
         val dates = periodSampleDates(today, Period.QUARTER, count = 3)
-        dates.last() shouldBe today                      // 2026 Q3 未结束
+        dates.last() shouldBe today                      // 2026 Q3 hasn't ended
         dates[1] shouldBe LocalDate(2026, 6, 30)         // Q2
         dates[0] shouldBe LocalDate(2026, 3, 31)         // Q1
     }
 
     @Test
-    fun `按年取样落在年末`() {
+    fun `sampling by year lands on year-end`() {
         val dates = periodSampleDates(today, Period.YEAR, count = 3)
         dates.last() shouldBe today
         dates[1] shouldBe LocalDate(2025, 12, 31)
         dates[0] shouldBe LocalDate(2024, 12, 31)
     }
 
-    // ---------- 结转 ----------
+    // ---------- Carry-forward ----------
 
     @Test
-    fun `没有新快照的月份沿用上次估值`() {
-        // 5 月录了一次 10 万，之后没再更新 —— 6 月和 7 月都应该是 10 万，不是 0
+    fun `a month with no new snapshot carries forward the last valuation`() {
+        // 100,000 recorded in May, no update since -- both June and July should be 100,000, not 0
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 5, 20), 100_000_00)),
@@ -86,8 +86,8 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `资产创建之前的时点不计入`() {
-        // 7 月才录入的资产，5、6 月的净值应当是 0 —— 不是把它当成一直存在
+    fun `points before an asset's creation are not counted`() {
+        // An asset only recorded in July should show 0 net worth for May and June -- not as if it always existed
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
@@ -107,13 +107,13 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `归零快照让已归档资产停止贡献净值`() {
-        // 归档时追加的 0 值快照，靠结转规则让该资产之后一直是 0
+    fun `a zeroing snapshot stops an archived asset from contributing to net worth`() {
+        // The 0-value snapshot appended on archiving relies on the carry-forward rule to keep that asset at 0 afterward
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(
                 manual(1, 1, LocalDate(2026, 5, 20), 100_000_00),
-                manual(2, 1, LocalDate(2026, 6, 15), 0),   // 卖出归档
+                manual(2, 1, LocalDate(2026, 6, 15), 0),   // sold and archived
             ),
             quotes = emptyList(),
             fxRates = emptyList(),
@@ -130,17 +130,18 @@ class PortfolioSeriesCalculatorTest {
         )
     }
 
-    // ---------- 裁剪"资产存在之前"的取样点 ----------
+    // ---------- Trimming sample points from "before the asset existed" ----------
 
     /**
-     * 回归测试。实际使用反馈：按年/按季看的时候，账号才用了几个月，
-     * 请求的 12 个取样点里前面一大截全是资产还不存在时的 0 值 —— 图表被这些
-     * "没有数据"的点占满，最近几个月反而挤在很小的一段里。
+     * Regression test. Real-world feedback: when viewing by year/quarter, an account that's
+     * only a few months old ends up with most of the requested 12 sample points being 0-value
+     * points from before any asset existed -- the chart gets filled with these "no data"
+     * points, and the recent months get squeezed into a tiny sliver.
      *
-     * `trimBeforeFirstSnapshot = true` 应当丢掉那些点，只留下有真实历史的部分。
+     * `trimBeforeFirstSnapshot = true` should drop those points, keeping only the portion with real history.
      */
     @Test
-    fun `裁剪时只保留第一条快照之后的取样点`() {
+    fun `when trimming, only sample points after the first snapshot are kept`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
@@ -152,22 +153,22 @@ class PortfolioSeriesCalculatorTest {
             data, Period.MONTH, cny, today, zone, pointCount = 3, trimBeforeFirstSnapshot = true,
         )
 
-        // 不裁的话是 3 个点（5、6、7 月，前两个是 0）；裁剪后只剩 7 月这一个
+        // Without trimming there would be 3 points (May/June/July, first two at 0); after trimming, only July remains
         series.points.map { it.netWorth } shouldBe listOf(Money(50_000_00))
         series.dates shouldBe listOf(today)
     }
 
     /**
-     * 归档不是"没有数据" —— 资产真实存在过，只是后来清零了。
-     * 那段历史不该被 trim 当成"账户还没开始"抹掉。
+     * Archiving is not "no data" -- the asset genuinely existed, it was just zeroed out later.
+     * That history should not be erased by trim as if "the account hadn't started yet".
      */
     @Test
-    fun `裁剪不会抹掉归零之后的真实历史`() {
+    fun `trimming does not erase real history after a zeroing snapshot`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(
                 manual(1, 1, LocalDate(2026, 5, 20), 100_000_00),
-                manual(2, 1, LocalDate(2026, 6, 15), 0), // 卖出归档
+                manual(2, 1, LocalDate(2026, 6, 15), 0), // sold and archived
             ),
             quotes = emptyList(),
             fxRates = emptyList(),
@@ -177,7 +178,7 @@ class PortfolioSeriesCalculatorTest {
             data, Period.MONTH, cny, today, zone, pointCount = 3, trimBeforeFirstSnapshot = true,
         )
 
-        // 第一条快照在 5 月，5/6/7 三个点都该保留 —— 6、7 月是 0 是真实归档后的状态，不是被裁掉了
+        // The first snapshot is in May, so all three points (May/June/July) should be kept -- June/July at 0 is genuinely the post-archive state, not something trimmed away
         series.points.map { it.netWorth } shouldBe listOf(
             Money(100_000_00),
             Money.ZERO,
@@ -185,9 +186,9 @@ class PortfolioSeriesCalculatorTest {
         )
     }
 
-    /** 不开裁剪时行为必须和以前完全一样 —— 默认值不能悄悄改变现有调用方的语义。 */
+    /** With trimming off, the behavior must be exactly the same as before -- the default must not silently change existing callers' semantics. */
     @Test
-    fun `不裁剪时行为和默认一致`() {
+    fun `behavior without trimming matches the previous default`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
@@ -202,9 +203,9 @@ class PortfolioSeriesCalculatorTest {
         series.points.map { it.netWorth } shouldBe listOf(Money.ZERO, Money.ZERO, Money(50_000_00))
     }
 
-    /** 一条快照都没有（零资产）时裁剪没有意义，不该崩、也不该把点数削成 0。 */
+    /** With zero snapshots (zero assets), trimming is meaningless -- it must not crash, nor should it reduce the point count to 0. */
     @Test
-    fun `零资产时裁剪不报错`() {
+    fun `trimming does not error out when there are zero assets`() {
         val series = PortfolioSeriesCalculator.buildSeries(
             PortfolioData.EMPTY, Period.MONTH, cny, today, zone, pointCount = 3, trimBeforeFirstSnapshot = true,
         )
@@ -213,8 +214,8 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `历史行情按当期取值而不是用最新价`() {
-        // 6 月单价 100，7 月涨到 200。6 月那个点必须用 100 算，否则历史曲线被今天的价格污染
+    fun `historical quotes are taken as of that period, not the latest price`() {
+        // Unit price was 100 in June, rising to 200 in July. The June point must be computed using 100, or the historical curve gets contaminated by today's price
         val stock = asset(1, AssetClass.EQUITY)
         val data = PortfolioData(
             assets = listOf(stock),
@@ -239,14 +240,14 @@ class PortfolioSeriesCalculatorTest {
             data, Period.MONTH, cny, today, zone, pointCount = 2,
         )
 
-        // 6 月末：100 股 × 100 元 = 1 万；7 月：100 股 × 200 元 = 2 万
+        // End of June: 100 shares x 100 yuan = 10,000; July: 100 shares x 200 yuan = 20,000
         series.points.map { it.netWorth } shouldBe listOf(Money(10_000_00), Money(20_000_00))
     }
 
-    // ---------- 增长率 ----------
+    // ---------- Growth rate ----------
 
     @Test
-    fun `区间增长率基于首尾两点`() {
+    fun `the period growth rate is based on the first and last points`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(
@@ -265,7 +266,7 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `期初为零时区间增长率为null`() {
+    fun `the period growth rate is null when the starting value is zero`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
@@ -281,9 +282,10 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `变化额和增长率取同一对端点`() {
-        // 顶部卡片同时显示 "+¥10,000" 和 "+10%" —— 两个必须是同一段区间算出来的，
-        // 否则金额和百分比互相矛盾（一个说涨一个说跌都可能）
+    fun `the absolute change and the growth rate use the same pair of endpoints`() {
+        // The top card shows both "+CNY 10,000" and "+10%" -- both must be computed from the
+        // same period, otherwise the amount and percentage could contradict each other (one
+        // could even say up while the other says down)
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(
@@ -300,14 +302,15 @@ class PortfolioSeriesCalculatorTest {
 
         series.growthAbsolute shouldBe Money(10_000_00)
         series.growthBp shouldBe 1000
-        // 基准日期必须是首个取样点，UI 上写成"相比 2026年5月"
+        // The baseline date must be the first sample point; the UI writes this as "compared to May 2026"
         series.baselineDate shouldBe series.dates.first()
     }
 
     @Test
-    fun `只有一个取样点时没有变化额也没有基准日期`() {
-        // 期初为 0 那条测的是"增长率无意义"；这条测的是"连期初都不存在"——
-        // 第一次记完快照 + trim 之后就是这个状态，UI 要显示"只有一次记录"而不是 ¥0
+    fun `with only one sample point, there is neither an absolute change nor a baseline date`() {
+        // The "starting value is 0" test above covers "growth rate is meaningless"; this one
+        // covers "there isn't even a starting point" -- this is the state right after the
+        // first snapshot plus trim, and the UI should show "only recorded once" instead of CNY 0
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 7, 10), 50_000_00)),
@@ -326,10 +329,12 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `两端估值覆盖面不同时不给变化额也不给增长率`() {
-        // 实机复现（USD 视图）：8 月那天没有历史汇率 → 那个点的资产整个估不出值、
-        // 净值算成 0。拿它当期初，顶部卡片会写成"+$13,097.04 · 相比 2026年8月"——
-        // 读起来像"这个月从零挣出了全部身家"，纯属虚构
+    fun `when valuation coverage differs between the two endpoints, neither the absolute change nor the growth rate is given`() {
+        // Reproduced on a real device (USD view): August had no historical exchange rate ->
+        // the asset for that point couldn't be valued at all, so net worth computed as 0.
+        // Using it as the starting point, the top card would read "+$13,097.04 - compared to
+        // August 2026" -- which reads as "earned an entire fortune from zero this month",
+        // pure fiction
         val early = NetWorthPoint(
             asOf = LocalDate(2026, 8, 31).endOfDayIn(zone),
             baseCurrency = "USD",
@@ -350,15 +355,17 @@ class PortfolioSeriesCalculatorTest {
             points = listOf(early, late),
         )
 
-        series.hasBaseline shouldBe true   // 点是有两个的，不是"只记过一次"
+        series.hasBaseline shouldBe true   // there really are two points here, it's not "only recorded once"
         series.growthAbsolute.shouldBeNull()
         series.growthBp.shouldBeNull()
     }
 
     @Test
-    fun `两端都估不出同一项资产时给变化额但不给百分比`() {
-        // 行情接口挂掉那种情况：房子两端都估不出，剩下部分的变化额是真实的
-        // （比较的是同一个子集），但百分比的分母是个已知低估的净值 —— 会把涨幅放大
+    fun `when the same asset is unpriced at both endpoints, an absolute change is given but not a percentage`() {
+        // The scenario where the quote API is down: the house can't be valued at either end,
+        // so the absolute change on the remaining part is genuine (comparing the same subset),
+        // but the percentage's denominator is a net worth known to be understated -- it would
+        // inflate the growth rate
         fun point(day: LocalDate, assets: Long) = NetWorthPoint(
             asOf = day.endOfDayIn(zone),
             baseCurrency = cny,
@@ -377,10 +384,10 @@ class PortfolioSeriesCalculatorTest {
         series.growthBp.shouldBeNull()
     }
 
-    // ---------- 数据新鲜度 ----------
+    // ---------- Data freshness ----------
 
     @Test
-    fun `最近记录日期取全部资产里最新的那条快照`() {
+    fun `the last recorded date is the latest snapshot across all assets`() {
         val data = PortfolioData(
             assets = listOf(asset(1), asset(2)),
             snapshots = listOf(
@@ -396,16 +403,17 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `已归档资产的归零快照不算最近记录`() {
-        // 归档会追加一条 0 值快照。拿它当"最近记录"会让一次归档把整个组合
-        // 伪装成刚更新过 —— 而用户其实好几个月没维护过任何估值了
+    fun `an archived asset's zeroing snapshot does not count as the last recorded date`() {
+        // Archiving appends a 0-value snapshot. Treating it as the "last recorded date" would
+        // let a single archive action disguise the whole portfolio as freshly updated --
+        // when in fact the user hasn't touched any valuation in months
         val active = asset(1)
         val archived = asset(2).copy(archivedAt = Instant.fromEpochMilliseconds(1))
         val data = PortfolioData(
             assets = listOf(active, archived),
             snapshots = listOf(
                 manual(1, 1, LocalDate(2026, 5, 10), 100_000_00),
-                manual(2, 2, LocalDate(2026, 7, 20), 0),   // 归档的归零快照
+                manual(2, 2, LocalDate(2026, 7, 20), 0),   // the zeroing snapshot from archiving
             ),
             quotes = emptyList(),
             fxRates = emptyList(),
@@ -415,7 +423,7 @@ class PortfolioSeriesCalculatorTest {
     }
 
     @Test
-    fun `一条快照都没有时最近记录日期为null`() {
+    fun `the last recorded date is null when there are no snapshots at all`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = emptyList(),
@@ -426,10 +434,10 @@ class PortfolioSeriesCalculatorTest {
         PortfolioSeriesCalculator.lastRecordedDate(data, zone).shouldBeNull()
     }
 
-    // ---------- 配置视图 ----------
+    // ---------- Allocation view ----------
 
     @Test
-    fun `当前配置用当天数据且负债归属抵扣`() {
+    fun `the current allocation uses today's data with liability attribution netted out`() {
         val house = asset(1, AssetClass.ALTERNATIVE)
         val mortgage = asset(2, AssetClass.ALTERNATIVE, liability = true)
         val cash = asset(3, AssetClass.LIQUID)
@@ -452,16 +460,19 @@ class PortfolioSeriesCalculatorTest {
         view.shareBp(AssetClass.LIQUID) shouldBe 5000
     }
 
-    // ---------- 按大类的时间序列 ----------
+    // ---------- Time series by class ----------
 
     /**
-     * 两条序列在同一页上换着看（一个开关切换），x 轴**必须逐点对齐**。
+     * The two series are toggled between on the same page (via a single switch), so the x-axis
+     * **must line up point for point**.
      *
-     * 各算一遍取样日期是行不通的：只要有一处裁剪判据写得不一样，两张图就会错开一格，
-     * 而这种错位在界面上只表现为"数字有点怪"，很难联想到是取样点对不上。
+     * Computing sample dates separately for each doesn't work: if even one trimming criterion
+     * is written slightly differently, the two charts will be off by a step, and on screen
+     * that misalignment shows up only as "the numbers look a bit odd", which is hard to trace
+     * back to mismatched sample points.
      */
     @Test
-    fun `按大类序列的取样日期和净值序列完全一致`() {
+    fun `the by-class series' sample dates exactly match the net worth series'`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 6, 10), 50_000_00)),
@@ -483,9 +494,9 @@ class PortfolioSeriesCalculatorTest {
         }
     }
 
-    /** 结转语义对分类序列同样成立：没记新快照的月份沿用上次估值，不是 0。 */
+    /** The carry-forward semantics apply to the by-class series too: a month with no new snapshot carries forward the last valuation, not 0. */
     @Test
-    fun `按大类序列同样结转上次估值`() {
+    fun `the by-class series also carries forward the last valuation`() {
         val data = PortfolioData(
             assets = listOf(asset(1, AssetClass.EQUITY)),
             snapshots = listOf(manual(1, 1, LocalDate(2026, 5, 20), 80_000_00)),
@@ -502,18 +513,19 @@ class PortfolioSeriesCalculatorTest {
             Money(80_000_00),
             Money(80_000_00),
         )
-        // 没有敞口的大类给 0，不是缺项 —— 图上那一段就是 0 高度
+        // A class with no exposure gives 0, not a missing entry -- that segment on the chart is just 0 height
         series.netExposures(AssetClass.PROTECTION) shouldBe listOf(Money.ZERO, Money.ZERO, Money.ZERO)
     }
 
     /**
-     * 各段合计必须等于该点 `AllocationView.netWorth`。
+     * The sum of the segments must equal that point's `AllocationView.netWorth`.
      *
-     * 柱子的高度是各段相加出来的，而顶部的增长率标签是拿合计算的 —— 两者只要有一处
-     * 用了不同口径（比如合计漏掉负债），柱子和它头上的百分比就会互相矛盾。
+     * The bar's height is the sum of its segments, while the growth rate label on top is
+     * computed from the total -- if even one of these uses a different convention (say, the
+     * total omits liabilities), the bar and the percentage above it will contradict each other.
      */
     @Test
-    fun `各类合计等于该点的配置口径净值`() {
+    fun `the sum across classes equals that point's allocation-basis net worth`() {
         val house = asset(1, AssetClass.ALTERNATIVE)
         val mortgage = asset(2, AssetClass.ALTERNATIVE, liability = true)
         val cash = asset(3, AssetClass.LIQUID)
@@ -536,9 +548,9 @@ class PortfolioSeriesCalculatorTest {
         series.totals(AssetClass.displayOrder).last() shouldBe Money(2_000_000_00)
     }
 
-    /** 不计入配置的资产在净值里、不在这条序列里。UI 必须说明这个差额，所以先在这里锁住它。 */
+    /** An asset excluded from allocation is counted in net worth but not in this series. The UI must explain that gap, so it's locked in here first. */
     @Test
-    fun `不计入配置的资产不在按大类序列里`() {
+    fun `an asset excluded from allocation is not in the by-class series`() {
         val ownHome = asset(1, AssetClass.ALTERNATIVE).copy(includeInAllocation = false)
         val cash = asset(2, AssetClass.LIQUID)
         val data = PortfolioData(
@@ -564,13 +576,15 @@ class PortfolioSeriesCalculatorTest {
     }
 
     /**
-     * 负敞口要能被检出来。
+     * A negative exposure must be detectable.
      *
-     * 堆叠面积图靠"累计值单调递增"才成立，有负段就会分层错位；趋势图必须先问这个开关，
-     * 命中就退回各类独立曲线。检不出来的后果是一张看着正常、其实画错的图。
+     * A stacked area chart only works because cumulative values are monotonically increasing;
+     * a negative segment throws the layering out of alignment. The trend chart must check this
+     * flag first, and fall back to independent per-class curves when it's tripped. Failing to
+     * detect it results in a chart that looks fine but is actually drawn wrong.
      */
     @Test
-    fun `车贷超过车值时检出负敞口`() {
+    fun `a negative exposure is detected when a car loan exceeds the car's value`() {
         val car = asset(1, AssetClass.ALTERNATIVE)
         val loan = asset(2, AssetClass.ALTERNATIVE, liability = true)
         val data = PortfolioData(
@@ -589,7 +603,7 @@ class PortfolioSeriesCalculatorTest {
 
         series.netExposures(AssetClass.ALTERNATIVE).last() shouldBe Money(-50_000_00)
         series.hasNegativeExposure(AssetClass.displayOrder) shouldBe true
-        // 只看没有负敞口的那几类时，堆叠面积仍然是安全的 —— 判据必须跟着"可见的类"走
+        // Looking only at classes with no negative exposure, the stacked area is still safe -- the check must follow "the visible classes"
         series.hasNegativeExposure(listOf(AssetClass.LIQUID, AssetClass.EQUITY)) shouldBe false
     }
 }

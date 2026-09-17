@@ -1,34 +1,39 @@
 package com.boomsset.domain
 
 /**
- * 五大类 —— 分类体系的第一层，服务于**资产配置比例**。
+ * The five top-level classes — the first layer of the classification system, serving
+ * **asset allocation ratios**.
  *
- * 框架是战略资产配置（SAA）的四大类，加一个「保障类」适配国内配置年金险/增额寿的习惯。
- * 这一层必须**少而稳定**（比例视图要求如此）；可扩展的那层是 [AssetSubtype]。
+ * The framework is the four classes of Strategic Asset Allocation (SAA), plus a
+ * "protection" class to fit the domestic habit of including annuities/increasing whole
+ * life insurance in one's allocation. This layer must stay **small and stable** (the
+ * allocation view requires it); the extensible layer is [AssetSubtype].
  *
- * 注意：资产配置领域没有单一"最高权威"。SAA 四大类是机构界最通用的顶层划分，
- * 理论基础是 Markowitz 的现代投资组合理论。中文流传的「标准普尔家庭资产象限图」
- * 并非标普官方研究 —— UI 上引用来源时别写成"标普研究表明"。见 docs/domain.md。
+ * Note: there is no single "supreme authority" in the asset allocation domain. The four
+ * SAA classes are the most common top-level split in institutional practice, grounded in
+ * Markowitz's Modern Portfolio Theory. The "S&P family asset quadrant chart" that
+ * circulates in Chinese material is not an official S&P study — don't cite it in the UI
+ * as "S&P research shows...". See docs/domain.md.
  */
 enum class AssetClass {
-    /** 流动资金：微信钱包、支付宝、银行活期、货币基金、现金 */
+    /** Liquid funds: WeChat Wallet, Alipay, bank current deposits, money market funds, cash */
     LIQUID,
 
-    /** 固定收益：银行定期、国债、债券基金、银行理财、企业债 */
+    /** Fixed income: bank time deposits, government bonds, bond funds, bank wealth products, corporate bonds */
     FIXED_INCOME,
 
-    /** 权益类：A股、港股、美股、股票基金、指数基金、期权 */
+    /** Equity: A-shares, Hong Kong stocks, US stocks, equity funds, index funds, options */
     EQUITY,
 
-    /** 另类实物：房产、黄金、加密货币、车辆、收藏品 */
+    /** Alternative/physical: real estate, gold, crypto, vehicles, collectibles */
     ALTERNATIVE,
 
-    /** 保障类：年金险、增额终身寿（按现金价值计值） */
+    /** Protection: annuity insurance, increasing whole life insurance (valued by cash value) */
     PROTECTION,
     ;
 
     companion object {
-        /** UI 上的固定展示顺序 —— 从流动性最高到最低。 */
+        /** Fixed display order in the UI — from most to least liquid. */
         val displayOrder: List<AssetClass> =
             listOf(LIQUID, FIXED_INCOME, EQUITY, ALTERNATIVE, PROTECTION)
     }

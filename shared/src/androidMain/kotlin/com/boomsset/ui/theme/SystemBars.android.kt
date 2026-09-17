@@ -13,13 +13,15 @@ actual fun ApplySystemBarsAppearance(darkTheme: Boolean) {
     val view = LocalView.current
     if (view.isInEditMode) return
 
-    // SideEffect 而不是 LaunchedEffect：这只是把状态同步到窗口，没有挂起操作，
-    // 而且每次重组后都该生效（主题跟随系统切换时不需要额外触发）。
+    // SideEffect rather than LaunchedEffect: this just syncs state to the window,
+    // there's no suspending work, and it should take effect after every recomposition
+    // (no extra trigger needed when the theme follows the system toggle).
     SideEffect {
         val window = view.context.findActivity()?.window ?: return@SideEffect
         WindowCompat.getInsetsController(window, view).apply {
-            // 浅色主题 → 深色图标。名字容易读反：Light 指的是**背景**浅，
-            // 所以图标要画成深色。
+            // Light theme → dark icons. The name is easy to misread the wrong way:
+            // "Light" refers to the **background** being light, so the icons need to
+            // be drawn dark.
             isAppearanceLightStatusBars = !darkTheme
             isAppearanceLightNavigationBars = !darkTheme
         }
@@ -27,11 +29,11 @@ actual fun ApplySystemBarsAppearance(darkTheme: Boolean) {
 }
 
 /**
- * 顺着 ContextWrapper 链找 Activity。
+ * Walk the ContextWrapper chain to find the Activity.
  *
- * 不能直接 `view.context as Activity` —— Compose 的 LocalView 拿到的 context
- * 可能是包了一层的（主题包装、AppCompat 的 ContextThemeWrapper 等），
- * 直接强转在部分场景下会 ClassCastException。
+ * Can't just do `view.context as Activity` — the context Compose's LocalView gets may
+ * be wrapped (theme wrapping, AppCompat's ContextThemeWrapper, etc.), and casting
+ * directly would throw ClassCastException in some scenarios.
  */
 private fun Context.findActivity(): Activity? {
     var context: Context? = this

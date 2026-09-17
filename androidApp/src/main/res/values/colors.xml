@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-      图标背景层的颜色。**必须和 tools/appicon/generate.py 里的 FIELD 一致** ——
-      自适应前景把柱子周围的间隙掏成了透明，露出的就是这一层。
-      两边不一致的话，间隙里会出现一圈异色描边。validate.py 会核对。
+      Color of the icon's background layer. **Must match FIELD in tools/appicon/generate.py** —
+      the adaptive foreground carves the gaps around the bars into transparency, and this layer
+      is what shows through. If the two are out of sync, the gaps will show a mismatched-color
+      outline. validate.py checks this.
     -->
     <color name="ic_launcher_bg">#FFEFF4</color>
 
     <!--
-      系统开屏的底色。**必须和 Theme.kt 的 LightScheme.surface 同值**，
-      否则开屏和启动后的第一屏之间会跳一下色。
-      深色模式那一份在 values-night/colors.xml。
+      Background color of the system splash screen. **Must match Theme.kt's LightScheme.surface**,
+      otherwise there's a color jump between the splash screen and the first screen after launch.
+      The dark-mode counterpart is in values-night/colors.xml.
     -->
     <color name="splash_bg">#FEF9F4</color>
 </resources>

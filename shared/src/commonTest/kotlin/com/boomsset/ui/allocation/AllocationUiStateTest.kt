@@ -14,10 +14,12 @@ import kotlinx.datetime.TimeZone
 import kotlin.test.Test
 
 /**
- * 零资产时「配置」页的状态。
+ * The state of the "Allocation" page when there are zero assets.
  *
- * **这一页在没有任何资产的时候也必须是有用的。** 它回答的是"我打算怎么配"，
- * 这个问题不依赖持仓 —— 而且目标配置恰恰是用户录第一笔资产**之前**就想设的东西。
+ * **This page must still be useful when there are no assets at all.** It answers
+ * "how do I intend to allocate", a question that doesn't depend on holdings — and the
+ * target allocation is exactly the thing a user wants to set **before** recording their
+ * first asset.
  */
 class AllocationUiStateTest {
 
@@ -55,28 +57,34 @@ class AllocationUiStateTest {
     )
 
     /**
-     * 回归测试。实跑时发现：零资产时 `AllocationScreen` 走 `state.isEmpty` 分支，
-     * 只渲染一行"还没有资产，先去净值页添加"，而 `AllocationPicker` ——
-     * **切换/编辑/新建目标配置的唯一入口** —— 写在 `else` 分支里，整块被跳过。
-     * 结果新用户根本够不到目标配置。
+     * Regression test. Found during a real run: with zero assets, `AllocationScreen` took
+     * the `state.isEmpty` branch, which only rendered a single line ("no assets yet, go
+     * add one on the net worth page"), while `AllocationPicker` — **the only entry point
+     * for switching/editing/creating a target allocation** — was written in the `else`
+     * branch and got skipped entirely. As a result, new users had no way at all to reach
+     * the target allocation.
      *
-     * 数据层一直是对的：预设来自 `observeAllocations()`，和持仓无关，零资产时也在。
-     * 纯粹是 UI 路径缺失 —— 和「全部归档后取消不了归档」是同一类 bug，第三次。
+     * The data layer was always correct: the presets come from `observeAllocations()`,
+     * independent of holdings, and are present even at zero assets. It was purely a
+     * missing UI path — the same class of bug as "can't unarchive after archiving
+     * everything", the third occurrence.
      *
-     * 这条测试锁住数据契约（入口需要的东西都在）；**UI 上真的够得到**由
-     * `iosAppUITests/AssetFlowUITest` 的 `testAllocationTargetsReachableWithNoAssets` 兜。
+     * This test locks down the data contract (everything the entry point needs is
+     * present); **that it's actually reachable in the UI** is covered by
+     * `testAllocationTargetsReachableWithNoAssets` in `iosAppUITests/AssetFlowUITest`.
      */
     @Test
-    fun `零资产也是空状态 但目标配置的数据全在`() {
+    fun `zero assets is still an empty state, but all the target allocation data is present`() {
         val state = stateWithNoAssets()
 
         state.isEmpty.shouldBeTrue()
 
-        // 切换用的全部预设
+        // All presets available for switching
         state.allocations.shouldNotBeEmpty()
         state.allocations.map { it.name } shouldBe listOf("稳健", "平衡", "激进")
 
-        // 当前对比的那一套，以及它的比例 —— 空状态要拿它渲染目标预览
+        // The one currently being compared against, plus its ratios — the empty state
+        // needs it to render the target preview
         val active = state.allocations.single { it.isActive }
         active.name shouldBe "平衡"
         active.targetsBp.values.sum() shouldBe TargetAllocation.TOTAL_BP
@@ -84,23 +92,25 @@ class AllocationUiStateTest {
     }
 
     /**
-     * 一套目标都没有时（理论上不该发生，内置预设是 seed 的）也不能白屏 ——
-     * UI 要给出「＋ 新建」的出路。这里锁住状态本身不会崩。
+     * Even when there isn't a single target allocation (shouldn't happen in theory,
+     * since the built-in presets are seeded) it still must not be a blank screen —
+     * the UI needs to offer a "+ Create" way out. This locks down that the state itself
+     * doesn't crash.
      */
     @Test
-    fun `没有任何目标配置时状态仍然可用`() {
+    fun `state is still usable when there are no target allocations at all`() {
         val state = stateWithNoAssets(allocations = emptyList())
 
         state.isEmpty.shouldBeTrue()
         state.allocations shouldBe emptyList()
-        // view 仍然算得出来（净资产为 0），不是 null —— UI 不用处理"读不到数据"
+        // view still computes (net worth is 0), not null — the UI doesn't need to handle "no data"
         state.view.shouldNotBeNull()
         state.view.target shouldBe null
     }
 
     @Test
-    fun `有资产时不是空状态`() {
-        // 空状态的判据是"每个大类的资产都为零"，加一笔就应当翻转
+    fun `not an empty state once there are assets`() {
+        // The empty-state criterion is "every asset class has zero exposure"; adding one asset should flip it
         val state = stateWithNoAssets()
         state.isEmpty.shouldBeTrue()
 

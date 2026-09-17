@@ -11,7 +11,7 @@ import com.boomsset.domain.ValuationMode
 import com.boomsset.domain.ValuationMode.MANUAL
 import com.boomsset.domain.ValuationMode.QUOTED
 
-/** 内置品种的定义。seed 用 INSERT OR IGNORE，可以反复执行。 */
+/** Definition of a built-in subtype. Seeding uses INSERT OR IGNORE, so it can run repeatedly. */
 data class BuiltInSubtype(
     val name: String,
     val assetClass: AssetClass,
@@ -19,25 +19,26 @@ data class BuiltInSubtype(
 )
 
 /**
- * 内置品种清单。用户可以另外自定义添加。
+ * List of built-in subtypes. Users can additionally add their own custom ones.
  *
- * 内置项**不允许删除**（历史资产会指向空品种），只能隐藏。
+ * Built-in entries **cannot be deleted** (historical assets would end up pointing at a
+ * nonexistent subtype) — they can only be hidden.
  */
 val BUILT_IN_SUBTYPES: List<BuiltInSubtype> = listOf(
-    // 流动资金
+    // Liquid funds
     BuiltInSubtype("现金", LIQUID, MANUAL),
     BuiltInSubtype("微信钱包", LIQUID, MANUAL),
     BuiltInSubtype("支付宝", LIQUID, MANUAL),
     BuiltInSubtype("银行活期", LIQUID, MANUAL),
     BuiltInSubtype("货币基金", LIQUID, MANUAL),
 
-    // 固定收益
+    // Fixed income
     BuiltInSubtype("银行定期", FIXED_INCOME, MANUAL),
     BuiltInSubtype("银行理财", FIXED_INCOME, MANUAL),
     BuiltInSubtype("国债", FIXED_INCOME, MANUAL),
     BuiltInSubtype("债券基金", FIXED_INCOME, QUOTED),
 
-    // 权益类
+    // Equity
     BuiltInSubtype("A股", EQUITY, QUOTED),
     BuiltInSubtype("港股", EQUITY, QUOTED),
     BuiltInSubtype("美股", EQUITY, QUOTED),
@@ -45,18 +46,18 @@ val BUILT_IN_SUBTYPES: List<BuiltInSubtype> = listOf(
     BuiltInSubtype("指数基金", EQUITY, QUOTED),
     BuiltInSubtype("公司期权", EQUITY, MANUAL),
 
-    // 另类实物
+    // Alternative / physical assets
     BuiltInSubtype("房产", ALTERNATIVE, MANUAL),
     BuiltInSubtype("黄金", ALTERNATIVE, QUOTED),
     BuiltInSubtype("加密货币", ALTERNATIVE, QUOTED),
     BuiltInSubtype("车辆", ALTERNATIVE, MANUAL),
 
-    // 保障类（按现金价值计值）
+    // Protection (valued at cash value)
     BuiltInSubtype("年金险", PROTECTION, MANUAL),
     BuiltInSubtype("增额终身寿", PROTECTION, MANUAL),
 
-    // 负债侧。每条负债都必须有 assetClass 用于归属抵扣 ——
-    // 无抵押债务归到你会用来偿还它的那类。
+    // Liability side. Every liability must have an assetClass for attribution/offsetting —
+    // unsecured debt is attributed to the class you'd use to pay it off.
     BuiltInSubtype("房贷", ALTERNATIVE, MANUAL),
     BuiltInSubtype("车贷", ALTERNATIVE, MANUAL),
     BuiltInSubtype("信用卡", LIQUID, MANUAL),
@@ -64,27 +65,32 @@ val BUILT_IN_SUBTYPES: List<BuiltInSubtype> = listOf(
 )
 
 /**
- * 哪些内置品种是负债。
+ * Which built-in subtypes are liabilities.
  *
- * **刻意不落到数据库里。** `subtype` 表没有这一列，而加列需要 migration ——
- * 现在已经有真机上的真实数据，为了一个"复选框默认值"去改 schema 不值得。
- * 这里只用来给添加资产时的负债开关**预设初值**，用户随时能改，
- * 判断错了最坏的后果是多点一下。
+ * **Deliberately not persisted to the database.** The `subtype` table has no such column,
+ * and adding one would require a migration — there's already real data on real devices,
+ * and changing the schema just for a "checkbox default value" isn't worth it.
+ * This is only used to **pre-set the initial value** of the liability toggle when adding
+ * an asset; the user can change it at any time, so the worst consequence of getting it
+ * wrong is one extra tap.
  *
- * 按名字匹配。用户自建的品种如果也叫「房贷」会被一并预设为负债 ——
- * 那恰好也是对的。
+ * Matched by name. If a user creates their own subtype also named "房贷" (mortgage), it
+ * will likewise be pre-set as a liability — which happens to be correct too.
  */
 val LIABILITY_SUBTYPE_NAMES: Set<String> = setOf("房贷", "车贷", "信用卡", "消费贷")
 
 /**
- * 内置目标配置预设。
+ * Built-in target allocation presets.
  *
- * ⚠️ **这些数值是行业常见的起点，不是权威处方**，必须允许用户编辑。
- * UI 上请把它们呈现为**通用模板**而非针对该用户的推荐 —— 一个 App 告诉用户
- * "你应该配置 30% 权益"在部分司法辖区可能被认定为投资建议。避免"我们建议你…"的措辞。
+ * ⚠️ **These figures are common industry starting points, not authoritative prescriptions**,
+ * and users must be able to edit them. In the UI, present them as **generic templates**
+ * rather than recommendations tailored to the user — an app telling a user "you should
+ * allocate 30% to equities" could be construed as investment advice in some jurisdictions.
+ * Avoid phrasing like "we recommend...".
  *
- * 另外注意：因为配置分母是全部净资产（含自住房），有房的用户会看到 ALTERNATIVE
- * 远超这里的目标值。那不是 bug，见 docs/domain.md。
+ * Also note: since the allocation denominator is total net assets (including a primary
+ * residence), users who own a home will see ALTERNATIVE far exceed the target value here.
+ * That's not a bug — see docs/domain.md.
  */
 data class AllocationPreset(val name: String, val targetsBp: Map<AssetClass, Int>)
 
@@ -102,7 +108,8 @@ val BUILT_IN_PRESETS: List<AllocationPreset> = listOf(
         mapOf(LIQUID to 500, FIXED_INCOME to 1500, EQUITY to 6500, ALTERNATIVE to 1000, PROTECTION to 500),
     ),
 ).also { presets ->
-    // 每套预设的比例之和必须是 10000，写错了在这里就炸，不要等到 UI 上比例不闭合
+    // Each preset's percentages must sum to 10000; a mistake here should blow up immediately,
+    // not surface later as an unclosed allocation in the UI
     presets.forEach { preset ->
         val sum = preset.targetsBp.values.sum()
         require(sum == TargetAllocation.TOTAL_BP) {

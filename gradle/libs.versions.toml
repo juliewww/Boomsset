@@ -1,19 +1,21 @@
 [versions]
-# ⚠️ 这些版本是 2026-07-28 从 maven-metadata.xml 实测确认的。
-# 升级前请读 docs/stack.md 的「版本兼容性」一节 —— 有几个不能随便跟最新。
+# ⚠️ These versions were confirmed live against maven-metadata.xml on 2026-07-28.
+# Before upgrading, read the "version compatibility" section of docs/stack.md — a few of these can't just be bumped to latest.
 
 kotlin = "2.4.10"
-# ⚠️ 原本想锁 AGP 9.1.0 留在 Kotlin 2.4.x 的官方测试范围内，但实测走不通：
-# androidx 生态的 compileSdk 下限已经到 37（lifecycle 2.11.0、core 1.19.0 都要求），
-# 而 AGP 9.1.0 最高只支持 36。继续锁 36 就得把一堆 androidx 库逐个往回降。
-# 所以升到 9.3.1，代价是超出 Kotlin 官方测试的 AGP 上限。详见 docs/stack.md。
+# ⚠️ We originally wanted to pin AGP 9.1.0 to stay within Kotlin 2.4.x's officially tested range, but that
+# turned out not to work in practice: the androidx ecosystem's minimum compileSdk is already 37
+# (both lifecycle 2.11.0 and core 1.19.0 require it), while AGP 9.1.0 only supports up to 36.
+# Staying pinned to 36 would mean downgrading a bunch of androidx libraries one by one.
+# So we bumped to 9.3.1, at the cost of exceeding Kotlin's officially tested AGP ceiling. See docs/stack.md for details.
 agp = "9.3.1"
-# AGP 9.3 要求 Gradle >= 9.5.0，正好也是 Kotlin 2.4.x 的测试上限
+# AGP 9.3 requires Gradle >= 9.5.0, which also happens to be Kotlin 2.4.x's tested ceiling
 gradle = "9.5.0"
 
 compose = "1.11.1"
-# ⚠️ CMP 的 material3 走**独立版本线**，和 compose 插件版本不一致（插件 1.11.1 时它是 1.9.0）。
-# 用 compose 的版本号去引 material3 会报 "Could not find ...material3:1.11.1"。
+# ⚠️ CMP's material3 follows its **own independent version line**, separate from the compose plugin version
+# (when the plugin is 1.11.1, material3 is 1.9.0). Referencing material3 with the compose version number
+# fails with "Could not find ...material3:1.11.1".
 composeMaterial3 = "1.9.0"
 lifecycle = "2.11.0"
 navigation = "2.9.2"
@@ -32,11 +34,11 @@ turbine = "1.2.1"
 kotest = "6.2.3"
 
 androidxActivity = "1.13.0"
-# fragment 是为了 FragmentActivity —— BiometricPrompt 的构造函数硬性要求它
+# fragment is here for FragmentActivity — a hard requirement of BiometricPrompt's constructor
 androidxFragment = "1.8.9"
 androidxCore = "1.19.0"
-# 1.1.0 是 2021 年的，但它是唯一的 stable。1.4.0 只有 alpha，
-# 不在财务 App 的认证路径上用 alpha。
+# 1.1.0 dates back to 2021, but it's the only stable release. 1.4.0 is alpha-only,
+# and we don't use alpha releases on a financial app's authentication path.
 androidxBiometric = "1.1.0"
 
 androidMinSdk = "26"
@@ -46,43 +48,43 @@ jvmTarget = "17"
 
 [libraries]
 # --- Compose ---
-# 用显式坐标，不用 compose.runtime / compose.material3 那套简写 ——
-# CMP 1.11 起简写已废弃（"Specify dependency directly"）。
+# Uses explicit coordinates instead of the compose.runtime / compose.material3 shorthand —
+# the shorthand has been deprecated since CMP 1.11 ("Specify dependency directly").
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose" }
 compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose" }
 compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "composeMaterial3" }
 compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose" }
 
-# --- 生命周期 / 导航 ---
-# CMP 1.11.1 自带的 lifecycle 是 2.11.0-beta01，这里手动顶到 stable 2.11.0
+# --- Lifecycle / Navigation ---
+# The lifecycle version bundled with CMP 1.11.1 is 2.11.0-beta01; this manually bumps it to stable 2.11.0
 lifecycle-viewmodel-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "navigation" }
 
-# --- 异步 / 序列化 / 时间 ---
+# --- Coroutines / Serialization / Time ---
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
-# 只用它的 LocalDate / TimeZone / 格式化。Instant 和 Clock 用 kotlin.time 标准库的。
+# Only used for its LocalDate / TimeZone / formatting. Instant and Clock come from the kotlin.time standard library.
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "datetime" }
 
-# --- DI ---
+# --- Dependency Injection ---
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel", version.ref = "koin" }
 koin-test = { module = "io.insert-koin:koin-test", version.ref = "koin" }
 
-# --- 本地数据库 ---
+# --- Local database ---
 sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
 sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
 sqldelight-driver-android = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
 sqldelight-driver-native = { module = "app.cash.sqldelight:native-driver", version.ref = "sqldelight" }
-# JVM/JDBC driver，只用于 host 测试 —— 让 schema 和 CHECK 约束能在真实数据库上验证
+# JVM/JDBC driver, used only for host tests — lets schema and CHECK constraints be verified against a real database
 sqldelight-driver-jvm = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
 
-# --- 偏好设置 ---
+# --- Preferences ---
 datastore-preferences-core = { module = "androidx.datastore:datastore-preferences-core", version.ref = "datastore" }
 
-# --- 网络（行情 / 汇率）---
+# --- Networking (quotes / FX rates) ---
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-serialization-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
@@ -91,35 +93,36 @@ ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "kto
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 
-# --- 图表 ---
-# ⚠️ Vico 3.0.0 把 `multiplatform` 模块改名成了 `compose`，并删掉了原来 Android-only 的
-# `compose` 模块。所以现在 `:compose` 才是跨平台的那个，`:multiplatform` 是 2.x 遗留线。
+# --- Charting ---
+# ⚠️ Vico 3.0.0 renamed the `multiplatform` module to `compose`, and removed the old Android-only
+# `compose` module. So `:compose` is now the cross-platform one, and `:multiplatform` is the legacy 2.x line.
 vico-compose = { module = "com.patrykandpatrick.vico:compose", version.ref = "vico" }
 vico-compose-m3 = { module = "com.patrykandpatrick.vico:compose-m3", version.ref = "vico" }
 
-# --- Android 应用入口专用（不进 shared/commonMain）---
+# --- Android app entry point only (not part of shared/commonMain) ---
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
 androidx-fragment-ktx = { module = "androidx.fragment:fragment-ktx", version.ref = "androidxFragment" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
 androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "androidxBiometric" }
 
-# --- 测试 ---
+# --- Testing ---
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
-# 只用断言，不用 Kotest 的 framework/plugin/KSP —— runner 仍是 kotlin-test
+# Assertions only, not Kotest's framework/plugin/KSP — the runner is still kotlin-test
 kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }
 compose-ui-test = { module = "org.jetbrains.compose.ui:ui-test", version.ref = "compose" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
-# 故意没有 org.jetbrains.kotlin.android —— AGP 9.0 起内置 Kotlin 支持，
-# 应用它会直接构建失败。androidApp 只需要 androidApplication + composeCompiler。
+# Deliberately no org.jetbrains.kotlin.android — AGP 9.0+ has built-in Kotlin support,
+# and applying it fails the build outright. androidApp only needs androidApplication + composeCompiler.
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 androidApplication = { id = "com.android.application", version.ref = "agp" }
-# ⚠️ 不是 com.android.library —— AGP 9 起 KMP 模块必须用这个新插件
+# ⚠️ Not com.android.library — AGP 9+ requires KMP modules to use this new plugin
 androidKmpLibrary = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
-# 故意不引 Mokkery：它是编译器插件，兼容表只列到 Kotlin 2.4.0 而我们在 2.4.10。
-# 默认手写 fake；真需要 mock 再考虑 Mockative（KSP 式，不锁 Kotlin 版本）。
+# Deliberately not pulling in Mokkery: it's a compiler plugin whose compatibility table only lists up to
+# Kotlin 2.4.0, while we're on 2.4.10. We hand-write fakes by default; consider Mockative (KSP-based,
+# not pinned to a Kotlin version) if mocking becomes genuinely necessary.

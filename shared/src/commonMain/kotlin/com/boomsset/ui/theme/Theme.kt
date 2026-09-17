@@ -11,87 +11,118 @@ import com.boomsset.ui.LocalGainLossColors
 import com.boomsset.ui.gainLossColorsFor
 
 /**
- * 旺资的品牌配色 —— **中玫瑰**（源自「会飞的猪」吉祥物图标的猪身粉，H 354）。
+ * Boomsset's brand color — **mid-rose** (derived from the "flying pig" mascot icon's body
+ * pink, H 354).
  *
- * ## 这版是怎么来的：从吉祥物色反推主题色
+ * ## How this version came about: deriving the theme color from the mascot's color
  *
- * app icon 换成了「破环而出」的抽象环 → 一只会飞的粉色小猪之后，
- * 顺手问了一句"猪身粉能不能直接当主题色"——**不能，但同色相能**。
- * 猪身原色 `#EFA8C4`（L 0.807，给吉祥物用的浅粉）对页面底只有 **1.81:1**，
- * FAB、导航指示条这些要跳出页面的元素会糊进背景。同一个色相 H 354 往下压出三档候选
- * （亮玫瑰 L 0.68 / 中玫瑰 L 0.59 / 深莓紫红 L 0.43），套进真实界面预览逐个看过。
+ * After the app icon changed from the "breaking out of the ring" abstract design to a
+ * flying pink pig, the natural question came up: "can the pig's body pink just be the
+ * theme color directly?" — **no, but the same hue can.** The pig body's original color
+ * `#EFA8C4` (L 0.807, a light pink meant for the mascot) is only **1.81:1** against the
+ * page background — elements that need to stand out from the page, like the FAB and nav
+ * indicator, would blend into the background. The same hue H 354 was pressed down into
+ * three candidate steps (bright rose L 0.68 / mid-rose L 0.59 / deep berry-plum L 0.43),
+ * and each was tried in a real UI preview.
  *
- * ## ⚠️ 先上过亮玫瑰，实机反馈"和其他颜色割裂"，才换到中玫瑰
+ * ## ⚠️ Bright rose shipped first; real-device feedback said "disjointed from the other
+ * colors," which is what led to switching to mid-rose
  *
- * 亮玫瑰 `#E961A0` 的问题**不在色相，在响度**：它的彩度 **0.180 比五个大类色都高**
- * （大类色 0.110~0.152），亮度 0.68 又**正好落在大类色的区间中间**（0.60~0.72）——
- * 等于它在视觉上"报名参加了大类色那一组"，还是最吵的一个。实机上的表现就是
- * 净值页六个高彩度色互相抢戏、配置页反而看不到品牌色、资产页（几乎没有大类填色）最和谐。
- * 中玫瑰把亮度压到 **0.590，低于全部五个大类色**，于是退回"框架色"那一层：
- * 数据归数据色，品牌归品牌色，层级重新分开。**这是旧深紫檀（L 0.40）从来不打架的同一个机制。**
+ * Bright rose `#E961A0`'s problem **isn't the hue, it's the intensity**: its chroma
+ * **0.180 is higher than all five asset-class colors** (asset-class colors run 0.110~0.152),
+ * and its lightness 0.68 **lands right in the middle of the asset-class colors' range**
+ * (0.60~0.72) — visually, it effectively "enrolled itself into the asset-class color
+ * group," and was the loudest member of it. On a real device this showed up as: the net
+ * worth page's six high-chroma colors competing for attention, the allocation page's brand
+ * color becoming invisible by comparison, and the assets page (which has almost no
+ * asset-class fill) being the only harmonious one. Mid-rose brings the lightness down to
+ * **0.590, below all five asset-class colors**, dropping it back to the "framework color"
+ * layer: data gets data colors, brand gets brand color, the hierarchy is separated again.
+ * **This is the same mechanism that made the old deep-rosewood (L 0.40) never clash.**
  *
- * 顺带解决了两处别扭：**白字终于合格（4.54:1）**，所以 `onPrimary` 回到白色、
- * 开关滑块也不用再手动指定（M3 默认就吃 `onPrimary`）；
- * 导航栏选中态也能直接用 `primary`（对导航栏底 4.07:1），
- * 不用再单独解一个"够亮的玫瑰"（亮玫瑰那版只有 2.82:1，被迫另开一个常量）。
+ * This incidentally fixed two other awkward spots: **white text finally passes (4.54:1)**,
+ * so `onPrimary` goes back to white, and the switch thumb no longer needs to be manually
+ * specified (M3's default already uses `onPrimary`); the nav bar's selected state can also
+ * use `primary` directly (4.07:1 against the nav bar background), no longer needing a
+ * separately-solved "bright enough rose" constant (the bright-rose version was only 2.82:1,
+ * forcing a separate constant to be created).
  *
- * ## 「保障类」不用再挪
+ * ## "Protection" doesn't need to move again
  *
- * 上一版（深紫檀 H 315）把「保障类」从紫挪去了金黄，因为紫占住了那个色相位。
- * 玫瑰 H 354 离五个大类色更远（最小 ΔE 21.4），**不需要再挪**——
- * ChartColors.kt 保持金黄不变，这条只是记录"这次没有连带影响"，不是新决定。
+ * The previous version (deep-rosewood, H 315) moved "protection" from purple to gold,
+ * because purple was occupying that hue slot. Rose H 354 is farther from all five
+ * asset-class colors (minimum ΔE 21.4), **so no further move is needed** — ChartColors.kt
+ * keeps gold unchanged; this note just records "no knock-on effect this time," not a new
+ * decision.
  *
- * ## 三条不能动的判据（改色值要重新验，方法见 ChartColorsTest 注释里那套验证器）
+ * ## Three criteria that must not be violated (changing color values requires re-verifying
+ * with the validator described in ChartColorsTest's comments)
  *
- * 1. **与五个大类图表色的最小 ΔE ≥ 15**（OKLab ×100，正常视力）。实测 **21.4**（浅）/ **20.7**（深）。
- * 2. **primary 对页面底 / 深色底 ≥ 3:1**。实测 **4.34:1**（浅）/ **6.26:1**（深）。
- *    亮玫瑰那版只有 3.00:1（压线），换到中玫瑰之后余量回到舒服的水平。
- * 3. **onPrimary 对 primary ≥ 4.5:1**。实测白字 **4.54:1**（浅，压线但合格）。
- *    ⚠️ 深色模式的 primary 更亮更艳，白字只有 2.98:1、**不合格**，所以深色那边
- *    `onPrimary` 仍然是近黑酒红。**深浅两套的 onPrimary 不是同一个色，这是有意的。**
+ * 1. **Minimum ΔE ≥ 15 against the five asset-class chart colors** (OKLab ×100, normal
+ *    vision). Measured **21.4** (light) / **20.7** (dark).
+ * 2. **primary against the page background / dark background ≥ 3:1**. Measured
+ *    **4.34:1** (light) / **6.26:1** (dark). The bright-rose version was only 3.00:1
+ *    (right at the line); switching to mid-rose brought the margin back to a comfortable
+ *    level.
+ * 3. **onPrimary against primary ≥ 4.5:1**. Measured white text at **4.54:1** (light,
+ *    right at the line but passing). ⚠️ Dark mode's primary is brighter and more vivid,
+ *    where white text is only 2.98:1 and **fails**, so `onPrimary` on the dark side
+ *    remains near-black wine-red. **The light and dark sets' onPrimary are deliberately
+ *    not the same color.**
  *
- * ## 中性面仍然**没有**跟着换色相
+ * ## Neutral surfaces still **haven't** followed the hue change
  *
- * 表面和文字仍然是暖色（H 70）——"不要改背景色"这条约束在换主题色这轮依然成立。
- * 冷暖两个色相独立这件事本身没变，变的只是品牌色那一路从 H 315 换成了 H 354。
+ * Surfaces and text remain warm-toned (H 70) — the constraint "don't change the background
+ * color" still holds through this round of theme-color changes. The independence of the
+ * warm/cool hues hasn't changed; only the brand-color track moved from H 315 to H 354.
  *
- * ⚠️ **`tools/appicon/generate.py` 的 `BRAND_HUE` 暂时没有跟着改**——
- * 那套「破环而出」的抽象图标正在被「会飞的猪」取代，图标改版是独立任务，
- * 定下来之前先不动 generate.py，避免图标和主题色两条线互相打断。
- * 图标改版落地时记得回来同步这个常量。
+ * ⚠️ **`tools/appicon/generate.py`'s `BRAND_HUE` hasn't been updated to match yet** — the
+ * "breaking out of the ring" abstract icon set is in the process of being replaced by the
+ * "flying pig," and the icon redesign is a separate task; generate.py is left untouched
+ * until that's finalized, to avoid the icon and theme-color workstreams interrupting each
+ * other. Remember to come back and sync this constant once the icon redesign lands.
  *
- * **必须逐个角色写全，不能只覆盖 primary。** `lightColorScheme()` 没传的参数会取
- * 基线默认值，而基线的 surface 家族是带紫调的灰 —— 只改 primary 会让整体看起来像换了一半。
+ * **Every role must be written out explicitly — coverage can't stop at primary.**
+ * `lightColorScheme()` falls back to baseline defaults for any parameter not passed, and
+ * the baseline's surface family is a purple-tinted gray — changing only primary would make
+ * the whole thing look half-migrated.
  *
- * 品牌色和**涨跌语义色是两件事**，后者见 [com.boomsset.ui.GainLossColors]。
+ * The brand color and the **rise/fall semantic colors are separate things** — the latter
+ * is in [com.boomsset.ui.GainLossColors].
  */
 private val BrandRose = Color(0xFFC94385)
 
 private val LightScheme = lightColorScheme(
     primary = BrandRose,
-    // 白色 —— 4.54:1，压线但合格。亮玫瑰那版只有 3.14:1，当时被迫用深酒红字；
-    // 压暗到中玫瑰之后白字回来了，M3 的默认组件（开关滑块等）也就自动对了。
+    // White — 4.54:1, right at the line but passing. The bright-rose version was only
+    // 3.14:1, which forced dark wine-red text at the time; once pressed down to mid-rose,
+    // white text became viable again, and M3's default components (switch thumb, etc.)
+    // fall into place automatically.
     onPrimary = Color(0xFFFFFFFF),
-    // 净值 hero 卡片底 —— 淡玫瑰。对页面底只有 1.34:1，**必须靠描边勾出轮廓**，
-    // 见 NetWorthScreen 的 SummaryCard（描边逻辑通用，换品牌色不用跟着改）。
+    // Net worth hero card background — pale rose. Only 1.34:1 against the page background,
+    // **must have its outline drawn with a stroke**, see NetWorthScreen's SummaryCard
+    // (the stroke logic is generic, no need to change it when swapping the brand color).
     primaryContainer = Color(0xFFFBCEDF),
     onPrimaryContainer = Color(0xFF45142B),
     inversePrimary = Color(0xFFDF99B5),
 
-    // 次要色走同色相的低彩中性 —— 只留一个强调色，其余全部近中性
+    // Secondary color uses a low-chroma neutral of the same hue — only one accent color is
+    // kept, everything else stays near-neutral
     secondary = Color(0xFF70675E),
     onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = Color(0xFFF1ECE6),
     onSecondaryContainer = Color(0xFF342C23),
 
-    // 第三色刻意留在同色相内，**不用任何分类色的色相** ——
-    // 否则它会和某个大类的颜色撞车，让读者以为两者有关
+    // Tertiary is deliberately kept within the same hue, **not using any asset-class
+    // color's hue** — otherwise it would collide with some asset class's color and make
+    // readers think the two are related
     tertiary = Color(0xFF7A4A5E),
     onTertiary = Color(0xFFFFFFFF),
     tertiaryContainer = Color(0xFFF7D3E0),
     onTertiaryContainer = Color(0xFF41162A),
 
-    // error 和「超配」是两回事，色值也不同（超配是 #C5453F）
+    // error and "over-allocated" are two different things, with different color values too
+    // (over-allocated is #C5453F)
     error = Color(0xFFB3261E),
     onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFFF9DEDC),
@@ -105,7 +136,7 @@ private val LightScheme = lightColorScheme(
     onSurfaceVariant = Color(0xFF6C6359),
     surfaceTint = BrandRose,
     inverseSurface = Color(0xFF30271D),
-    // ↑ surfaceTint 跟着 primary 走，别写死色值
+    // ↑ surfaceTint follows primary — don't hardcode a color value here
     inverseOnSurface = Color(0xFFF6F2ED),
 
     surfaceDim = Color(0xFFE5E1DC),
@@ -122,14 +153,17 @@ private val LightScheme = lightColorScheme(
 )
 
 /**
- * 深色模式是**另选的一组步进**，不是浅色的自动翻转 —— 同一个色相角（H 354），
- * 按深底重新取亮度并单独验过（primary 对底 6.26:1，与深色大类色最小 ΔE 22.0）。
- * ⚠️ 「保障类」这轮不用挪（见上方 LightScheme 文档的"不用再挪"一节），
- * 深色的金黄 `#9B8100` 原样保留。
+ * Dark mode is **a separately chosen set of steps**, not an automatic flip of light mode —
+ * the same hue angle (H 354), with lightness re-derived against the dark background and
+ * independently verified (primary against background 6.26:1, minimum ΔE 22.0 against the
+ * dark asset-class colors).
+ * ⚠️ "Protection" doesn't need to move this round (see the "doesn't need to move again"
+ * section in LightScheme's doc above); the dark mode gold `#9B8100` is kept unchanged.
  */
 private val DarkScheme = darkColorScheme(
     primary = Color(0xFFFF53A8),
-    // 同样是深酒红，不是白色 —— 深色模式的鲜艳玫瑰对白字只有 2.98:1，也不合格。
+    // Also dark wine-red, not white — dark mode's vivid rose is only 2.98:1 against white
+    // text, which also fails.
     onPrimary = Color(0xFF1C030F),
     primaryContainer = Color(0xFF673048),
     onPrimaryContainer = Color(0xFFFDD0E1),
@@ -174,19 +208,22 @@ private val DarkScheme = darkColorScheme(
 )
 
 /**
- * 两端共用的主题入口。跟随系统深浅色 —— 之前是恒亮，深色模式下白得刺眼。
+ * Shared theme entry point for both platforms. Follows the system's light/dark mode —
+ * it used to be always-light, which was blindingly white in dark mode.
  */
 @Composable
 fun BoomssetTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    // 状态栏图标要跟着主题反色 —— 见 ApplySystemBarsAppearance 的注释，
-    // 不设的话浅色主题下状态栏是白字压白底
+    // Status bar icons need to invert along with the theme — see the comment on
+    // ApplySystemBarsAppearance; without this, light theme leaves the status bar with white
+    // text on a white background
     ApplySystemBarsAppearance(darkTheme)
 
-    // 图表配色和涨跌色都用**同一个** darkTheme —— 让它们自己去读系统深浅色
-    // 会和主题不一致（预览和测试里尤其容易出现）
+    // Chart colors and gain/loss colors both use the **same** darkTheme — letting them read
+    // the system's light/dark setting independently would go out of sync with the theme
+    // (especially likely in previews and tests)
     CompositionLocalProvider(
         LocalChartColors provides chartColorsFor(darkTheme),
         LocalGainLossColors provides gainLossColorsFor(darkTheme),

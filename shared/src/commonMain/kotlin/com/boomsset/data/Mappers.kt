@@ -21,11 +21,13 @@ import com.boomsset.db.Target_allocation as AllocationRow
 import com.boomsset.db.Target_allocation_item as AllocationItemRow
 
 /**
- * 数据库行 → 领域模型。
+ * Database row → domain model.
  *
- * 这一层的作用是把「可空字段的宽松元组」收敛成「不可能表达非法状态的领域类型」。
- * 数据库那边有 CHECK 约束兜着，所以这里遇到不匹配的组合是**真的出了问题**，
- * 直接抛异常而不是静默塞个默认值。
+ * This layer's job is to collapse a "loose tuple of nullable fields" down into a "domain
+ * type that can't represent an invalid state". The database side has CHECK constraints
+ * backing it up, so encountering a mismatched combination here means something has
+ * **actually gone wrong** — throw an exception directly rather than silently filling in
+ * a default value.
  */
 
 internal fun AssetRow.toDomain(): Asset = Asset(

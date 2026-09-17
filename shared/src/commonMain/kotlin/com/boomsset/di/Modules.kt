@@ -24,10 +24,12 @@ import org.koin.dsl.module
 import kotlin.time.Clock
 
 /**
- * 共享的 DI 图。平台特有的绑定（[DatabaseDriverFactory]）由各平台的 module 提供。
+ * The shared DI graph. Platform-specific bindings (like [DatabaseDriverFactory]) are
+ * provided by each platform's own module.
  *
- * ⚠️ ViewModel **必须显式给 initializer**（这里是 `factory { }`）——
- * Kotlin/Native 没有反射，不能靠 `viewModel()` 自动构造。见 AGENTS.md 约束 2。
+ * ⚠️ ViewModels **must be given an explicit initializer** (here, `factory { }`) —
+ * Kotlin/Native has no reflection, so they can't be auto-constructed via `viewModel()`.
+ * See AGENTS.md constraint 2.
  */
 val sharedModule: Module = module {
     single { createDatabase(get<DatabaseDriverFactory>()) }
@@ -65,7 +67,8 @@ val sharedModule: Module = module {
 }
 
 /**
- * 两端共用的启动入口。Android 传入包含 Context 的 module，iOS 传入不需要参数的那个。
+ * The startup entry point shared by both platforms. Android passes in the module that
+ * includes a Context; iOS passes in the one that needs no parameters.
  */
 fun initKoin(platformModule: Module, appDeclaration: KoinAppDeclaration = {}) = startKoin {
     appDeclaration()

@@ -6,76 +6,89 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Instant
 
 /**
- * 一条更新记录属于哪一类事件。
+ * Which kind of event an update record belongs to.
  *
- * 三类都是**从快照本身推出来的**，不是另外记的 —— 库里没有「事件表」，
- * `snapshot` 那条不可变、只追加的链本身就是流水（见 Snapshot.sq 的注释）。
- * 多记一份等于多一个会和快照对不上的事实来源。
+ * All three kinds are **derived from the snapshot itself**, not recorded separately —
+ * there is no "events table" in the store; the `snapshot` chain, immutable and
+ * append-only, is itself the transaction log (see the comment in Snapshot.sq).
+ * Recording it a second time would just be one more source of truth that can drift out
+ * of sync with the snapshots.
  */
 enum class UpdateKind {
-    /** 该资产的第一条快照 —— 建资产时一起写的。 */
+    /** The first snapshot for this asset — written together when the asset was created. */
     CREATED,
 
-    /** 普通的一次估值更新。 */
+    /** An ordinary valuation update. */
     UPDATED,
 
-    /** 归档时追加的那条归零快照。 */
+    /** The zero-value snapshot appended when archiving. */
     ARCHIVED,
 }
 
 /**
- * 资产页底部「更新记录」里的一行。
+ * A row in the "update history" at the bottom of the asset screen.
  *
- * 同时带着 [snapshot] 和链上**紧邻的前一条** [previous]，所有「从 X 变成 Y」都由这两条
- * 现场算出来 —— 没有任何一个「变化量」被写进库里。变化量存库就得在修正历史时同步维护，
- * 而快照是可以补录的（同一 `asOf` 追加一条更晚录入的记录就是修正），维护漏一处就静默不一致。
+ * Carries both [snapshot] and the chain's **immediately preceding entry**, [previous];
+ * every "changed from X to Y" is computed on the fly from these two — no "change
+ * amount" is ever written to the store. Storing a change amount would require keeping it
+ * in sync whenever history is corrected, and since snapshots can be backfilled (appending
+ * a more-recently-recorded entry at the same `asOf` is itself a correction), missing one
+ * spot in that maintenance would silently produce an inconsistency.
  *
- * ⚠️ **QUOTED 的快照里没有市值，这里也不算市值。** 市值 = 份额 × 当时行情，而本项目
- * 已知「Quote 还没有做历史回补」（见 AGENTS.md 开头）—— 历史时点大多取不到价，
- * 硬算要么得出「无法估值」，要么拿今天的价去解释三个月前的那条记录，属于静默算错。
- * 所以 QUOTED 行展示的是**快照上真实存着的份额和成本**，不是推算出来的市值。
+ * ⚠️ **A QUOTED snapshot has no market value stored, and none is computed here either.**
+ * Market value = quantity × the quote at that time, and this project already knows that
+ * "Quote hasn't had historical backfill done yet" (see the top of AGENTS.md) — most
+ * historical points can't fetch a price, so computing it would either produce "cannot be
+ * valued" or use today's price to explain a record from three months ago, which is
+ * silently miscalculating. So a QUOTED row displays the **quantity and cost actually
+ * stored on the snapshot**, not a derived market value.
  */
 data class UpdateRecord(
     val asset: Asset,
     val snapshot: Snapshot,
     /**
-     * 链上紧邻的前一条快照。null = 这是第一条。
+     * The snapshot immediately preceding this one in the chain. Null = this is the first one.
      *
-     * 「紧邻」按 `(asOf, id)` 定义，和结转规则取「该时点前最近的一条」用的是同一个次序 ——
-     * 用别的次序会让这里显示的「前值」和净值曲线实际结转的那条对不上。
+     * "Immediately preceding" is defined by `(asOf, id)`, the same ordering the
+     * carry-forward rule uses to pick "the most recent one as of that point in time" —
+     * using a different ordering would make the "previous value" shown here disagree
+     * with the one the net worth curve actually carries forward.
      */
     val previous: Snapshot?,
     val kind: UpdateKind,
-    /** [Snapshot.recordedAt] 落到本地时区的日期，供 UI 直接显示。 */
+    /** [Snapshot.recordedAt] converted to a date in the local time zone, for the UI to display directly. */
     val recordedDate: LocalDate,
 ) {
     val recordedAt: Instant get() = snapshot.recordedAt
 
     /**
-     * 上一条是另一种估值方式（比如退市后 QUOTED 转 MANUAL）。
+     * The previous entry used a different valuation mode (e.g. QUOTED converted to
+     * MANUAL after delisting).
      *
-     * 此时**前值不可比**：一边是份额、一边是市值，减不出变化量。UI 要退回「只显示新值」，
-     * 不能把 `null` 当成 0 去算差。
+     * In that case the **previous value isn't comparable**: one side is a quantity, the
+     * other a market value, so no change amount can be subtracted out. The UI should
+     * fall back to "show only the new value" — it must not treat `null` as 0 when
+     * computing the difference.
      */
     val modeChanged: Boolean get() = previous != null && previous.mode != snapshot.mode
 
-    /** MANUAL 快照的市值；QUOTED 为 null。 */
+    /** The market value of a MANUAL snapshot; null for QUOTED. */
     val value: Money? get() = (snapshot as? Snapshot.Manual)?.value
 
-    /** 上一条 MANUAL 快照的市值。上一条不存在或不是 MANUAL 时为 null。 */
+    /** The market value of the previous MANUAL snapshot. Null if there's no previous entry or it isn't MANUAL. */
     val previousValue: Money? get() = (previous as? Snapshot.Manual)?.value
 
-    /** QUOTED 快照的份额；MANUAL 为 null。 */
+    /** The quantity of a QUOTED snapshot; null for MANUAL. */
     val quantity: Quantity? get() = (snapshot as? Snapshot.Quoted)?.quantity
 
     val previousQuantity: Quantity? get() = (previous as? Snapshot.Quoted)?.quantity
 
-    /** 总成本。两种模式都可能有，也都可能是 null（用户没填）。 */
+    /** Total cost. May be present in either mode, and may also be null (user didn't enter one). */
     val cost: Money? get() = snapshot.costBasisMinor
 
     val previousCost: Money? get() = previous?.costBasisMinor
 
-    /** 市值变化。两端都得是 MANUAL 才有值 —— 见 [modeChanged]。 */
+    /** Change in market value. Only has a value when both ends are MANUAL — see [modeChanged]. */
     val valueChange: Money?
         get() {
             val now = value ?: return null
@@ -83,7 +96,7 @@ data class UpdateRecord(
             return now - before
         }
 
-    /** 份额变化。两端都得是 QUOTED 才有值。 */
+    /** Change in quantity. Only has a value when both ends are QUOTED. */
     val quantityChange: Quantity?
         get() {
             val now = quantity ?: return null
@@ -92,10 +105,11 @@ data class UpdateRecord(
         }
 
     /**
-     * 成本变化。两端都填了成本才有值。
+     * Change in cost. Only has a value when both ends have a cost entered.
      *
-     * 单独拿出来是因为它回答的是另一个问题：「这次是加仓/减仓，还是只是市价变了」。
-     * 份额没动而成本动了同样有意义（用户在修正自己填错的成本）。
+     * Broken out separately because it answers a different question: "was this an
+     * add/reduce to the position, or just a market-price change". A cost change with no
+     * quantity change is also meaningful (the user is correcting a mistyped cost).
      */
     val costChange: Money?
         get() {
@@ -104,22 +118,29 @@ data class UpdateRecord(
             return now - before
         }
 
-    /** 有没有任何可展示的变化量。都没有时 UI 只显示新值，不画一个「→」出来。 */
+    /** Whether there's any displayable change amount. When there isn't, the UI shows only the new value, without drawing a "→". */
     val hasChange: Boolean get() = valueChange != null || quantityChange != null
 }
 
 /**
- * 从原始快照流里还原出「更新记录」。纯函数、无 IO。
+ * Reconstructs "update records" from the raw snapshot stream. Pure function, no IO.
  *
- * ## 为什么不做保留期
+ * ## Why there's no retention window
  *
- * 这里**不截断、不过滤、不删除**任何记录，UI 侧只是分页显示。快照是净值曲线的唯一数据源，
- * 而结转规则取「该时点前最近的一条」—— 删掉「半年前」的记录后，一项半年没更新过的资产
- * 会连**今天**都取不到快照，于是从净值、配置、资产列表里整个消失。那不是丢精度，
- * 是资产凭空蒸发，且不报错（正是 AGENTS.md 反复警告的「静默算错」）。
- * 存储上也没有收益：一行快照约 100 字节，20 项资产按月更新存十年不到 250 KB。
+ * This code **never truncates, filters, or deletes** any record; the UI only paginates
+ * the display. Snapshots are the net worth curve's sole data source, and the
+ * carry-forward rule takes "the most recent one as of that point in time" — after
+ * deleting records "older than six months", an asset that hasn't been updated in six
+ * months would fail to find a snapshot even for **today**, and would disappear entirely
+ * from net worth, allocation, and the asset list. That isn't a loss of precision, it's
+ * an asset vanishing into thin air, without any error (exactly the "silent
+ * miscalculation" AGENTS.md repeatedly warns about). There's no storage benefit either:
+ * one snapshot row is about 100 bytes, so 20 assets updated monthly for ten years is
+ * under 250 KB.
  *
- * 量级上限沿用 [PortfolioData] 那条：几万条快照时全量加载会明显变慢，但不会静默出错。
+ * The scale ceiling follows the same one as [PortfolioData]: loading everything at tens
+ * of thousands of snapshots would visibly slow down, but wouldn't silently produce
+ * wrong results.
  */
 object UpdateHistory {
 
@@ -128,8 +149,10 @@ object UpdateHistory {
         return data.snapshots
             .groupBy { it.assetId }
             .flatMap { (assetId, chain) ->
-                // 资产被删掉而快照还在，理论上不该出现（没有删资产的入口），
-                // 但这里宁可跳过也不要抛 —— 这是展示用的派生数据，不值得让整页崩掉。
+                // An asset being deleted while its snapshots remain shouldn't happen in
+                // theory (there's no entry point for deleting an asset), but this skips
+                // it rather than throwing — this is derived data for display, not worth
+                // crashing the whole screen over.
                 val asset = assetsById[assetId] ?: return@flatMap emptyList<UpdateRecord>()
                 val ordered = chain.sortedWith(compareBy({ it.asOf }, { it.id }))
                 ordered.mapIndexed { index, snapshot ->
@@ -142,9 +165,11 @@ object UpdateHistory {
                     )
                 }
             }
-            // 倒序，最新的在最上面。按 **recordedAt**（什么时候记的）而不是 asOf
-            // （记的是哪个时点的状态）—— 这一栏回答的是「我最近做了什么」。
-            // 目前两者恒等（追加快照时用同一个 now），补录历史的入口出现后才会分叉。
+            // Descending order, newest on top. Sorted by **recordedAt** (when it was
+            // recorded), not asOf (which point in time's state it records) — this
+            // section answers "what did I do most recently". Currently the two are
+            // always equal (appending a snapshot uses the same `now` for both), they
+            // will only diverge once a backfill-history entry point exists.
             .sortedWith(
                 compareByDescending<UpdateRecord> { it.recordedAt }
                     .thenByDescending { it.snapshot.id },
@@ -152,14 +177,17 @@ object UpdateHistory {
     }
 
     /**
-     * 先判归档、再判首条。
+     * Checks archived first, then first-entry.
      *
-     * 顺序有讲究：一项「建完就归档、只有两条快照」的资产，第二条同时满足不了首条，
-     * 但假如将来出现「建资产即归档」的路径，归档这个信息比「这是第一条」更该显示出来。
+     * The order matters: for an asset that was "archived right after being created,
+     * with only two snapshots", the second snapshot can't also satisfy "is the first
+     * entry" — but if a "create-and-archive-immediately" path is ever added, the
+     * archived status deserves to be shown more than "this is the first entry" would.
      *
-     * 归档的判据是 `archivedAt == asOf` —— `archiveAsset` 里这两个字段写的是同一个 `now`。
-     * 取消归档会清掉 `archivedAt`（那条归零快照留着，见 `unarchiveAsset`），
-     * 于是这条记录退回显示成普通「更新（归零）」—— 正确，因为归档确实被撤销了。
+     * The archived criterion is `archivedAt == asOf` — `archiveAsset` writes the same
+     * `now` into both fields. Unarchiving clears `archivedAt` (the zero-value snapshot
+     * itself is kept, see `unarchiveAsset`), so this record falls back to displaying as
+     * a plain "updated (zeroed out)" — correct, because the archiving really was undone.
      */
     private fun kindOf(asset: Asset, snapshot: Snapshot, isFirst: Boolean): UpdateKind = when {
         asset.archivedAt != null && asset.archivedAt == snapshot.asOf -> UpdateKind.ARCHIVED

@@ -1,54 +1,58 @@
 package com.boomsset.security
 
 /**
- * 设备上可用的认证能力。
+ * Authentication capabilities available on the device.
  *
- * 区分这几种状态是必要的，因为它们对用户的意义完全不同：
- * 「设备不支持」是无解的，「没录入」是用户去系统设置里加一下就行的。
- * 把两者都显示成"无法开启"会让后者的用户不知道该干什么。
+ * Distinguishing these states matters because they mean completely different things
+ * to the user: "device unsupported" has no fix, while "not enrolled" just means the
+ * user needs to go add one in system settings. Showing both as "can't be enabled"
+ * leaves the latter user with no idea what to do.
  */
 enum class AuthCapability {
-    /** 可用（生物识别或设备密码任一可用） */
+    /** Available (either biometrics or device passcode works) */
     AVAILABLE,
 
-    /** 硬件支持但用户没录入任何生物特征、也没设密码 —— 引导去系统设置 */
+    /** Hardware supports it but the user hasn't enrolled any biometric, and has no passcode set — direct them to system settings */
     NOT_ENROLLED,
 
-    /** 设备没有相应硬件 —— 无解，别让用户白折腾 */
+    /** Device has no relevant hardware — no fix, don't send the user on a wild goose chase */
     NO_HARDWARE,
 
-    /** 暂时不可用（比如多次失败被锁定） */
+    /** Temporarily unavailable (e.g. locked out after repeated failures) */
     TEMPORARILY_UNAVAILABLE,
 }
 
-/** 一次认证的结果。 */
+/** The result of a single authentication attempt. */
 sealed interface AuthResult {
     data object Success : AuthResult
 
-    /** 用户主动取消（点了取消或返回）。**不是错误**，不要报错提示。 */
+    /** User actively cancelled (tapped cancel or back). **Not an error** — don't show an error message. */
     data object Cancelled : AuthResult
 
-    /** 认证失败或不可用。[message] 面向用户，可为 null（无额外信息可说）。 */
+    /** Authentication failed or unavailable. [message] is user-facing, may be null (nothing extra to say). */
     data class Failed(val message: String?) : AuthResult
 }
 
 /**
- * 生物识别 / 设备密码认证。
+ * Biometric / device passcode authentication.
  *
- * 用接口 + 各平台实现，不用 `expect class` —— 和 [com.boomsset.data.DatabaseDriverFactory]
- * 同样的理由（expect class 在 Kotlin 2.4 仍是 Beta，且 Android 实现需要 Activity）。
+ * Uses an interface + per-platform implementations rather than `expect class` — same
+ * reasoning as [com.boomsset.data.DatabaseDriverFactory] (expect class is still Beta in
+ * Kotlin 2.4, and the Android implementation needs an Activity).
  *
- * **故意不引第三方 KMP 生物识别库。** docs/stack.md 记了实测结论：这个领域没有成熟的
- * KMP 库（moko-biometry 三年未维护、biometrik 只有 9 star、KMPAuth 其实是 OAuth）。
- * 自己写两端各几十行，比把一个小众项目当成安全边界靠谱。
+ * **Deliberately avoids pulling in a third-party KMP biometrics library.** docs/stack.md
+ * records the finding: there's no mature KMP library in this space (moko-biometry
+ * unmaintained for three years, biometrik has only 9 stars, KMPAuth is actually OAuth).
+ * Writing a few dozen lines per platform ourselves is more trustworthy than putting a
+ * niche project on the security boundary.
  */
 interface AppLockAuthenticator {
     fun capability(): AuthCapability
 
     /**
-     * 弹出系统认证界面。挂起直到用户完成或取消。
+     * Shows the system authentication UI. Suspends until the user completes or cancels it.
      *
-     * @param reason 展示给用户的说明。iOS 的 `LAContext` 要求非空，Android 显示在副标题。
+     * @param reason Explanation shown to the user. iOS's `LAContext` requires it non-null; Android shows it as the subtitle.
      */
     suspend fun authenticate(reason: String): AuthResult
 }

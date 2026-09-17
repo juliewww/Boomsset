@@ -7,8 +7,9 @@ import kotlin.test.Test
 import kotlin.time.Instant
 
 /**
- * 这些测试对着 docs/domain.md 里那几条「写错了不报错、只是静默算错」的规则。
- * 每个测试的名字就是它守住的那条规则。
+ * These tests target the rules in docs/domain.md about things that "don't error when written
+ * wrong, they just silently compute the wrong answer."
+ * Each test's name is the rule it locks in.
  */
 class PortfolioCalculatorTest {
 
@@ -21,7 +22,7 @@ class PortfolioCalculatorTest {
         base: String = cny,
     ) = ValuationContext(base, quotes, rates)
 
-    /** priceMinor 沿用「分」为单位，内部换算成 scale-8 的 UnitPrice，保持既有期望值不变。 */
+    /** priceMinor stays in "cents", converted internally to a scale-8 UnitPrice, keeping existing expected values unchanged. */
     private fun quote(symbol: String, priceMinor: Long) =
         Quote(symbol, "2026-07-28", UnitPrice(priceMinor * 1_000_000L), cny, t)
 
@@ -63,13 +64,14 @@ class PortfolioCalculatorTest {
             recordedAt = t,
         )
 
-    // ---------- 估值分支看快照而不看资产 ----------
+    // ---------- The valuation branch looks at the snapshot, not the asset ----------
 
     @Test
-    fun `退市转MANUAL后历史的QUOTED快照仍按份额估值`() {
-        // 资产当前的默认模式已经是 MANUAL（退市了），但这条历史快照是 Quoted。
-        // 如果按 asset.defaultValuationMode 去判，会去读 Quoted 快照里不存在的 value，
-        // 历史净值就崩了。这是 domain.md 里点名的静默错误。
+    fun `after delisting converts to MANUAL, historical QUOTED snapshots are still valued by share count`() {
+        // The asset's current default mode is already MANUAL (delisted), but this historical
+        // snapshot is Quoted. If we branched on asset.defaultValuationMode, we'd try to read
+        // a `value` field that doesn't exist on a Quoted snapshot, and historical net worth
+        // would break. This is one of the silent errors called out by name in domain.md.
         val delisted = asset(1, AssetClass.EQUITY).copy(
             defaultValuationMode = ValuationMode.MANUAL,
             defaultQuoteSymbol = null,
@@ -81,11 +83,11 @@ class PortfolioCalculatorTest {
             mapOf("600519" to quote("600519", 150_000)),
         )
 
-        value shouldBe Money(15_000_000)  // 100 股 × 1500 元
+        value shouldBe Money(15_000_000)  // 100 shares x 1500 yuan
     }
 
     @Test
-    fun `快照自带quoteSymbol所以资产清掉symbol也能估值`() {
+    fun `the snapshot carries its own quoteSymbol, so it can still be valued after the asset's symbol is cleared`() {
         val converted = asset(1, AssetClass.EQUITY).copy(defaultQuoteSymbol = null)
         val historical = quoted(1, units = 10, symbol = "OLD_TICKER")
 
@@ -94,13 +96,13 @@ class PortfolioCalculatorTest {
             listOf(converted),
             mapOf(1L to historical),
             ctx(quotes = mapOf("OLD_TICKER" to quote("OLD_TICKER", 10_000))),
-        ).netWorth shouldBe Money(100_000)  // 10 份 × 100.00 元 = 1000.00 元
+        ).netWorth shouldBe Money(100_000)  // 10 shares x 100.00 yuan = 1000.00 yuan
     }
 
-    // ---------- 行情缺失不能当成 0 ----------
+    // ---------- A missing quote must not be treated as 0 ----------
 
     @Test
-    fun `行情缺失时资产被标记为未估值而不是计为零`() {
+    fun `when a quote is missing, the asset is flagged as unpriced instead of counted as zero`() {
         val stock = asset(1, AssetClass.EQUITY)
         val cash = asset(2, AssetClass.LIQUID)
 
@@ -108,21 +110,21 @@ class PortfolioCalculatorTest {
             t,
             listOf(stock, cash),
             mapOf(1L to quoted(1, 100, "NO_QUOTE"), 2L to manual(2, 500_00)),
-            ctx(),  // 没有任何行情
+            ctx(),  // no quotes at all
         )
 
-        // 股票没被算成 0 —— 它被单列出来，净值只反映能估值的部分
+        // The stock isn't counted as 0 -- it's listed separately, and net worth reflects only what can be valued
         point.unpricedAssetIds shouldContainExactly listOf(1L)
         point.hasUnpriced shouldBe true
         point.netWorth shouldBe Money(500_00)
     }
 
-    // ---------- 配置比例：分子是净敞口，分母是净资产 ----------
+    // ---------- Allocation ratio: numerator is net exposure, denominator is net worth ----------
 
     @Test
-    fun `负债归属抵扣后各大类比例加总为百分之百`() {
-        // domain.md 里那个例子：房 300 万 + 股 100 万，房贷 200 万 → 净资产 200 万。
-        // 不做归属抵扣的话房产会算成 300/200 = 150%，合计 200%，饼图画不出来。
+    fun `after netting out attributed liabilities, each class's share sums to 100 percent`() {
+        // The example from domain.md: a 3M house + a 1M stock position, with a 2M mortgage -> net worth 2M.
+        // Without netting out the attribution, the house would compute as 300/200 = 150%, summing to 200%, and the pie chart couldn't be drawn.
         val house = asset(1, AssetClass.ALTERNATIVE)
         val stock = asset(2, AssetClass.EQUITY)
         val mortgage = asset(3, AssetClass.ALTERNATIVE, isLiability = true)
@@ -139,7 +141,7 @@ class PortfolioCalculatorTest {
         )
 
         view.netWorth shouldBe Money(2_000_000_00)
-        // 房产净敞口 = 300万 - 200万 = 100万 → 50%
+        // House net exposure = 3M - 2M = 1M -> 50%
         view.shareBp(AssetClass.ALTERNATIVE) shouldBe 5000
         view.shareBp(AssetClass.EQUITY) shouldBe 5000
 
@@ -148,8 +150,8 @@ class PortfolioCalculatorTest {
     }
 
     @Test
-    fun `某大类净敞口可以为负且被显式标记`() {
-        // 车值 10 万但车贷 15 万
+    fun `a class's net exposure can be negative and is flagged explicitly`() {
+        // Car worth 100,000 but car loan is 150,000
         val car = asset(1, AssetClass.ALTERNATIVE)
         val carLoan = asset(2, AssetClass.ALTERNATIVE, isLiability = true)
         val cash = asset(3, AssetClass.LIQUID)
@@ -167,12 +169,12 @@ class PortfolioCalculatorTest {
 
         view.exposures[AssetClass.ALTERNATIVE]!!.netExposure shouldBe Money(-50_000_00)
         view.hasNegativeExposure shouldBe true
-        // 明细里给真实负值，饼图那层才 clamp 到 0
+        // The breakdown shows the true negative value; only the pie-chart layer clamps it to 0
         view.shareBp(AssetClass.ALTERNATIVE)!! shouldBe -3333
     }
 
     @Test
-    fun `净资产为负时比例返回null而不是乱数`() {
+    fun `when net worth is negative, the ratio returns null instead of a nonsense number`() {
         val cash = asset(1, AssetClass.LIQUID)
         val debt = asset(2, AssetClass.LIQUID, isLiability = true)
 
@@ -188,8 +190,8 @@ class PortfolioCalculatorTest {
     }
 
     @Test
-    fun `排除出配置的资产同时不进分子和分母`() {
-        // 自住房关掉 includeInAllocation 后，比例应当只反映其余资产
+    fun `an asset excluded from allocation is left out of both the numerator and denominator`() {
+        // Once includeInAllocation is turned off for a primary residence, the ratios should reflect only the remaining assets
         val home = asset(1, AssetClass.ALTERNATIVE, includeInAllocation = false)
         val stock = asset(2, AssetClass.EQUITY)
         val cash = asset(3, AssetClass.LIQUID)
@@ -205,17 +207,17 @@ class PortfolioCalculatorTest {
             ctx(),
         )
 
-        // 分母里没有自住房
+        // The primary residence is not in the denominator
         view.netWorth shouldBe Money(400_000_00)
         view.shareBp(AssetClass.ALTERNATIVE) shouldBe 0
         view.shareBp(AssetClass.EQUITY) shouldBe 7500
         view.shareBp(AssetClass.LIQUID) shouldBe 2500
     }
 
-    // ---------- 汇率用当时的，不用今天的 ----------
+    // ---------- Use the exchange rate at the time, not today's ----------
 
     @Test
-    fun `外币资产按传入的当期汇率折算`() {
+    fun `a foreign currency asset is converted using the exchange rate passed in for that period`() {
         val usStock = asset(1, AssetClass.EQUITY, currency = "USD")
         val rate = ExchangeRate(7_00000000L)  // 1 USD = 7 CNY
 
@@ -224,29 +226,29 @@ class PortfolioCalculatorTest {
             listOf(usStock),
             mapOf(1L to manual(1, 100_00)),  // $100.00
             ctx(rates = mapOf(ValuationContext.rateKey("USD", cny) to rate)),
-        ).netWorth shouldBe Money(700_00)  // ¥700.00
+        ).netWorth shouldBe Money(700_00)  // CNY 700.00
     }
 
     @Test
-    fun `缺汇率的外币资产计入未估值而不是按一比一折算`() {
+    fun `a foreign currency asset missing an exchange rate is counted as unpriced, not converted 1-to-1`() {
         val hkStock = asset(1, AssetClass.EQUITY, currency = "HKD")
 
         val point = PortfolioCalculator.netWorth(
             t,
             listOf(hkStock),
             mapOf(1L to manual(1, 100_00)),
-            ctx(),  // 没有 HKD→CNY
+            ctx(),  // no HKD->CNY rate
         )
 
         point.unpricedAssetIds shouldContainExactly listOf(1L)
         point.netWorth shouldBe Money.ZERO
     }
 
-    // ---------- 成本与盈亏 ----------
+    // ---------- Cost basis and gain/loss ----------
 
     @Test
-    fun `QUOTED资产也能算盈亏`() {
-        // 这是那条被表格写歪的规则：成本与估值模式无关，QUOTED 也有收益率
+    fun `a QUOTED asset can also have its gain-loss computed`() {
+        // This is the rule that got misstated in a table somewhere: cost basis is independent of the valuation mode, QUOTED assets have a return rate too
         val pnl = PortfolioCalculator.profitAndLoss(
             quoted(1, units = 100, symbol = "600519", costMinor = 10_000_00),
             mapOf("600519" to quote("600519", 150_00)),
@@ -258,13 +260,13 @@ class PortfolioCalculatorTest {
     }
 
     @Test
-    fun `没填成本返回null而不是零值盈亏`() {
-        // "没有成本"和"成本为零导致盈亏等于市值"是两件完全不同的事
+    fun `no cost basis filled in returns null instead of a zero-value gain-loss`() {
+        // "no cost basis" and "cost basis of zero making gain-loss equal to market value" are two entirely different things
         PortfolioCalculator.profitAndLoss(manual(1, 500_00), emptyMap()).shouldBeNull()
     }
 
     @Test
-    fun `组合盈亏只覆盖填了成本的资产并报告覆盖范围`() {
+    fun `portfolio gain-loss covers only assets with a cost basis and reports its coverage`() {
         val withCost = asset(1, AssetClass.EQUITY)
         val withoutCost = asset(2, AssetClass.ALTERNATIVE)
         val liability = asset(3, AssetClass.LIQUID, isLiability = true)
@@ -273,8 +275,8 @@ class PortfolioCalculatorTest {
             listOf(withCost, withoutCost, liability),
             mapOf(
                 1L to manual(1, 15_000_00, costMinor = 10_000_00),
-                2L to manual(2, 5_000_000_00),                      // 没成本
-                3L to manual(3, 100_000_00, costMinor = 50_000_00), // 负债不算盈亏
+                2L to manual(2, 5_000_000_00),                      // no cost basis
+                3L to manual(3, 100_000_00, costMinor = 50_000_00), // liabilities don't count toward gain-loss
             ),
             ctx(),
         )
@@ -283,14 +285,15 @@ class PortfolioCalculatorTest {
         result.pnl.absolute shouldBe Money(5_000_00)
     }
 
-    // ---------- 增长率 ≠ 收益率 ----------
+    // ---------- Growth rate != return rate ----------
 
     @Test
-    fun `净值增长率包含新增投入这是有意为之`() {
-        // 期初 10 万，期间存了 1 万工资进去，期末 11 万。
-        // 净值增长率显示 +10% —— 但那不是"赚"的。
-        // 这条测试锁住这个语义，防止有人"顺手修正"成剔除投入的口径：
-        // 剔除投入的那个数是浮动盈亏率，是另一个函数。
+    fun `net worth growth rate deliberately includes new contributions`() {
+        // Starting net worth 100,000; a 10,000 salary deposit came in during the period; ending net worth 110,000.
+        // The net worth growth rate shows +10% -- but that isn't "earnings".
+        // This test locks in that semantics, to keep someone from "helpfully fixing" it into
+        // a contribution-adjusted measure: the number with contributions stripped out is the
+        // floating gain-loss rate, which is a different function.
         val from = NetWorthPoint(t, cny, Money(100_000_00), Money.ZERO)
         val to = NetWorthPoint(t, cny, Money(110_000_00), Money.ZERO)
 
@@ -298,34 +301,34 @@ class PortfolioCalculatorTest {
     }
 
     @Test
-    fun `期初净值为零或负时增长率无意义返回null`() {
+    fun `when starting net worth is zero or negative, the growth rate is meaningless and returns null`() {
         val zero = NetWorthPoint(t, cny, Money.ZERO, Money.ZERO)
         val later = NetWorthPoint(t, cny, Money(10_000_00), Money.ZERO)
 
         PortfolioCalculator.netWorthGrowthBp(zero, later).shouldBeNull()
     }
 
-    // ---------- 负债率 ----------
+    // ---------- Liability ratio ----------
 
     @Test
-    fun `负债率的分母是总资产不是净资产`() {
-        // 300 万房 + 200 万房贷：负债率 = 200/300 = 66.67%。
-        // 用净资产（100 万）做分母会得到 200% —— 那个数读不出任何意义
+    fun `the liability ratio's denominator is total assets, not net worth`() {
+        // A 3M house + a 2M mortgage: liability ratio = 200/300 = 66.67%.
+        // Using net worth (1M) as the denominator would give 200% -- a number that means nothing
         val point = NetWorthPoint(t, cny, Money(3_000_000_00), Money(2_000_000_00))
 
-        point.liabilityRatioBp shouldBe 6666  // 66.66%（基点整除截断）
+        point.liabilityRatioBp shouldBe 6666  // 66.66% (truncated by integer basis-point division)
         point.netWorth shouldBe Money(1_000_000_00)
     }
 
     @Test
-    fun `没有负债时负债率是零`() {
+    fun `the liability ratio is zero when there are no liabilities`() {
         NetWorthPoint(t, cny, Money(100_000_00), Money.ZERO).liabilityRatioBp shouldBe 0
     }
 
     @Test
-    fun `总资产为零时负债率是null而不是零`() {
-        // 0% 会被读成"没有负债"，而这里的事实是"没有资产可作分母"。
-        // 只有负债、没有资产（比如只录了一笔信用卡）就是这个状态
+    fun `the liability ratio is null, not zero, when total assets are zero`() {
+        // 0% would read as "no liabilities", but the actual fact here is "no assets to use as a denominator".
+        // This is the state when there are only liabilities and no assets (e.g. only a credit card was recorded)
         NetWorthPoint(t, cny, Money.ZERO, Money(10_000_00)).liabilityRatioBp.shouldBeNull()
     }
 }

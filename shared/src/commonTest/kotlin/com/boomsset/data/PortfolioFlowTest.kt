@@ -11,13 +11,13 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 
 /**
- * 用 Turbine 测数据流。
+ * Tests the data flow using Turbine.
  *
- * 这份测试存在的一个附带目的：**让 Turbine 真正被执行一次**。
- * 它此前是个声明了却没人导入的依赖 —— docs/stack.md 记着一条风险
- * 「Turbine 1.2.1 的 iOS klib 是对着 Kotlin stdlib 2.1.21 编的，我们在 2.4.10」，
- * 但没有任何测试用它，那条风险其实一直没被验证（链接器会丢掉没引用的符号，
- * 所以连"能编译"都说明不了什么）。这份测试跑在 iOS 上就把那条风险清掉了。
+ * This test suite has a secondary purpose: **making Turbine actually get executed once**.
+ * It used to be a declared-but-never-imported dependency — docs/stack.md notes a risk
+ * that "Turbine 1.2.1's iOS klib was built against Kotlin stdlib 2.1.21, but we're on 2.4.10",
+ * yet no test used it, so that risk was never actually verified (the linker drops unreferenced
+ * symbols, so even "it compiles" proves nothing). Running this test on iOS clears that risk.
  */
 class PortfolioFlowTest {
 
@@ -31,7 +31,7 @@ class PortfolioFlowTest {
     )
 
     @Test
-    fun `数据流按顺序发射每次变化`() = runTest {
+    fun `the flow emits each change in order`() = runTest {
         val source = MutableStateFlow(PortfolioData.EMPTY)
 
         source.test {
@@ -54,12 +54,12 @@ class PortfolioFlowTest {
     }
 
     @Test
-    fun `没有新变化时不会有多余发射`() = runTest {
+    fun `no extra emission happens without an actual change`() = runTest {
         val source = MutableStateFlow(PortfolioData.EMPTY)
 
         source.test {
             awaitItem()
-            // StateFlow 去重：写入相同值不该再发一次
+            // StateFlow deduplicates: writing the same value again shouldn't emit again
             source.value = PortfolioData.EMPTY
             expectNoEvents()
             cancelAndIgnoreRemainingEvents()

@@ -3,12 +3,13 @@ package com.boomsset.domain
 import kotlin.jvm.JvmInline
 
 /**
- * 持有份额，定点整数表示，scale = 8。
+ * Quantity held, represented as a fixed-point integer, scale = 8.
  *
- * scale 取 8 是为了覆盖加密货币的最小单位（BTC 的 satoshi 是 1e-8）；
- * 基金份额一般 4 位小数，股票是整数，都在范围内。
+ * Scale 8 is chosen to cover crypto's smallest unit (a BTC satoshi is 1e-8); fund shares
+ * usually have 4 decimal places and stocks are whole numbers, both well within range.
  *
- * **不用 Double** —— 份额要参与「份额 × 单价」算市值，浮点误差会进到净值里。
+ * **Doesn't use Double** — quantity participates in "quantity × unit price" to compute
+ * market value, and floating-point error would leak into net worth.
  */
 @JvmInline
 value class Quantity(val scaled: Long) : Comparable<Quantity> {
@@ -20,7 +21,7 @@ value class Quantity(val scaled: Long) : Comparable<Quantity> {
 
     val isZero: Boolean get() = scaled == 0L
 
-    /** 仅用于展示。会丢精度，**不要**拿返回值再去算钱。 */
+    /** Display only. Loses precision — **never** use the return value for money calculations. */
     fun toDisplayDouble(): Double = scaled.toDouble() / ONE
 
     companion object {
@@ -34,16 +35,20 @@ value class Quantity(val scaled: Long) : Comparable<Quantity> {
 }
 
 /**
- * 成本均价 = 总成本 / 份额。**这是派生显示值，不存库。**
+ * Average cost per unit = total cost / quantity. **This is a derived display value,
+ * never stored.**
  *
- * 存总成本而不是存均价，是因为存均价会在加仓时静默算错：用户把份额从 100 改成 200
- * 却没更新均价，总成本会自动变成「均价 × 200」—— 一个他从没付过的价格。
- * 见 docs/domain.md「录入形式」。
+ * Total cost is stored instead of average cost because storing average cost would
+ * silently miscalculate on adding to a position: if the user changes quantity from 100
+ * to 200 without updating the average cost, total cost would automatically become
+ * "average cost × 200" — a price they never actually paid. See docs/domain.md,
+ * "input form".
  *
- * @return 份额为 0 时返回 null（没有均价可言，而不是除零或返回 0）
+ * @return returns null when quantity is 0 (there is no meaningful average — not a
+ *   divide-by-zero, not 0 either)
  */
 fun Money.unitCostOver(quantity: Quantity): Money? {
     if (quantity.isZero) return null
-    // 总成本 / 份额 = 总成本 * ONE / scaled
+    // total cost / quantity = total cost * ONE / scaled
     return Money(FixedPoint.multiply(minorUnits, Quantity.ONE, quantity.scaled))
 }

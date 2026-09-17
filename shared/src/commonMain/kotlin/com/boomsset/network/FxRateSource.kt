@@ -13,18 +13,23 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** 取汇率。实现类可替换，测试用 fake。 */
+/** Fetches FX rates. Implementations are swappable; tests use a fake. */
 interface FxRateSource {
     /**
-     * 拉取 [from] → [to] 在 [start]..[end] 区间内每个营业日的汇率。
+     * Fetches the [from] → [to] rate for every business day in the [start]..[end] range.
      *
-     * **只有区间接口，没有单日接口。** 净值曲线一次要 12 个时点，各自都得用**当时的**汇率
-     * （domain.md：用今天的汇率折算历史会污染曲线）。一天一个请求要几十次往返，
-     * 而区间一次就够；`start == end` 时它就是"取一天"，不需要两套代码。
+     * **There is only a range-based interface, no single-day interface.** The net worth
+     * curve needs 12 points at once, each of which must use **the rate at that point in
+     * time** (domain.md: converting history using today's rate pollutes the curve). One
+     * request per day would take dozens of round trips, whereas a single range request is
+     * enough; when `start == end` it's simply "fetch one day", so no separate code path is
+     * needed.
      *
-     * @return 区间内有报价的那些天（周末/节假日不在内，服务方会自动落到前一个营业日）。
-     *   **asOfDay 是服务方实际返回的日期**，不是请求的日期。
-     *   失败返回空列表 —— 调用方应当退回已存的 stale 汇率，而不是把资产当成无法估值。
+     * @return The days within the range that have a quote (weekends/holidays aren't
+     *   included; the service provider automatically falls back to the previous business
+     *   day). **asOfDay is the date the service actually returned**, not the requested
+     *   date. Returns an empty list on failure — the caller should fall back to a stored
+     *   stale rate rather than treating the asset as unable to be valued.
      */
     suspend fun fetchRange(
         from: String,
@@ -35,25 +40,34 @@ interface FxRateSource {
 }
 
 /**
- * 基于 [Frankfurter](https://frankfurter.dev) 的实现。ECB 官方数据，无需 API key，
- * **支持历史日期** —— 这是选它的决定性理由，因为领域模型要求"折算历史净值用当时的汇率"。
+ * Implementation based on [Frankfurter](https://frankfurter.dev). Official ECB data, no
+ * API key required, **supports historical dates** — this was the decisive reason for
+ * choosing it, since the domain model requires "convert historical net worth using the
+ * rate at that point in time".
  *
- * 实测确认的两件事：
+ * Two things confirmed through real testing:
  *
- * 1. **周末/节假日会返回实际营业日。** 请求 2026-07-26（周日）时响应里
- *    `"date":"2026-07-24"`。所以**必须存响应里的 date，不能存请求的日期** ——
- *    存请求日期会把汇率错误归到 ECB 从未发布的那一天。
- * 2. **只有 30 种币种，TWD 不在其中。** CNY/USD/HKD/EUR/JPY/GBP/SGD/AUD/KRW 都支持。
- *    不支持的币种会取不到汇率，对应资产会显示"无法估值"（而不是静默按 1:1 折算）。
+ * 1. **Weekends/holidays return the actual business day.** Requesting 2026-07-26 (a
+ *    Sunday) returns `"date":"2026-07-24"` in the response. So **the date in the response
+ *    must be stored, not the requested date** — storing the requested date would
+ *    misattribute the rate to a day ECB never published one for.
+ * 2. **Only 30 currencies are supported, and TWD is not one of them.** CNY/USD/HKD/EUR/JPY/
+ *    GBP/SGD/AUD/KRW are all supported. An unsupported currency simply can't get a rate,
+ *    and the corresponding asset will show "unable to value" (rather than silently
+ *    converting at 1:1).
  *
- * 已知限制：ECB 数据从 1999 年起，但**只有工作日**。这对我们无影响 ——
- * 结转规则本来就是"取该时点前最近的一条"。
+ * Known limitation: ECB data goes back to 1999, but **only for weekdays**. This doesn't
+ * affect us — the carry-forward rule is already "take the closest one before that point
+ * in time".
  *
- * 区间接口 `GET /v1/{start}..{end}` 的报文和单日的**不一样**：`rates` 是
- * "日期 → {币种: 汇率}" 两层，而不是一层。实测确认的三件事：
- * - `start == end` 合法，返回那一天的一条
- * - 请求区间**整段都是周末**时，服务方把区间挪到前一个营业日再返回（不会返回空）
- * - 十年区间（约 2560 个营业日）响应约 74KB，一次性回补是可以接受的
+ * The range endpoint `GET /v1/{start}..{end}` has a **different** payload shape than the
+ * single-day one: `rates` is a two-level structure ("date → {currency: rate}"), not a
+ * single level. Three things confirmed through real testing:
+ * - `start == end` is valid and returns the one record for that day
+ * - When the requested range **falls entirely on a weekend**, the service provider shifts
+ *   the range to the previous business day and returns that (never returns empty)
+ * - A ten-year range (~2560 business days) yields a ~74KB response — a one-time backfill
+ *   of that size is acceptable
  */
 class FrankfurterFxRateSource(
     private val client: HttpClient,
@@ -66,8 +80,9 @@ class FrankfurterFxRateSource(
         start: LocalDate,
         end: LocalDate,
     ): List<FxRate> {
-        // 同币种 1:1，不需要（也不该）向外发请求。估值层对同币种直接用 IDENTITY，
-        // 连这条记录都不需要落库，所以返回空列表而不是造一条假数据
+        // Same currency is 1:1 and needs no (and shouldn't make an) outbound request. The
+        // valuation layer uses IDENTITY directly for the same currency, so this record
+        // doesn't even need to be persisted — return an empty list rather than fabricating one
         if (from == to) return emptyList()
         if (start > end) return emptyList()
 
@@ -91,9 +106,9 @@ class FrankfurterFxRateSource(
         return rates.mapNotNull { (day, perCurrency) ->
             val rateText = runCatching { perCurrency.jsonObject[to]?.jsonPrimitive?.content }
                 .getOrNull() ?: return@mapNotNull null
-            // 从原始字符串定点解析，**不经过 Double** —— 汇率会参与净值累加
+            // Parsed as a fixed-point value straight from the raw string, **never through Double** — FX rates participate in net worth accumulation
             val rate = parseExchangeRate(rateText) ?: return@mapNotNull null
-            // 日期取自报文的 key，也就是服务方实际发布那天 —— 见类注释第 1 点
+            // The date comes from the payload's key, i.e. the day the service provider actually published it — see point 1 in the class doc comment
             FxRate(base = from, quote = to, asOfDay = day, rate = rate)
         }
     }

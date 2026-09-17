@@ -39,42 +39,53 @@ private const val WING_ANG = -74f
 private const val COIN_R = 0.048f
 private const val COIN_HOLE = 0.34f
 
-/** 三枚钱币的相对位置，和 [tools/appicon/generate.py] 的 `COIN_LAY` 完全一致。 */
+/** Relative positions of the three coins, exactly matching `COIN_LAY` in
+ * [tools/appicon/generate.py]. */
 private val COIN_LAY = listOf(-0.78f to 0.39f, 0.78f to 0.39f, 0f to -0.39f)
 
 /**
- * 顶栏标题旁边的完整小猪 —— app icon（[tools/appicon/generate.py]）同一套几何和配色的
- * Compose 移植版，**不是重新设计的另一只猪**。
+ * The full little pig next to the top bar title — a Compose port of the same geometry and
+ * colors as the app icon ([tools/appicon/generate.py]), **not a separately redesigned pig**.
  *
- * ⚠️ **这是第二版。第一版只画了头（耳朵+鼻子+眼睛），被反馈"应该完整显示"。**
- * 改之前先用 Python 生成器实测过"完整猪缩到 24~40px 到底还剩多少细节"（截图对比见
- * 会话记录）：app icon 自带的安全边距在这个尺寸下会把猪挤成画面中间一小团、大部分
- * 留白，比头部特写还难认。**解法不是"删细节"，是去掉图标的安全边距、让猪本身
- * 填满这个小画布**——比例上相当于把猪整体放大到约 1/0.60 倍，缩放中心对齐猪的
- * 身体中心而不是整张图标画布的中心，这样耳朵、鼻子、腿、尾巴、翅膀、钱币才能
- * 在 28~32dp 下同时留下来。
+ * ⚠️ **This is the second version. The first version only drew the head (ears + snout +
+ * eyes), and feedback was "it should show the full body."**
+ * Before making the change, a Python generator was used to actually test "how much detail
+ * is left once the full pig is shrunk to 24~40px" (screenshot comparison is in the session
+ * log): the app icon's built-in safe margin, at this size, squeezes the pig into a small
+ * cluster in the middle of the frame with mostly empty space — even harder to make out than
+ * a head close-up. **The fix isn't "remove detail," it's dropping the icon's safe margin so
+ * the pig itself fills this small canvas** — proportionally equivalent to scaling the whole
+ * pig up by about 1/0.60x, with the scale center aligned to the pig's body center rather
+ * than the whole icon canvas's center, so the ears, snout, legs, tail, wings, and coins can
+ * all still survive at 28~32dp.
  *
- * **翅膀简化了（7 层羽毛减到 3 片），钱币没有简化（还是 3 枚，和 app icon 一致）。**
- * ⚠️ 这条踩过一次坑：第一版把钱币也简化成了 2 枚，理由是"3 枚会糊成一团"——
- * 但那个判断是**凭印象写的，没有实测**。被问到"为什么钱币数量不一样"之后
- * 才拿 Python 生成器把真实的 3 枚布局缩到 28~36px 单独看了一遍：**3 枚在这个
- * 尺寸下和 2 枚一样看得清**，之前的简化没有必要，反而制造了一处和 app icon
- * 对不上的细节。**翅膀确实测过差别很小**（分层在这个尺寸下本来就模糊成一片），
- * 所以只有翅膀保留简化，钱币改回和图标一致。
+ * **The wings were simplified (7 feather layers reduced to 3), the coins were not
+ * simplified (still 3, matching the app icon).**
+ * ⚠️ This one hit a real pitfall: the first version also simplified the coins down to 2,
+ * reasoning that "3 would blur into a blob" — but that judgment was **written from
+ * impression, without actually testing it**. Only after being asked "why is the coin count
+ * different" was the Python generator used to shrink the real 3-coin layout down to 28~36px
+ * and look at it in isolation: **3 coins read just as clearly as 2 at this size**, so the
+ * earlier simplification wasn't necessary and instead created a detail that didn't match
+ * the app icon. **The wings genuinely were tested and the difference was small** (the
+ * layering blurs together at this size regardless), so only the wings kept the
+ * simplification, and the coins were reverted to match the icon.
  *
- * 颜色是固定的品牌粉，不跟 `MaterialTheme.colorScheme` 走——和 app icon 同理，
- * 这是吉祥物本身的颜色，不是某个语义角色。
+ * The color is a fixed brand pink, not following `MaterialTheme.colorScheme` — same
+ * reasoning as the app icon: this is the mascot's own color, not a semantic role.
  *
- * ⚠️ **Canvas 画的图形不产生无障碍节点**，纯装饰性——标题文字"猪满仓"已经完整
- * 表达了信息。
+ * ⚠️ **Shapes drawn on Canvas don't produce accessibility nodes**; purely decorative — the
+ * title text "猪满仓" already fully conveys the information.
  */
 @Composable
 fun PigGlyph(modifier: Modifier = Modifier.size(32.dp)) {
     Canvas(modifier) {
         val n = size.minDimension
-        // 猪本体相对"整张 app icon 画布"的实际占比约 0.60（含翅膀/尾巴的松散留白），
-        // 除以它等于把猪放大到几乎填满这个小画布，缩放中心固定在猪的身体中心
-        // （下面 cx,cy 对应 generate.py 里的 n*0.50, n*0.52，两者用的是同一个参照系）。
+        // The pig body's actual share of "the whole app icon canvas" is about 0.60
+        // (including the loose whitespace around wings/tail); dividing by it scales the pig
+        // up to nearly fill this small canvas, with the scale center fixed at the pig's
+        // body center (cx, cy below correspond to generate.py's n*0.50, n*0.52 — both use
+        // the same reference frame).
         val vn = n / 0.60f
         val cx = size.width / 2f
         val cy = size.height / 2f
@@ -94,7 +105,8 @@ fun PigGlyph(modifier: Modifier = Modifier.size(32.dp)) {
                 drawCircle(HOOF, hr, p1)
             }
 
-            // 尾巴：一圈渐细的小圆点铺出螺旋，和 generate.py 的画法一致
+            // Tail: a spiral laid out from a ring of gradually thinning dots, matching how
+            // generate.py draws it
             val tail = at(-rx * 1.02f, -ry * 0.30f)
             for (i in 0 until 40) {
                 val t = i / 39f
@@ -104,17 +116,18 @@ fun PigGlyph(modifier: Modifier = Modifier.size(32.dp)) {
                 drawCircle(BODY, vn * 0.0145f, p)
             }
 
-            // 两条腿（前后各一），先画一次垫底，身体画完再露出下半截
+            // Two legs (one front, one back); drawn once first as a base layer, then the
+            // lower half is re-exposed after the body is drawn
             leg(-0.30f, -0.34f, 0.90f, 1.10f)
             leg(0.28f, 0.25f, 0.88f, 1.08f)
 
-            // 身体
+            // Body
             drawOval(BODY, topLeft = at(-rx, -ry), size = Size(rx * 2, ry * 2))
 
             leg(-0.30f, -0.34f, 0.90f, 1.10f)
             leg(0.28f, 0.25f, 0.88f, 1.08f)
 
-            // 鼻子 + 两个鼻孔
+            // Snout + two nostrils
             val snout = at(rx * 0.92f, -ry * 0.08f)
             val sr = vn * SNOUT_R
             drawOval(
@@ -126,17 +139,19 @@ fun PigGlyph(modifier: Modifier = Modifier.size(32.dp)) {
             drawCircle(EYE.copy(alpha = 0.55f), nr, Offset(snout.x + vn * 0.010f, snout.y - vn * 0.023f))
             drawCircle(EYE.copy(alpha = 0.55f), nr, Offset(snout.x + vn * 0.010f, snout.y + vn * 0.023f))
 
-            // 耳朵：圆 + 一个朝上的小尖尖（圆和三角求并），和 app icon 同一个画法
+            // Ear: a circle + a small upward point (union of circle and triangle), same
+            // drawing method as the app icon
             val ear = at(rx * 0.46f, -ry * 0.86f)
             drawEar(ear, vn * EAR_R)
 
-            // 眼睛 + 高光
+            // Eye + highlight
             val eye = at(rx * 0.52f, -ry * 0.30f)
             val er = vn * EYE_R
             drawCircle(EYE, er, eye)
             drawCircle(Color.White, er * 0.36f, Offset(eye.x - er * 0.34f, eye.y - er * 0.36f))
 
-            // 翅膀（简化到 3 片羽毛——分层在这个尺寸下已经看不出来，见上面的说明）
+            // Wings (simplified to 3 feathers — the layering is already indistinguishable
+            // at this size, see the note above)
             val wing = at(-rx * 0.30f, -ry * 0.62f)
             val wl = vn * WING_L
             val ww = vn * WING_W
@@ -149,7 +164,7 @@ fun PigGlyph(modifier: Modifier = Modifier.size(32.dp)) {
                 drawPlume(wing, WING_ANG + da, wl * l, ww, if (shade) WING_SHADE else WINGC.copy(alpha = 0.9f))
             }
 
-            // 钱币：三枚，和 app icon 同一个布局。
+            // Coins: three, same layout as the app icon.
             val coinC = at(-rx * 0.12f, ry * 0.02f)
             val cr = vn * COIN_R
             for ((ddx, ddy) in COIN_LAY) {
@@ -179,7 +194,8 @@ private fun DrawScope.drawEar(center: Offset, r: Float) {
     drawCircle(SNOUT, ri, Offset(center.x + r * 0.10f * cos(a), center.y + r * 0.10f * sin(a)))
 }
 
-/** 一根羽毛：根部窄、中段饱满、尖端圆。移植自 generate.py 的 `_plume`。 */
+/** One feather: narrow at the base, full in the middle, rounded at the tip. Ported from
+ * generate.py's `_plume`. */
 private fun DrawScope.drawPlume(origin: Offset, angDeg: Float, l: Float, w: Float, color: Color) {
     val a = angDeg * PI.toFloat() / 180f
     val ca = cos(a)
@@ -203,7 +219,8 @@ private fun DrawScope.drawPlume(origin: Offset, angDeg: Float, l: Float, w: Floa
     drawPath(path, color)
 }
 
-/** 一枚铜钱：外圆 + 方孔（填猪身色，让身体从孔里透出来）+ 深金描边。 */
+/** One coin: outer circle + square hole (filled with the pig-body color so the body shows
+ * through the hole) + a deep-gold outline. */
 private fun DrawScope.drawCoin(center: Offset, r: Float) {
     drawCircle(GEDGE, r * 1.12f, center)
     drawCircle(GOLD, r, center)

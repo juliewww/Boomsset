@@ -6,23 +6,23 @@ import kotlinx.datetime.Month
 import kotlinx.datetime.minus
 import kotlinx.datetime.plus
 
-/** 净值曲线的时间粒度。 */
+/** The time granularity of the net worth curve. */
 enum class Period {
     MONTH,
     QUARTER,
     YEAR,
 }
 
-/** 该日期所属周期的第一天。 */
+/** The first day of the period this date falls in. */
 internal fun LocalDate.startOfPeriod(period: Period): LocalDate = when (period) {
     Period.MONTH -> LocalDate(year, month, 1)
-    // 季度起始月：1 / 4 / 7 / 10
-    // 用 Month 枚举的 ordinal（0 基）算季度起始月，避开已废弃的 monthNumber
+    // Quarter start months: 1 / 4 / 7 / 10
+    // Uses the Month enum's ordinal (0-based) to compute the quarter start month, avoiding the deprecated monthNumber
     Period.QUARTER -> LocalDate(year, Month.entries[(month.ordinal / 3) * 3], 1)
     Period.YEAR -> LocalDate(year, 1, 1)
 }
 
-/** 该日期所属周期的最后一天。 */
+/** The last day of the period this date falls in. */
 internal fun LocalDate.endOfPeriod(period: Period): LocalDate {
     val start = startOfPeriod(period)
     val nextStart = when (period) {
@@ -34,13 +34,14 @@ internal fun LocalDate.endOfPeriod(period: Period): LocalDate {
 }
 
 /**
- * 生成最近 [count] 个周期的取样日期，按时间升序。
+ * Generates the sample dates for the most recent [count] periods, in ascending time order.
  *
- * **最后一个点是 [today] 而不是当前周期的末日** —— 当前周期还没结束，
- * 用未来的日期取样会得到一个和"现在"不符的净值。
+ * **The last point is [today], not the end of the current period** — the current
+ * period hasn't ended yet, so sampling on a future date would produce a net worth value
+ * that doesn't match "right now".
  */
 internal fun periodSampleDates(today: LocalDate, period: Period, count: Int): List<LocalDate> {
-    require(count > 0) { "count 必须为正数，实际是 $count" }
+    require(count > 0) { "count must be positive, but was $count" }
     val dates = mutableListOf<LocalDate>()
     var cursor = today
     repeat(count) {

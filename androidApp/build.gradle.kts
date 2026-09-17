@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.androidApplication)
-    // 不要加 org.jetbrains.kotlin.android —— AGP 9.0 起内置 Kotlin 支持，
-    // 加了会直接构建失败（"no longer required for Kotlin support since AGP 9.0"）。
+    // Do NOT add org.jetbrains.kotlin.android — AGP 9.0+ has built-in Kotlin support,
+    // and adding it fails the build outright ("no longer required for Kotlin support since AGP 9.0").
     alias(libs.plugins.composeCompiler)
 }
 
@@ -35,7 +35,7 @@ kotlin {
 dependencies {
     implementation(project(":shared"))
     implementation(libs.androidx.activity.compose)
-    // FragmentActivity 从这里来 —— BiometricPrompt 硬性要求，见 AGENTS.md 约束 6
+    // FragmentActivity comes from here — hard requirement of BiometricPrompt, see AGENTS.md constraint 6
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.biometric)

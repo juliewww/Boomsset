@@ -19,7 +19,7 @@ import kotlin.time.Clock
 import kotlin.time.Instant
 
 /**
- * 用 MockEngine，不打真网络。响应字节是从真实接口抓下来的。
+ * Uses MockEngine, never hits the real network. The response bytes were captured from the real endpoint.
  */
 class TencentQuoteSourceTest {
 
@@ -36,8 +36,8 @@ class TencentQuoteSourceTest {
     }
 
     /**
-     * 真实报文的字节。中文名「贵州茅台」在 GBK 下是 b9f3 d6dd c3a9 cca8 ——
-     * 这几个字节不是合法 UTF-8，是这个测试的重点。
+     * The bytes of a real response. The Chinese name "贵州茅台" (Kweichow Moutai) is
+     * b9f3 d6dd c3a9 cca8 in GBK -- these bytes are not valid UTF-8, which is exactly the point of this test.
      */
     private fun maotaiBytes(): ByteArray {
         val prefix = "v_sh600519=\"1~"
@@ -50,9 +50,10 @@ class TencentQuoteSourceTest {
     }
 
     @Test
-    fun `GBK 中文名不会破坏价格解析`() = runTest {
-        // 这是选 Latin-1 解码的全部理由：GBK 字节不是合法 UTF-8，
-        // 用 UTF-8 解码会插入替换字符、可能吃掉相邻的 ~ 分隔符导致字段错位。
+    fun `a GBK-encoded Chinese name does not break price parsing`() = runTest {
+        // This is the entire reason for choosing Latin-1 decoding: GBK bytes are not valid
+        // UTF-8, and decoding as UTF-8 would insert replacement characters, potentially
+        // swallowing an adjacent ~ delimiter and shifting the fields out of place.
         val quotes = source(bytesEngine(maotaiBytes())).fetch(setOf("sh600519"), day)
 
         quotes shouldHaveSize 1
@@ -63,7 +64,7 @@ class TencentQuoteSourceTest {
     }
 
     @Test
-    fun `批量响应逐条解析`() = runTest {
+    fun `a batch response is parsed entry by entry`() = runTest {
         val body = """
             v_sh600519="1~X~600519~1329.22~1320.00~";
             v_sz000858="51~Y~000858~75.35~74.00~";
@@ -80,50 +81,50 @@ class TencentQuoteSourceTest {
     }
 
     @Test
-    fun `港股三位小数价格不丢精度`() = runTest {
-        // 腾讯控股报 462.400。若单价用 scale-2 的 Money 存，这里会被拒或截断。
+    fun `Hong Kong stock 3-decimal prices keep full precision`() = runTest {
+        // Tencent Holdings quotes 462.400. If unit price were stored as scale-2 Money, this would be rejected or truncated.
         val body = """v_hk00700="100~Z~00700~462.400~460.00~";"""
         val quote = source(bytesEngine(body.encodeToByteArray())).fetch(setOf("hk00700"), day)
             .single()
 
         quote.price shouldBe UnitPrice(462_40000000L)
-        // 100 股 × 462.40 = 46240.00 港币
+        // 100 shares x 462.40 = 46240.00 HKD
         Quantity.ofUnits(100).valueAt(quote.price) shouldBe Money(46_240_00)
     }
 
-    // ---------- 失败路径：取不到就是取不到，绝不写 0 价 ----------
+    // ---------- Failure paths: if it can't be fetched, it can't be fetched -- never write a price of 0 ----------
 
     @Test
-    fun `停牌或无效代码返回的零价被丢弃而不是写入`() = runTest {
-        // 写 0 价会让该资产静默归零 —— 比"无法估值"糟糕得多
+    fun `a zero price for a suspended or invalid symbol is discarded, not written`() = runTest {
+        // Writing a price of 0 would silently zero out that asset -- much worse than "cannot be valued"
         val body = """v_sh000000="1~X~000000~0.00~0.00~";"""
         source(bytesEngine(body.encodeToByteArray())).fetch(setOf("sh000000"), day).shouldBeEmpty()
     }
 
     @Test
-    fun `字段不足的短响应被丢弃`() = runTest {
+    fun `a short response with too few fields is discarded`() = runTest {
         val body = """v_shbad="1~";"""
         source(bytesEngine(body.encodeToByteArray())).fetch(setOf("shbad"), day).shouldBeEmpty()
     }
 
     @Test
-    fun `HTTP 错误返回空列表而不是抛异常`() = runTest {
+    fun `an HTTP error returns an empty list instead of throwing`() = runTest {
         val engine = MockEngine { respondError(HttpStatusCode.ServiceUnavailable) }
         source(engine).fetch(setOf("sh600519"), day).shouldBeEmpty()
     }
 
     @Test
-    fun `空代码集合不发请求`() = runTest {
+    fun `an empty symbol set sends no request`() = runTest {
         var called = false
         val engine = MockEngine { called = true; respondError(HttpStatusCode.InternalServerError) }
         source(engine).fetch(emptySet(), day).shouldBeEmpty()
         called shouldBe false
     }
 
-    // ---------- 代码格式与币种 ----------
+    // ---------- Symbol format and currency ----------
 
     @Test
-    fun `币种由代码前缀决定`() {
+    fun `currency is determined by the symbol's prefix`() {
         TencentQuoteSource.currencyOf("sh600519") shouldBe "CNY"
         TencentQuoteSource.currencyOf("sz000858") shouldBe "CNY"
         TencentQuoteSource.currencyOf("hk00700") shouldBe "HKD"
@@ -131,11 +132,11 @@ class TencentQuoteSourceTest {
     }
 
     @Test
-    fun `代码格式校验挡住明显错误`() {
+    fun `symbol format validation blocks obvious mistakes`() {
         TencentQuoteSource.isRecognized("sh600519") shouldBe true
         TencentQuoteSource.isRecognized("hk00700") shouldBe true
         TencentQuoteSource.isRecognized("usAAPL") shouldBe true
-        // 缺前缀、位数不对、纯中文都挡掉
+        // Missing prefix, wrong digit count, and plain Chinese text are all rejected
         TencentQuoteSource.isRecognized("600519") shouldBe false
         TencentQuoteSource.isRecognized("sh60051") shouldBe false
         TencentQuoteSource.isRecognized("贵州茅台") shouldBe false

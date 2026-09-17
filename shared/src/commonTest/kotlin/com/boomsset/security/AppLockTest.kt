@@ -18,35 +18,36 @@ import kotlin.test.Test
 class AppLockStateTest {
 
     @Test
-    fun `加载中也要挡住内容`() {
-        // 这是应用锁最常见的实现缺陷：先渲染内容、读到设置后才遮住 ——
-        // 开了锁的用户会在那一瞬间看到自己的资产数据。
+    fun `content is blocked even while loading`() {
+        // This is the most common implementation flaw for an app lock: rendering the content
+        // first and only covering it once the setting is read -- a user with the lock enabled
+        // would briefly see their own asset data in that window.
         AppLockUiState(loading = true, lockEnabled = false).shouldBlockContent shouldBe true
         AppLockUiState(loading = true, lockEnabled = true).shouldBlockContent shouldBe true
     }
 
     @Test
-    fun `没开锁就不挡`() {
+    fun `nothing is blocked when the lock is off`() {
         AppLockUiState(loading = false, lockEnabled = false).shouldBlockContent shouldBe false
     }
 
     @Test
-    fun `开了锁未解锁则挡住`() {
+    fun `content is blocked when the lock is on but not yet unlocked`() {
         AppLockUiState(loading = false, lockEnabled = true, unlocked = false)
             .shouldBlockContent shouldBe true
     }
 
     @Test
-    fun `开了锁已解锁则放行`() {
+    fun `content is allowed through when the lock is on and unlocked`() {
         AppLockUiState(loading = false, lockEnabled = true, unlocked = true)
             .shouldBlockContent shouldBe false
     }
 }
 
 /**
- * ViewModel 的测试必须替换 `Dispatchers.Main` —— `viewModelScope` 用的就是它，
- * 单测环境里没有 Main dispatcher，`launch` 块会静默不执行，
- * 测试就变成「什么都没发生所以断言全挂」。
+ * ViewModel tests must replace `Dispatchers.Main` -- `viewModelScope` relies on exactly that,
+ * and the unit test environment has no Main dispatcher, so `launch` blocks would silently
+ * never execute, turning the test into "nothing happened, so every assertion fails."
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppLockViewModelTest {
@@ -87,7 +88,7 @@ class AppLockViewModelTest {
     }
 
     @Test
-    fun `认证成功后解锁`() = runTest {
+    fun `unlocks after successful authentication`() = runTest {
         val settings = FakeSettings().apply { lockEnabled.value = true }
         val vm = AppLockViewModel(settings, FakeAuthenticator())
 
@@ -98,8 +99,8 @@ class AppLockViewModelTest {
     }
 
     @Test
-    fun `用户取消不算错误 不显示失败提示`() = runTest {
-        // 弹「认证失败」是在指责用户 —— 他只是按了取消
+    fun `user cancellation is not an error - no failure message is shown`() = runTest {
+        // Popping up "authentication failed" would be blaming the user -- they simply tapped cancel
         val settings = FakeSettings().apply { lockEnabled.value = true }
         val vm = AppLockViewModel(settings, FakeAuthenticator(result = AuthResult.Cancelled))
 
@@ -109,7 +110,7 @@ class AppLockViewModelTest {
     }
 
     @Test
-    fun `认证失败保留原因供提示`() = runTest {
+    fun `a failed authentication keeps the reason around for the UI`() = runTest {
         val settings = FakeSettings().apply { lockEnabled.value = true }
         val vm = AppLockViewModel(settings, FakeAuthenticator(result = AuthResult.Failed("指纹不匹配")))
 
@@ -119,9 +120,9 @@ class AppLockViewModelTest {
     }
 
     @Test
-    fun `开启应用锁前必须先认证成功`() = runTest {
-        // 否则拿到手机的人能直接开锁把主人锁在外面；
-        // 或者用户在认证不了的设备上开了锁，自己再也进不来
+    fun `authentication must succeed before the app lock can be turned on`() = runTest {
+        // Otherwise whoever is holding the phone could turn the lock on and lock the owner
+        // out; or the user turns it on from a device that can't authenticate and can never get back in
         val settings = FakeSettings()
         val auth = FakeAuthenticator(result = AuthResult.Failed("不匹配"))
         val vm = AppLockViewModel(settings, auth)
@@ -129,24 +130,24 @@ class AppLockViewModelTest {
         vm.setLockEnabled(true)
 
         auth.calls shouldBe 1
-        settings.lockEnabled.value shouldBe false   // 没开成
+        settings.lockEnabled.value shouldBe false   // failed to turn on
     }
 
     @Test
-    fun `认证成功才真的开启`() = runTest {
+    fun `it only actually turns on once authentication succeeds`() = runTest {
         val settings = FakeSettings()
         val vm = AppLockViewModel(settings, FakeAuthenticator())
 
         vm.setLockEnabled(true)
 
         settings.lockEnabled.value shouldBe true
-        // 开启的同时视为已解锁 —— 否则刚开完就被自己挡在外面
+        // Turning it on is treated as already unlocked -- otherwise the user would be locked out right after enabling it
         vm.state.value.unlocked shouldBe true
     }
 
     @Test
-    fun `关闭不需要再认证一次`() = runTest {
-        // 能点到这个开关说明已经通过认证进来了，再验一次是多余的摩擦
+    fun `turning it off does not require authenticating again`() = runTest {
+        // Being able to reach this toggle means authentication already succeeded to get in; verifying again would be needless friction
         val settings = FakeSettings().apply { lockEnabled.value = true }
         val auth = FakeAuthenticator()
         val vm = AppLockViewModel(settings, auth)
@@ -158,8 +159,8 @@ class AppLockViewModelTest {
     }
 
     @Test
-    fun `重新上锁后需要再次认证`() = runTest {
-        // 解锁状态**不持久化** —— 回后台或重启都要重新验
+    fun `re-locking requires authenticating again`() = runTest {
+        // The unlocked state is **not persisted** -- going to the background or restarting always requires re-authenticating
         val settings = FakeSettings().apply { lockEnabled.value = true }
         val vm = AppLockViewModel(settings, FakeAuthenticator())
 
@@ -171,12 +172,12 @@ class AppLockViewModelTest {
     }
 
     @Test
-    fun `设备不支持时能力如实反映`() = runTest {
+    fun `capability accurately reflects an unsupported device`() = runTest {
         val vm = AppLockViewModel(
             FakeSettings(),
             FakeAuthenticator(capability = AuthCapability.NO_HARDWARE),
         )
-        // 「不支持」和「没录入」要分开 —— 后者用户去系统设置能解决
+        // "unsupported" and "not enrolled" must be kept distinct -- the latter is something the user can fix in system settings
         vm.state.value.capability shouldBe AuthCapability.NO_HARDWARE
     }
 }

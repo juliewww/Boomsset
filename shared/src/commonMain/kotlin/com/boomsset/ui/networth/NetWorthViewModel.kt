@@ -30,25 +30,27 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
 
 /**
- * 净值页图表的展示选项。
+ * Display options for the net worth page's chart.
  *
- * 四个字段合成一个对象、走**一条** flow，而不是四个 `MutableStateFlow` ——
- * `combine` 的具名重载最多 5 路，而且这四个都只影响"图表怎么画"、变化时机也一致，
- * 拆开只会让 combine 变长、可读性变差。
+ * The four fields are combined into a single object flowing through **one** flow, rather than
+ * four separate `MutableStateFlow`s — `combine`'s named overload tops out at 5 arguments, and
+ * all four of these only affect "how the chart is drawn" and change on the same cadence;
+ * splitting them up would only make the combine longer and hurt readability.
  */
 data class ChartOptions(
     val period: Period = Period.MONTH,
     val mode: ChartMode = ChartMode.TOTAL,
     val style: ChartStyle = ChartStyle.COLUMN,
     /**
-     * 图例里被**取消勾选**的大类。
+     * Classes that have been **unchecked** in the legend.
      *
-     * 存"隐藏"而不是"显示"是有意的：将来真加了第六个大类，它会默认可见，
-     * 而不是因为不在这个集合里就被悄悄藏掉。
+     * Storing "hidden" rather than "shown" is intentional: if a sixth class is ever added in the
+     * future, it will be visible by default, rather than silently hidden just because it's not
+     * in this set.
      */
     val hiddenClasses: Set<AssetClass> = emptySet(),
 ) {
-    /** 要画的大类，**顺序永远是 [AssetClass.displayOrder]** —— 堆叠顺序和配色都依赖它。 */
+    /** The classes to draw, **always in [AssetClass.displayOrder]** — both stacking order and color depend on it. */
     val visibleClasses: List<AssetClass>
         get() = AssetClass.displayOrder.filterNot { it in hiddenClasses }
 }
@@ -56,38 +58,43 @@ data class ChartOptions(
 data class NetWorthUiState(
     val loading: Boolean = true,
     val series: NetWorthSeries? = null,
-    /** 按大类拆开的同一段时间序列，取样点与 [series] 逐点对齐。 */
+    /** The same time series broken out by class, with sample points aligned point-for-point with [series]. */
     val allocationSeries: AllocationSeries? = null,
     val chart: ChartOptions = ChartOptions(),
     val pnl: PortfolioPnL? = null,
     val baseCurrency: String = "CNY",
     val subtypes: List<AssetSubtype> = emptyList(),
-    /** 无法估值的资产数量 —— 行情或汇率缺失。UI 必须提示，不能静默低估净值。 */
+    /** Number of assets that can't be valued — missing quote or FX rate. The UI must surface this, not silently understate net worth. */
     val unpricedCount: Int = 0,
     val hasAssets: Boolean = false,
     /**
-     * 最近一次记快照的日期，和距今多少天。
+     * The date of the most recent snapshot, and how many days ago that was.
      *
-     * 记快照不记流水，所以净值不会自己更新 —— 这两个值是用户判断"顶上那个数还新不新"
-     * 的唯一线索。见 [PortfolioSeriesCalculator.lastRecordedDate]。
+     * We record snapshots, not transactions, so net worth doesn't update on its own — these two
+     * values are the user's only cue for judging "is the number at the top still fresh". See
+     * [PortfolioSeriesCalculator.lastRecordedDate].
      */
     val lastRecordedDate: LocalDate? = null,
     val daysSinceLastRecord: Int? = null,
     /**
-     * 金额是否藏起来（眼睛图标）。**只影响这一页的展示**，不改写任何数据。
+     * Whether amounts are hidden (the eye icon). **Only affects this page's display**, doesn't
+     * rewrite any data.
      *
-     * 藏的是**绝对金额**（净值、总资产、总负债、变化额、纵轴刻度），
-     * 百分比和比率照常显示 —— 增长率、收益率、负债率单看都推不出身价，
-     * 而它们正是这一页的价值所在。全藏起来的话这个开关就等于"关掉净值页"。
+     * What's hidden is the **absolute amount** (net worth, total assets, total liabilities,
+     * change amount, y-axis ticks) — percentages and ratios are shown as usual, since growth
+     * rate, return rate, and liability ratio can't reveal net worth by themselves, and they are
+     * exactly this page's value. Hiding everything would be equivalent to "turning off the net
+     * worth page".
      */
     val amountsHidden: Boolean = false,
 ) {
     /**
-     * 空状态看的是**有没有资产**，不是 `series.latest == null`。
+     * The empty state looks at **whether there are any assets**, not `series.latest == null`.
      *
-     * buildSeries 即使在零资产时也会生成一整串净值为 0 的点（取样日期是按周期算的，
-     * 与有没有数据无关），所以 latest 永远非空 —— 用它判空会导致空状态永不出现，
-     * 新用户看到的是一条平坦的零线而不是引导。
+     * buildSeries generates a whole string of zero-net-worth points even at zero assets (the
+     * sample dates are computed by period, independent of whether there's data), so `latest` is
+     * never null — using that to test for emptiness would mean the empty state never appears,
+     * and new users would see a flat zero line instead of onboarding guidance.
      */
     val isEmpty: Boolean get() = !loading && !hasAssets
 }
@@ -102,24 +109,27 @@ class NetWorthViewModel(
 
     private val chartOptions = MutableStateFlow(ChartOptions())
 
-    // 基准币种默认 CNY、可切换。作为查询参数传入，不落到 Asset/Snapshot 上。
+    // Base currency defaults to CNY and is switchable. Passed in as a query parameter, never
+    // persisted onto Asset/Snapshot.
     private val baseCurrency = settings.observeBaseCurrency()
 
     init {
-        // 刷新汇率。只写 fx_rate，不写 snapshot —— 见 RateRefresher。
+        // Refresh FX rates. Only writes fx_rate, never snapshot — see RateRefresher.
         //
-        // ⚠️ 必须随「需要的币种集合」变化重新触发，不能只在 init 跑一次：
-        // 首次启动时还没有任何资产，需要的币种是空集；之后新增一个 USD 资产就永远
-        // 拉不到它的汇率了。这是实跑时发现的 bug。
+        // ⚠️ Must be retriggered whenever the "set of required currencies" changes, not just run
+        // once in init: on first launch there are no assets yet, so the required currency set is
+        // empty; if a USD asset is added later, its exchange rate would never be fetched again.
+        // This is a bug that was only discovered by running the app for real.
         //
-        // RateRefresher 内部记录已尝试的 (币种, 日期)，所以写入 fx_rate 引起的
-        // 重新发射不会造成无限循环。
+        // RateRefresher internally tracks which (currency, date) pairs have already been
+        // attempted, so the re-emission triggered by writing to fx_rate doesn't cause an
+        // infinite loop.
         viewModelScope.launch {
             combine(
                 repository.observePortfolio(),
                 settings.observeBaseCurrency(),
             ) { data, currency ->
-                // 币种集合或行情代码集合任一变化都要重新刷新
+                // Refresh again whenever either the currency set or the quote-symbol set changes
                 val currencies = data.assets.filter { !it.isArchived }.map { it.currency }.toSet()
                 val symbols = data.snapshots
                     .filterIsInstance<com.boomsset.domain.Snapshot.Quoted>()
@@ -146,13 +156,15 @@ class NetWorthViewModel(
             baseCurrency = currency,
             today = today,
             zone = zone,
-            // 按年/按季看的时候，账号可能才用了几个月 —— 不裁的话前面一大截
-            // 全是「资产还不存在」的 0 值点，占满图表还没有信息量。
+            // When viewing by year/quarter, the account might only have been used for a few
+            // months — without trimming, a big leading chunk would all be zero-value points for
+            // "the asset didn't exist yet", filling up the chart with no informational value.
             trimBeforeFirstSnapshot = true,
         )
-        // 无论当前看的是不是大类，都算 —— 每个取样点一次 allocation()，
-        // 对这个数据量（最多 12 个点 × 几十项资产）可以忽略，
-        // 换来的是切换开关时图表立刻就有数据，不用等一轮重算。
+        // Computed regardless of whether the by-class view is currently active — one
+        // allocation() call per sample point is negligible at this data volume (at most 12
+        // points x a few dozen assets), and in exchange the chart has data immediately when the
+        // toggle is switched, without waiting for a recompute.
         val allocationSeries = PortfolioSeriesCalculator.buildAllocationSeries(
             data = data,
             period = chart.period,
@@ -195,10 +207,11 @@ class NetWorthViewModel(
     }
 
     /**
-     * 图例上勾/取消勾一个大类。
+     * Check/uncheck a class in the legend.
      *
-     * **允许把所有大类都取消勾选** —— 那时候页面显示一行说明而不是空图表。
-     * 不做"至少留一个"的强制：一个点不动的复选框比一句说明更让人困惑。
+     * **Unchecking all classes is allowed** — in that case the page shows an explanatory line
+     * instead of an empty chart. There's no "must keep at least one" enforcement: a checkbox
+     * that refuses to respond is more confusing than an explanatory sentence.
      */
     fun toggleClassVisible(assetClass: AssetClass) {
         chartOptions.update { options ->
@@ -210,10 +223,12 @@ class NetWorthViewModel(
     }
 
     /**
-     * 眼睛图标：藏起/显示金额。
+     * The eye icon: hide/show amounts.
      *
-     * 落到 settings 表里而不是留在 UI 的 `remember` 里 —— 后者切个 tab 回来就复位了，
-     * 而这个开关的用途恰恰是"人还在旁边"，那期间用户很可能会去翻配置页再回来。
+     * Persisted to the settings table rather than left in the UI's `remember` — the latter would
+     * reset the moment you switch tabs and come back, whereas this toggle's whole purpose is
+     * "someone else is nearby", during which the user is quite likely to flip over to the
+     * allocation page and back.
      */
     fun setAmountsHidden(hidden: Boolean) {
         viewModelScope.launch { settings.setAmountsHidden(hidden) }
@@ -222,14 +237,32 @@ class NetWorthViewModel(
     fun selectBaseCurrency(code: String) {
         viewModelScope.launch {
             settings.setBaseCurrency(code)
-            // 换了基准币种就要有对应的汇率，否则外币资产会变成"无法估值"
+            // Switching the base currency requires the corresponding exchange rate, otherwise
+            // foreign-currency assets would turn into "can't be valued"
             rateRefresher.refreshForHoldings(code)
         }
     }
 
     /**
-     * 新建资产。两种估值模式走同一个入口 —— 参数校验在 [com.boomsset.ui.NewAsset]
-     * 的构造处（对话框）完成，这里只负责落库。
+     * The "retry pricing" button: clears [RateRefresher]'s internal record of failed attempts,
+     * then immediately re-fetches exchange rates and quotes.
+     *
+     * Automatic refresh only triggers when the "set of required currencies/symbols" changes —
+     * if the request happened to fail right after a foreign-currency asset was added (a
+     * transient cause like a network blip), nothing afterward would ever trigger a retry, and
+     * the user's only option would be to restart the app. This button provides a path to recover
+     * without a restart.
+     */
+    fun retryPricing() {
+        viewModelScope.launch {
+            rateRefresher.retryAll(state.value.baseCurrency)
+        }
+    }
+
+    /**
+     * Create a new asset. Both valuation modes go through the same entry point — parameter
+     * validation happens where [com.boomsset.ui.NewAsset] is constructed (the dialog); this only
+     * handles persisting it.
      */
     fun addAsset(newAsset: com.boomsset.ui.NewAsset) {
         viewModelScope.launch {

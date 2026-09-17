@@ -17,21 +17,27 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
 /**
- * (i) 图标 + 点按弹出的说明气泡。
+ * An (i) icon + a tap-to-reveal explanation bubble.
  *
- * 用来把那些一次性看不懂、但**不需要常驻**的解释文字收起来 ——
- * 配置页的"对比哪套目标""内置预设是行业常见的起点……"、净值页的"切换币种只改展示口径"
- * 这类句子常驻显示，占地方还啰嗦（实机反馈）。`TooltipBox` 默认是长按/悬停触发，这里手动在
- * `onClick` 里调 `state.show()`，因为触屏上点一下比长按更符合"点 (i) 看说明"的直觉，
- * 而且配置页已经把"长按"用在了目标 chip 上 ——
- * 同一屏里不该有两种手势各自绑着不同含义。
+ * Used to tuck away explanatory text that's confusing at first glance but **doesn't need
+ * to stay always visible** — sentences like the allocation page's "which target set is
+ * being compared" / "the built-in preset is a common industry starting point..." or the
+ * net worth page's "switching currency only changes the display basis" take up space and
+ * feel wordy when shown permanently (real-device feedback). `TooltipBox` defaults to a
+ * long-press/hover trigger; here `state.show()` is called manually inside `onClick`,
+ * because a single tap on a touchscreen matches the intuition of "tap the (i) to see the
+ * explanation" better than a long press — and the allocation page already uses "long
+ * press" for the target chip. The same screen shouldn't have two gestures each bound to a
+ * different meaning.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun InfoTooltip(text: String) {
-    // isPersistent = true：默认的气泡 **1.5 秒就自己消失**（实机连拍确认），
-    // 而这里装的是三四行中文，读完要好几秒 —— 主动点开的说明必须等用户点别处才收，
-    // 不然等于把文字藏进了一个来不及看的地方。
+    // isPersistent = true: the default bubble **dismisses itself after 1.5 seconds**
+    // (confirmed with rapid-fire screenshots on a real device), while what's shown here is
+    // three or four lines of Chinese text that takes several seconds to read — an
+    // explanation the user actively opened must wait for a tap elsewhere to dismiss, or it
+    // amounts to hiding the text somewhere there's no time to read it.
     val tooltipState = rememberTooltipState(isPersistent = true)
     val scope = rememberCoroutineScope()
     TooltipBox(

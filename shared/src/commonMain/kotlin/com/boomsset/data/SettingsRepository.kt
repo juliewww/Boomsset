@@ -9,25 +9,28 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
 /**
- * 用户偏好。
+ * User preferences.
  *
- * 基准币种**作为查询参数传入净值计算，不落到 Asset 或 Snapshot 上** ——
- * 切换币种只改变展示口径，不改变任何已记录的事实。见 docs/domain.md。
+ * The base currency is **passed into net worth calculations as a query parameter and never
+ * lands on Asset or Snapshot** — switching currencies only changes the display convention,
+ * never any recorded fact. See docs/domain.md.
  */
 interface SettingsRepository {
     fun observeBaseCurrency(): Flow<String>
     suspend fun setBaseCurrency(code: String)
 
-    /** 应用锁是否开启。默认关闭 —— 不替用户做安全决策。 */
+    /** Whether the app lock is enabled. Off by default — we don't make security decisions for the user. */
     fun observeAppLockEnabled(): Flow<Boolean>
     suspend fun setAppLockEnabled(enabled: Boolean)
 
     /**
-     * 净值页的金额是否藏起来（眼睛图标的状态）。默认显示。
+     * Whether amounts on the net worth screen are hidden (the eye icon's state). Shown by default.
      *
-     * **必须持久化。** 这个开关的用途是"旁边有人"，如果每次重启都回到显示状态，
-     * 用户就得在每次打开 App 时抢在别人看见之前再点一次 —— 那等于没有这个功能。
-     * 它只影响展示，一条快照都不改写，所以和基准币种一样放在 settings 表里。
+     * **Must be persisted.** This toggle exists for "someone else is nearby" — if it reset
+     * to visible on every restart, the user would have to race to tap it again every time
+     * they opened the app before someone else could see — which is the same as not having
+     * the feature at all. It only affects display and never rewrites a single snapshot, so
+     * like the base currency, it lives in the settings table.
      */
     fun observeAmountsHidden(): Flow<Boolean>
     suspend fun setAmountsHidden(hidden: Boolean)
@@ -74,10 +77,11 @@ class SqlDelightSettingsRepository(
 }
 
 /**
- * Frankfurter（ECB）支持的、我们在 UI 里提供的币种。
+ * Currencies supported by Frankfurter (ECB) that we expose in the UI.
  *
- * ⚠️ **TWD 不在 ECB 的列表里**，所以台币资产取不到汇率、会显示"无法估值"。
- * 这是数据源限制，不是 bug —— 但别把 TWD 放进这个列表让用户以为能用。
+ * ⚠️ **TWD is not in ECB's list**, so TWD-denominated assets can't get a rate and will
+ * show "unable to value". This is a data source limitation, not a bug — but don't add TWD
+ * to this list and mislead users into thinking it's supported.
  */
 val SUPPORTED_CURRENCIES: List<String> =
     listOf("CNY", "USD", "HKD", "EUR", "JPY", "GBP", "SGD", "AUD", "KRW")

@@ -11,11 +11,11 @@ import kotlin.test.Test
 import kotlin.test.assertFails
 
 /**
- * 在真实 SQLite 上验证 schema —— 光"能编译"证明不了 CHECK 约束真的生效、
- * 或者 seed 真的幂等。
+ * Verifies the schema against real SQLite — merely "compiling" can't prove that CHECK
+ * constraints actually take effect, or that seeding is truly idempotent.
  *
- * 用 JDBC driver 跑在 JVM 上。生产用的是 Android/Native driver，
- * 但 SQL 和约束是同一套。
+ * Runs on the JVM using the JDBC driver. Production uses the Android/Native driver,
+ * but the SQL and constraints are the same set.
  */
 class DatabaseSchemaTest {
 
@@ -27,25 +27,25 @@ class DatabaseSchemaTest {
         return createDatabase(driver)
     }
 
-    /** 绕过 SQLDelight 的类型安全 API 直接写 SQL，用来撞 CHECK 约束。 */
+    /** Bypasses SQLDelight's type-safe API to write raw SQL directly, used to trigger CHECK constraints. */
     private fun rawExecute(sql: String) {
         driver.execute(identifier = null, sql = sql, parameters = 0).value
     }
 
     @Test
-    fun `schema 能创建且内置品种被写入`() {
+    fun `schema can be created and built-in subtypes are written`() {
         val db = freshDb()
         val subtypes = db.assetSubtypeQueries.selectAll().executeAsList()
 
         subtypes shouldHaveSize BUILT_IN_SUBTYPES.size
         subtypes.all { it.is_built_in } shouldBe true
-        // 枚举 adapter 双向工作
+        // The enum adapter works in both directions
         subtypes.first { it.name == "A股" }.asset_class shouldBe AssetClass.EQUITY
         subtypes.first { it.name == "A股" }.default_valuation_mode shouldBe ValuationMode.QUOTED
     }
 
     @Test
-    fun `重复 seed 是幂等的`() {
+    fun `repeated seeding is idempotent`() {
         val db = freshDb()
         db.seedBuiltIns()
         db.seedBuiltIns()
@@ -55,7 +55,7 @@ class DatabaseSchemaTest {
     }
 
     @Test
-    fun `内置预设的比例之和都是一万基点`() {
+    fun `every built-in preset's ratios sum to ten thousand basis points`() {
         val db = freshDb()
         db.targetAllocationQueries.selectAll().executeAsList().forEach { allocation ->
             val sum = db.targetAllocationQueries.sumOfItems(allocation.id).executeAsOne()
@@ -64,21 +64,21 @@ class DatabaseSchemaTest {
     }
 
     @Test
-    fun `只有一套预设是生效的`() {
+    fun `only one preset is active`() {
         val db = freshDb()
         db.targetAllocationQueries.selectAll().executeAsList()
             .count { it.is_active } shouldBe 1
     }
 
-    // ---------- CHECK 约束：让「模式和字段不匹配」在数据库层面写不进去 ----------
+    // ---------- CHECK constraints: prevent "mode and fields mismatched" from being writable at the database level ----------
 
     /**
-     * 正向对照。没有这个测试，下面两个 assertFails 可能**因为错误的原因通过** ——
-     * 比如 rawExecute 自己就是坏的、或者 SQL 写错了列名。
-     * 这个测试证明同样路径下合法的 SQL 是能成功的。
+     * Positive control. Without this test, the two `assertFails` below could **pass for
+     * the wrong reason** — e.g. `rawExecute` itself being broken, or the SQL having a
+     * wrong column name. This test proves that legal SQL on the same path succeeds.
      */
     @Test
-    fun `对照组 合法的原始SQL能写入`() {
+    fun `control group - legal raw SQL can be written`() {
         val db = freshDb()
         val assetId = insertAsset(db)
 
@@ -91,11 +91,11 @@ class DatabaseSchemaTest {
     }
 
     @Test
-    fun `QUOTED 快照缺份额时写入失败`() {
+    fun `writing fails for a QUOTED snapshot missing quantity`() {
         val db = freshDb()
         val assetId = insertAsset(db)
 
-        // 手工构造一条不合法的记录：mode=QUOTED 但没有 quantity
+        // Hand-craft an illegal record: mode=QUOTED but no quantity
         assertFails {
             rawExecute(
                 "INSERT INTO snapshot(asset_id, as_of, mode, value_minor, recorded_at) " +
@@ -105,7 +105,7 @@ class DatabaseSchemaTest {
     }
 
     @Test
-    fun `MANUAL 快照带份额时写入失败`() {
+    fun `writing fails for a MANUAL snapshot carrying a quantity`() {
         val db = freshDb()
         val assetId = insertAsset(db)
 
@@ -118,7 +118,7 @@ class DatabaseSchemaTest {
     }
 
     @Test
-    fun `合法的两种快照都能写入且成本可选`() {
+    fun `both legal snapshot kinds can be written and cost basis is optional`() {
         val db = freshDb()
         val assetId = insertAsset(db)
 
@@ -134,7 +134,7 @@ class DatabaseSchemaTest {
             as_of = 2,
             quantity_scaled = 100_000_000,
             quote_symbol = "600519",
-            // QUOTED 也能有成本 —— 这是 domain.md 里被表格写歪过的那条规则
+            // QUOTED can also have a cost basis — this is the rule that got mis-tabulated in domain.md
             cost_basis_minor = 10_000_00,
             recorded_at = 2,
         )
@@ -146,10 +146,10 @@ class DatabaseSchemaTest {
         all[1].cost_basis_minor shouldBe 10_000_00
     }
 
-    // ---------- 结转查询 ----------
+    // ---------- Carry-forward query ----------
 
     @Test
-    fun `取某时点前最近一条快照`() {
+    fun `takes the most recent snapshot before a given point in time`() {
         val db = freshDb()
         val assetId = insertAsset(db)
 
@@ -157,22 +157,22 @@ class DatabaseSchemaTest {
             db.snapshotQueries.insertManual(assetId, asOf, value, null, asOf)
         }
 
-        // T=250 时应当拿到 asOf=200 那条（结转规则：上次估值继续有效）
+        // At T=250 it should get the asOf=200 entry (carry-forward rule: the last valuation stays in effect)
         val at250 = db.snapshotQueries.selectLatestAsOfPerAsset(250).executeAsList()
         at250 shouldHaveSize 1
         at250.single().value_minor shouldBe 200_00
 
-        // T=50 时一条都没有 —— 该资产那时还不存在，不是值为 0
+        // At T=50 there are none at all — the asset didn't exist yet at that time, it's not a value of 0
         db.snapshotQueries.selectLatestAsOfPerAsset(50).executeAsList() shouldHaveSize 0
     }
 
     @Test
-    fun `同一时点有多条修正记录时取最后录入的那条`() {
+    fun `when the same point in time has multiple corrections, takes the last one recorded`() {
         val db = freshDb()
         val assetId = insertAsset(db)
 
         db.snapshotQueries.insertManual(assetId, 100, 100_00, null, 1)
-        // 修正历史：同一个 asOf 追加一条新的，而不是原地改
+        // Correcting history: append a new entry at the same asOf, instead of editing in place
         db.snapshotQueries.insertManual(assetId, 100, 999_00, null, 2)
 
         val result = db.snapshotQueries.selectLatestAsOfPerAsset(100).executeAsList()
@@ -181,14 +181,14 @@ class DatabaseSchemaTest {
     }
 
     @Test
-    fun `行情按天 upsert 同一天只留一条`() {
+    fun `quote upsert by day keeps only one entry per day`() {
         val db = freshDb()
 
         db.quoteQueries.upsert("600519", "2026-07-28", 150_00, "CNY", 1)
         db.quoteQueries.upsert("600519", "2026-07-28", 151_00, "CNY", 2)
         db.quoteQueries.upsert("600519", "2026-07-29", 152_00, "CNY", 3)
 
-        // 打开 App 刷新十次也只有一条当天记录
+        // Refreshing the app ten times still leaves only one entry for that day
         db.quoteQueries.selectLatestOnOrBefore("600519", "2026-07-28")
             .executeAsOne().price_scaled shouldBe 151_00
         db.quoteQueries.selectLatestOnOrBefore("600519", "2026-07-30")

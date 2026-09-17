@@ -16,10 +16,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
 /**
- * 应用锁的门。锁着时**完全不组合**受保护的内容 —— 不是盖一层遮罩。
+ * The app lock gate. While locked, protected content is **not composed at all** —
+ * it's not just covered by an overlay.
  *
- * 这个区别很重要：如果只是盖遮罩，内容仍然会被组合、可能出现在系统的任务切换截图里，
- * 也可能因为动画/透明度在一瞬间露出来。不组合就不存在这些问题。
+ * This distinction matters: if it were just an overlay, the content would still be
+ * composed, could show up in the system's task-switcher screenshot, and might flash
+ * into view for an instant due to animation/alpha. Not composing it at all avoids
+ * all of that.
  */
 @Composable
 fun AppLockGate(
@@ -32,7 +35,8 @@ fun AppLockGate(
         return
     }
 
-    // 锁着且能认证时自动弹一次，省得用户还要先点一下按钮
+    // Auto-trigger once when locked and authentication is available, so the user
+    // doesn't have to tap a button first
     LaunchedEffect(state.lockEnabled, state.capability) {
         if (state.lockEnabled && state.capability == AuthCapability.AVAILABLE) {
             onAuthenticate()
@@ -46,7 +50,8 @@ fun AppLockGate(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             if (state.loading) {
-                // 读取设置期间也挡着 —— 否则开了锁的用户会看到资产数据闪一下
+                // Also blocked while settings are loading — otherwise a user with the
+                // lock enabled would see their asset data flash on screen
                 Text("…", style = MaterialTheme.typography.headlineSmall)
                 return@Column
             }

@@ -9,19 +9,20 @@ import kotlin.test.Test
 import kotlin.time.Instant
 
 /**
- * 「距目标还差多少钱」的算术。
+ * The arithmetic of "how much money away from the target".
  *
- * 光有偏离百分比不够用 —— 知道"超配 31%"不等于知道该动多少钱（实机反馈）。
- * 这里锁住 [AllocationView.rebalanceAmount] 的四件事：
- * 口径（总净资产不变）、加总为 0 的不变量、null 条件和 [AllocationView.deviationBp] 一致、
- * 以及**不能从已经截断过的偏离度反算**。
+ * A deviation percentage alone isn't enough -- knowing "31% overweight" doesn't tell you how
+ * much money to move (real-device feedback). This locks in four things about
+ * [AllocationView.rebalanceAmount]: the convention (total net worth stays fixed), the
+ * invariant that the sum is 0, that the null condition matches [AllocationView.deviationBp],
+ * and **that it must not be back-computed from an already-truncated deviation**.
  */
 class AllocationRebalanceTest {
 
     private val t = Instant.fromEpochMilliseconds(1_785_000_000_000)
     private val cny = "CNY"
 
-    /** 平衡：流动 10% / 固收 35% / 权益 40% / 另类 5% / 保障 10%。 */
+    /** Balanced: liquid 10% / fixed income 35% / equity 40% / alternative 5% / protection 10%. */
     private val balanced = TargetAllocation(
         id = 1,
         name = "平衡",
@@ -36,7 +37,8 @@ class AllocationRebalanceTest {
         ),
     )
 
-    /** 直接构造视图 —— 这一层是纯派生计算，不需要绕道资产和快照。 */
+    /** Constructs the view directly -- this layer is a pure derived calculation and doesn't
+     * need to go through assets and snapshots. */
     private fun view(
         exposures: Map<AssetClass, Long>,
         target: TargetAllocation? = balanced,
@@ -58,8 +60,8 @@ class AllocationRebalanceTest {
     }
 
     @Test
-    fun `超配的类给出需要减少的金额`() {
-        // 净资产 100 万，权益 71.25 万（71.25%），目标 40% → 目标额 40 万，需减 31.25 万
+    fun `an overweight class gives the amount that needs to be reduced`() {
+        // Net worth 1,000,000, equity 712,500 (71.25%), target 40% -> target amount 400,000, reduce by 312,500
         val v = view(
             mapOf(
                 AssetClass.LIQUID to 15_000_000L,
@@ -76,7 +78,7 @@ class AllocationRebalanceTest {
     }
 
     @Test
-    fun `低配的类给出需要增加的金额`() {
+    fun `an underweight class gives the amount that needs to be increased`() {
         val v = view(
             mapOf(
                 AssetClass.LIQUID to 15_000_000L,
@@ -86,22 +88,24 @@ class AllocationRebalanceTest {
             ),
         )
 
-        // 固收 10 万（10%），目标 35% → 目标额 35 万，需增 25 万
+        // Fixed income 100,000 (10%), target 35% -> target amount 350,000, increase by 250,000
         v.deviationBp(AssetClass.FIXED_INCOME) shouldBe -2500
         v.rebalanceAmount(AssetClass.FIXED_INCOME) shouldBe Money(25_000_000L)
-        // 保障一分钱都没有 → 需增满额
+        // Protection has nothing at all -> needs to be increased by the full target amount
         v.rebalanceAmount(AssetClass.PROTECTION) shouldBe Money(10_000_000L)
     }
 
     /**
-     * **口径的自洽性证明**：加总为 0 意味着"超配的类减掉多少，正好够低配的类加上"。
+     * **Proof that the convention is self-consistent**: summing to 0 means "however much the
+     * overweight classes get reduced by is exactly enough for the underweight classes to add".
      *
-     * 这条不变量成立的前提是目标比例之和恒为 [TargetAllocation.TOTAL_BP]
-     * （数据层有 `requireClosed` 挡着）。取整会让和差最多「大类数 − 1」分：
-     * 每个大类的目标额各损失不到 1 分。
+     * This invariant holds only because the target ratios always sum to
+     * [TargetAllocation.TOTAL_BP] (guarded by `requireClosed` at the data layer). Rounding can
+     * make the sum off by up to "number of classes minus 1" cents: each class's target amount
+     * can lose less than 1 cent.
      */
     @Test
-    fun `全部大类的调整额加总为0`() {
+    fun `the rebalance amounts across all classes sum to 0`() {
         val v = view(
             mapOf(
                 AssetClass.LIQUID to 15_000_001L,
@@ -119,16 +123,17 @@ class AllocationRebalanceTest {
     }
 
     /**
-     * 回归：**不能写成 `−偏离度 × 净资产`。**
+     * Regression: **must not be written as `-deviation x net worth`.**
      *
-     * [AllocationView.deviationBp] 是从已经截断到整基点的 [AllocationView.shareBp]
-     * 减出来的，1 基点乘上净资产就是真金白银 —— 净资产 10 亿这档，两种算法能差到
-     * 五位数。这条测试就是把那个差额钉住：正确算法给出的目标额必须**精确**等于
-     * `目标基点 × 净资产 / 10000`，误差 < 1 分。
+     * [AllocationView.deviationBp] is computed by subtracting from [AllocationView.shareBp],
+     * which has already been truncated to whole basis points -- 1 basis point times a net
+     * worth in the billions is real money, and the two algorithms can differ by five figures.
+     * This test pins down that gap: the target amount from the correct algorithm must be
+     * **exactly** equal to `target basis points x net worth / 10000`, with error < 1 cent.
      */
     @Test
-    fun `不从截断过的偏离度反算 精度差在大额净资产上是五位数`() {
-        // 净资产 ≈ 9.99 亿元；权益只有约 30 万，占比不足 1 基点
+    fun `must not back-compute from a truncated deviation - the precision gap is five figures at large net worth`() {
+        // Net worth ~= 999 million yuan; equity is only ~300,000, less than 1 basis point of the total
         val equity = 29_964_743L
         val v = view(
             mapOf(
@@ -138,23 +143,24 @@ class AllocationRebalanceTest {
         )
         val netWorth = v.netWorth.minorUnits
 
-        // 正确算法：目标额只截断一次，和精确值分毫不差
+        // Correct algorithm: the target amount is truncated only once, matching the exact value to the cent
         val correct = v.rebalanceAmount(AssetClass.EQUITY)!!.minorUnits
         val exactGoal = 4000L * netWorth / TargetAllocation.TOTAL_BP
         correct shouldBe exactGoal - equity
 
-        // 走偏离度反算的那条错路：占比 2.9999 基点被截断成 2，误差被净资产放大
+        // The wrong path via back-computing from the deviation: a share of 2.9999 basis points
+        // gets truncated to 2, and the error gets amplified by net worth
         v.shareBp(AssetClass.EQUITY) shouldBe 2
         val viaDeviation = -(v.deviationBp(AssetClass.EQUITY)!!.toLong() * netWorth /
             TargetAllocation.TOTAL_BP)
-        // 实测差 9,987,680 分 = ¥99,876.80，也就是"1 基点的净资产"这个量级
+        // Measured gap: 9,987,680 cents = 99,876.80 yuan, i.e. on the order of "1 basis point of net worth"
         abs(correct - viaDeviation) shouldBeGreaterThanOrEqualTo 9_000_000L
         abs(correct - viaDeviation) shouldBeLessThanOrEqualTo 10_000_000L
     }
 
     @Test
-    fun `负净敞口的类要求补到目标 不需要特殊处理`() {
-        // 车 10 万 / 车贷 15 万 → 另类净敞口 −5 万；净资产 = 20 万 − 5 万 = 15 万
+    fun `a class with negative net exposure needs no special handling to reach its target`() {
+        // Car 100,000 / car loan 150,000 -> alternative net exposure -50,000; net worth = 200,000 - 50,000 = 150,000
         val exposures = AssetClass.displayOrder.associateWith { assetClass ->
             when (assetClass) {
                 AssetClass.ALTERNATIVE -> ClassExposure(
@@ -174,12 +180,12 @@ class AllocationRebalanceTest {
 
         v.netWorth shouldBe Money(15_000_000L)
         v.exposures[AssetClass.ALTERNATIVE]!!.netExposure shouldBe Money(-5_000_000L)
-        // 目标 5% × 15 万 = 7,500；从 −50,000 拉到 +7,500 要 57,500
+        // Target 5% x 150,000 = 7,500; moving from -50,000 to +7,500 requires 57,500
         v.rebalanceAmount(AssetClass.ALTERNATIVE) shouldBe Money(5_750_000L)
     }
 
     @Test
-    fun `已达标时调整额为零`() {
+    fun `the rebalance amount is zero once the target is met`() {
         val v = view(
             mapOf(
                 AssetClass.LIQUID to 10_000_000L,
@@ -197,11 +203,12 @@ class AllocationRebalanceTest {
     }
 
     /**
-     * null 条件必须和 [AllocationView.deviationBp] **一模一样** ——
-     * 不一致会让 UI 出现"比例说算不出来、金额却给了个数"，或者反过来。
+     * The null condition must be **exactly the same** as [AllocationView.deviationBp] --
+     * inconsistency would let the UI show "the percentage can't be computed, but the amount
+     * gives a number" (or the reverse).
      */
     @Test
-    fun `净资产为负时返回null 和偏离度一致`() {
+    fun `returns null when net worth is negative, consistent with the deviation`() {
         val exposures = AssetClass.displayOrder.associateWith { assetClass ->
             if (assetClass == AssetClass.LIQUID) {
                 ClassExposure(assetClass, Money(10_000_00L), Money(50_000_00L))
@@ -225,7 +232,7 @@ class AllocationRebalanceTest {
     }
 
     @Test
-    fun `没有生效的目标配置时返回null`() {
+    fun `returns null when there is no active target allocation`() {
         val v = view(mapOf(AssetClass.LIQUID to 100_000_00L), target = null)
 
         v.shareBp(AssetClass.LIQUID) shouldBe TargetAllocation.TOTAL_BP
@@ -234,11 +241,12 @@ class AllocationRebalanceTest {
     }
 
     /**
-     * 基点换算是「先乘 10000 再除」，而 **Long 溢出不抛异常、会安静地回绕**。
-     * 宁可整页显示"—"，也不能给一个荒谬的金额 —— 这个 App 的价值全在总数的可信度上。
+     * Basis point conversion is "multiply by 10000 then divide", and **a Long overflow doesn't
+     * throw, it silently wraps around**. It's better to show "--" on the whole page than to
+     * give an absurd amount -- this app's entire value rests on the trustworthiness of its totals.
      */
     @Test
-    fun `量级过大时返回null而不是静默回绕`() {
+    fun `returns null instead of silently wrapping when the magnitude is too large`() {
         val huge = Long.MAX_VALUE / TargetAllocation.TOTAL_BP + 1
         val v = view(mapOf(AssetClass.LIQUID to huge))
 
@@ -248,19 +256,19 @@ class AllocationRebalanceTest {
         v.rebalanceAmount(AssetClass.LIQUID).shouldBeNull()
     }
 
-    /** 闸门不能把合法量级也吞掉：一万亿元（¥1e12）以内必须照常算。 */
+    /** The guard must not also swallow legitimate magnitudes: up to one trillion yuan (1e12) must still compute normally. */
     @Test
-    fun `正常量级不受溢出闸门影响`() {
-        val trillion = 1_000_000_000_000_00L // ¥1e12，分
+    fun `ordinary magnitudes are unaffected by the overflow guard`() {
+        val trillion = 1_000_000_000_000_00L // 1e12 yuan, in cents
         val v = view(mapOf(AssetClass.LIQUID to trillion))
 
         v.shareBp(AssetClass.LIQUID) shouldBe TargetAllocation.TOTAL_BP
         v.rebalanceAmount(AssetClass.LIQUID) shouldBe Money(-90_000_000_000_000L)
     }
 
-    /** 五大类的偏离度加总也必须是 0 —— 和金额那条是同一个闭合性的两种表述。 */
+    /** The sum of the five classes' deviations must also be 0 -- this is the same closure property as the amount test, stated two ways. */
     @Test
-    fun `偏离度加总为0`() {
+    fun `deviations across all classes sum to 0`() {
         val v = view(
             mapOf(
                 AssetClass.LIQUID to 15_000_000L,

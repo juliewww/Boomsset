@@ -1,22 +1,27 @@
 import com.boomsset.domain.ValuationMode;
 
--- 用户持仓状态的快照。**不可变、只追加。** 每条是该时点的完整状态，不是增量。
+-- A snapshot of the user's holding state. **Immutable, append-only.** Each row is the complete
+-- state at that point in time, not a delta.
 --
--- CHECK 约束把 mode 和字段的对应关系写进了 schema —— 这样「QUOTED 的快照没有份额」
--- 或者「MANUAL 的快照没有市值」这类数据在数据库层面就存不进去。
--- docs/domain.md 说这个错「静默算错、不报错」，所以这里让它变成写入失败。
+-- The CHECK constraint bakes the mode-to-field correspondence directly into the schema -- so
+-- data like "a QUOTED snapshot with no quantity" or "a MANUAL snapshot with no market value"
+-- simply cannot be stored at the database level.
+-- docs/domain.md notes that this kind of error is "silently miscalculated, not reported", so
+-- here it's turned into a write failure instead.
 CREATE TABLE snapshot (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id         INTEGER NOT NULL REFERENCES asset(id),
     as_of            INTEGER NOT NULL,
     mode             TEXT AS ValuationMode NOT NULL,
-    -- 仅 MANUAL：自身币种下的市值，最小单位（分）
+    -- MANUAL only: market value in the asset's own currency, in minor units (cents)
     value_minor      INTEGER,
-    -- 仅 QUOTED：份额，定点整数 scale=8
+    -- QUOTED only: quantity, fixed-point integer with scale=8
     quantity_scaled  INTEGER,
-    -- 仅 QUOTED：这条快照该用哪个代码取价（退市转 MANUAL 后历史快照仍需要它）
+    -- QUOTED only: which symbol this snapshot should use to fetch its price (still needed by
+    -- historical snapshots even after a delisting converts the asset to MANUAL)
     quote_symbol     TEXT,
-    -- 可选，两种模式都可有：自身币种下的**总成本**（均价是派生值，不存）
+    -- Optional, applies to either mode: **total cost** in the asset's own currency (average
+    -- cost is a derived value, not stored)
     cost_basis_minor INTEGER,
     recorded_at      INTEGER NOT NULL,
 
@@ -31,8 +36,9 @@ CREATE TABLE snapshot (
 
 CREATE INDEX snapshot_asset_asof ON snapshot(asset_id, as_of);
 
--- 结转规则的核心查询：取每个资产在 T 之前**最近的一条**快照。
--- 没有快照就不出现（而不是当成 0）；已归档资产靠那条 0 值终止快照自然归零。
+-- The core query for the carry-forward rule: for each asset, take the **most recent** snapshot
+-- on or before T. No snapshot means the asset just doesn't appear (rather than being treated as
+-- 0); an archived asset naturally goes to zero via its terminating zero-value snapshot.
 selectLatestAsOfPerAsset:
 SELECT s.* FROM snapshot s
 WHERE s.as_of <= :asOf
@@ -40,7 +46,8 @@ WHERE s.as_of <= :asOf
       SELECT MAX(s2.as_of) FROM snapshot s2
       WHERE s2.asset_id = s.asset_id AND s2.as_of <= :asOf
   )
-  -- 同一时点若有多条（修正历史），取 id 最大的那条，即最后录入的
+  -- If there are multiple rows at the same point in time (a historical correction), take the
+  -- one with the largest id, i.e. the most recently recorded
   AND s.id = (
       SELECT MAX(s3.id) FROM snapshot s3
       WHERE s3.asset_id = s.asset_id AND s3.as_of = s.as_of
@@ -60,8 +67,9 @@ insertQuoted:
 INSERT INTO snapshot(asset_id, as_of, mode, quantity_scaled, quote_symbol, cost_basis_minor, recorded_at)
 VALUES (?, ?, 'QUOTED', ?, ?, ?, ?);
 
--- 快照不可变，没有 update。修正历史 = 追加一条新的。
+-- Snapshots are immutable, there is no update. Correcting history = appending a new one.
 
--- 全量。仓储层一次性加载后在内存里算派生值 —— 见 PortfolioData 的设计取舍说明。
+-- Full table. The repository layer loads it all at once and computes derived values in memory
+-- -- see PortfolioData's design trade-off notes.
 selectAllSnapshots:
 SELECT * FROM snapshot ORDER BY asset_id, as_of, id;

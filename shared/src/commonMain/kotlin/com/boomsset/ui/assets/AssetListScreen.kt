@@ -79,8 +79,9 @@ fun AssetListScreen(
     var archiving by remember { mutableStateOf<AssetValuation?>(null) }
     var editing by remember { mutableStateOf<AssetValuation?>(null) }
     var showArchived by remember { mutableStateOf(false) }
-    // 默认折叠：资产页的主体是「我现在有什么」，更新记录是回顾用的，
-    // 展开着会让主列表一直往下拖。
+    // Collapsed by default: the body of the assets page is "what do I have right now"; the
+    // update history is for looking back, and leaving it expanded would keep dragging the main
+    // list further down.
     var showHistory by remember { mutableStateOf(false) }
     var historyShown by remember { mutableIntStateOf(HISTORY_PAGE_SIZE) }
 
@@ -93,10 +94,12 @@ fun AssetListScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 16.dp),
     ) {
-        // 原来非空态时顶部常驻一句"点更新估值记快照"的说明 —— 占地方，且用惯了的用户
-        // 不需要每次都被提醒（实机反馈）。空状态那句不算"提示"而是状态本身（列表是空的
-        // 总要说一声），所以保留，但因为加号已经就在这一页（见 App.kt 的 FAB 改动），
-        // 不用再指去"净值"页。
+        // Used to always show a "tap to update valuation and record a snapshot" hint at the top
+        // in the non-empty state — it took up space, and users who already know the ropes don't
+        // need to be reminded every time (real-device feedback). The empty-state line doesn't
+        // count as a "hint" but rather the state itself (an empty list always needs to say so),
+        // so it's kept, but since the add button is already on this page (see the FAB change in
+        // App.kt) it no longer needs to point to the "net worth" page.
         if (state.isEmpty) {
             item {
                 Text(
@@ -111,9 +114,10 @@ fun AssetListScreen(
             if (rows.isEmpty()) return@forEach
 
             item(key = "header-$assetClass") {
-                // 色块和配置页用的是同一套大类色 —— 三个页面同一种视觉语言，
-                // 用户在配置页认到的"蓝色=流动资金"在这里仍然成立。
-                // 色块旁边一定有名字：身份不能只靠颜色。
+                // The swatch uses the same set of class colors as the allocation page — a single
+                // visual language across all three pages, so "blue = liquid assets" that a user
+                // learned on the allocation page still holds here.
+                // There is always a name next to the swatch: identity must not rely on color alone.
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -161,8 +165,9 @@ fun AssetListScreen(
             }
         }
 
-        // 挂在列表末尾、**不在上面任何一个分支里** —— 全部资产归档后 `state.isEmpty`
-        // 为真，而归档记录恰恰都在这一栏。见 updateHistorySection 的注释。
+        // Attached at the end of the list, **not inside any of the branches above** — once all
+        // assets are archived `state.isEmpty` becomes true, and the archive records are exactly
+        // what live in this section. See the comment on updateHistorySection.
         updateHistorySection(
             history = state.history,
             today = state.today,
@@ -222,7 +227,8 @@ private fun ArchivedRow(valuation: AssetValuation, onUnarchive: () -> Unit) {
             Text("已归档", style = MaterialTheme.typography.labelSmall)
             TextButton(onClick = onUnarchive) { Text("取消归档") }
             Text(
-                // 归档时那条 0 值快照是真实记录，不会被撤销 —— 说清楚，别让用户以为数据丢了
+                // The zero-value snapshot recorded at archive time is a real record and won't be
+                // undone — say so explicitly, so the user doesn't think data was lost
                 "取消归档后它会以 ¥0 出现（归档那条 0 值记录不会被删），需要你再更新一次估值。",
                 style = MaterialTheme.typography.labelSmall,
             )
@@ -230,25 +236,32 @@ private fun ArchivedRow(valuation: AssetValuation, onUnarchive: () -> Unit) {
     }
 }
 
-/** 左滑手势的两个落点：没划开 / 划开露出操作区。 */
+/** The two anchor points of the swipe-left gesture: not swiped / swiped open to reveal the actions area. */
 private enum class RevealValue { Settled, Revealed }
 
 /**
- * 每行原来常驻显示三个按钮（更新估值/改名称分类/归档），在小屏上占掉快一半的卡片高度
- * （实机反馈）。改成**左滑**才露出来。
+ * Each row used to always show three buttons (update valuation / rename & reclassify / archive),
+ * which took up nearly half the card's height on small screens (real-device feedback). Changed
+ * so they only reveal on a **swipe left**.
  *
- * **不用 material3 的 `SwipeToDismissBox`。** 它是"划走删除"这个交互设计的组件，
- * 只有两个落点：没划开（offset=0）和划到底（offset=±整行宽度，也就是整行滑出屏幕）——
- * 拿它做"划开一点、露出操作按钮"用会导致卡片信息**整个滑没**，不是常见 App
- * （Gmail、Telegram 那种左滑露出按钮）的效果（实机反馈："不是正规的实现"）。
- * 改用 Compose Foundation 更底层的 `AnchoredDraggableState`，自己定两个落点：
- * `Settled`（0）和 `Revealed`（`-actionsWidthPx`，即**操作区自己实际测量出来的宽度**，
- * 不是整行宽度）——划开后最多让前景卡片让出操作区那么宽，"能显示多少就多少"。
+ * **Not using material3's `SwipeToDismissBox`.** It's a component designed for the "swipe away
+ * to dismiss" interaction, with only two anchor points: not swiped (offset=0) and swiped all the
+ * way (offset=±the full row width, i.e. the whole row slides off screen) — using it for "swipe
+ * open a bit to reveal action buttons" would cause the card's information to **slide away
+ * entirely**, not the effect seen in common apps (Gmail, Telegram-style swipe-to-reveal buttons)
+ * (real-device feedback: "not a proper implementation"). Switched to Compose Foundation's
+ * lower-level `AnchoredDraggableState`, with two custom anchor points: `Settled` (0) and
+ * `Revealed` (`-actionsWidthPx`, i.e. **the actions area's own actually-measured width**, not the
+ * full row width) — once swiped open, the foreground card yields at most that much space,
+ * showing "as much as fits".
  *
- * 「更新估值」这个核心动作**没有变成纯隐形入口** —— 卡片本身仍然整张可点直接触发更新
- * （[AssetRowCard] 的 `onClick`），这是之前"核心动作不能只有隐形入口"那条教训要保住的部分
- * （用户曾经因为找不到能改市值的按钮而误以为"改不了资产"）。左滑收起来的是编辑名称/分类
- * 和归档 —— 这两个本来就不是高频操作，藏进手势里不会重蹈那次的问题。
+ * The core "update valuation" action **has not become a purely invisible entry point** — the
+ * card itself is still tappable anywhere to trigger an update directly ([AssetRowCard]'s
+ * `onClick`), preserving the part of the earlier lesson that "a core action must not have only
+ * an invisible entry point" (a user once mistakenly thought "the asset can't be edited" because
+ * they couldn't find a button to change the market value). What's tucked behind the swipe is
+ * edit name/class and archive — these were never high-frequency actions, so hiding them behind
+ * a gesture doesn't repeat that earlier problem.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -260,12 +273,15 @@ private fun AssetRow(
     onArchiveClick: () -> Unit,
 ) {
     var actionsWidthPx by remember { mutableFloatStateOf(0f) }
-    // **构造时必须直接带上 anchors，不能只在 LaunchedEffect 里后补。**
-    // 第一次实现漏了这个，`requireOffset()` 在第一帧布局时就被 `.offset { }` 读取，
-    // 而 `updateAnchors` 要等 `LaunchedEffect` 跑完才第一次调用——中间那一帧
-    // offset 还没被"初始化"过，直接抛 `IllegalStateException`（真机上一点"资产"
-    // tab 就崩，实机反馈）。构造时先给两个落点都填 0（还没量出操作区宽度），
-    // 等测量完那一帧 `LaunchedEffect` 再更新成真实宽度。
+    // **Anchors must be supplied directly at construction time, not only patched in later inside
+    // a LaunchedEffect.** The first implementation missed this: `requireOffset()` is read by
+    // `.offset { }` as early as the first layout frame, while `updateAnchors` isn't called for
+    // the first time until `LaunchedEffect` finishes running — during that in-between frame the
+    // offset hasn't been "initialized" yet and it throws `IllegalStateException` (crashed the
+    // moment you tapped the "assets" tab on a real device, per real-device feedback). So at
+    // construction time both anchor points are first filled with 0 (the actions area's width
+    // hasn't been measured yet), and once the measurement frame completes, `LaunchedEffect`
+    // updates them to the real width.
     val draggableState = remember {
         AnchoredDraggableState(
             RevealValue.Settled,
@@ -275,9 +291,11 @@ private fun AssetRow(
             },
         )
     }
-    // 操作区还没测量出真实宽度之前，两个落点都是 0——先不能划，等测量完那一帧再更新，
-    // 肉眼感觉不到这个延迟。宽度按实际内容算，不是行宽的固定比例，保证"露出刚好够按的
-    // 三个按钮"而不是行宽的某个百分比。
+    // Before the actions area's real width has been measured, both anchor points are 0 — so it
+    // can't be swiped yet, and it updates once the measurement frame completes; this delay isn't
+    // perceptible to the eye. The width is computed from the actual content, not a fixed fraction
+    // of the row width, guaranteeing "reveal just enough to tap the three buttons" rather than
+    // some percentage of the row width.
     LaunchedEffect(actionsWidthPx) {
         draggableState.updateAnchors(
             DraggableAnchors {
@@ -288,20 +306,24 @@ private fun AssetRow(
     }
     val scope = rememberCoroutineScope()
 
-    // `anchoredDraggable` 挂在**最外层** Box 上，不是挂在前景卡片那层——这是照抄
-    // material3 自己的 `SwipeToDismissBox` 的结构。第一版把它跟 `.offset {}` 放在
-    // 同一层（前景卡片那个 Box），结果左滑后点背后露出来的按钮完全没反应
-    // （实机反馈）。前景卡片只留 `.offset {}` 负责跟手位移，拖拽手势的识别和
-    // 背后按钮的点击各自在不同层，不会互相抢事件。
+    // `anchoredDraggable` is attached to the **outermost** Box, not to the foreground card's
+    // layer — this mirrors material3's own `SwipeToDismissBox` structure. The first version put
+    // it on the same layer as `.offset {}` (the foreground card's Box), and as a result tapping
+    // the revealed buttons behind it after swiping left did nothing at all (real-device
+    // feedback). The foreground card keeps only `.offset {}`, responsible for tracking the drag
+    // position; drag-gesture recognition and tapping the buttons behind it each live on separate
+    // layers, so they don't steal events from each other.
     Box(
         Modifier
             .fillMaxWidth()
             .anchoredDraggable(draggableState, Orientation.Horizontal),
     ) {
-        // 这层 Box 不参与外层 Box 的尺寸计算（`matchParentSize` 的定义），
-        // 外层高度完全由下面前景卡片撑出来——按钮 Row 直接用 `fillMaxHeight()`
-        // 在 LazyColumn 里会拿到"无限高"约束报错，`matchParentSize` 是 Compose
-        // 里"背景层贴合前景已经量出来的尺寸"的标准写法。
+        // This Box does not participate in the outer Box's size calculation (that's the
+        // definition of `matchParentSize`); the outer height is entirely determined by the
+        // foreground card below it — if the button Row used `fillMaxHeight()` directly inside a
+        // LazyColumn it would get an "infinite height" constraint error. `matchParentSize` is
+        // Compose's standard idiom for "make a background layer match a foreground layer's
+        // already-measured size".
         Box(Modifier.matchParentSize()) {
             Row(
                 Modifier
@@ -344,13 +366,16 @@ private fun SwipeActionButton(label: String, color: Color, onClick: () -> Unit) 
 }
 
 /**
- * 卡片重新设计过——原来是不带任何 `colors`/`elevation` 的默认 `Card`，容器色是
- * `surfaceContainerLow`（`#FCFCFC`）叠加默认阴影，跟纯白页面背景放在一起
- * 只有 3 个色值的差距，阴影的灰边反而成了最显眼的东西，看起来像"一整块灰"
- * （实机反馈）。改成**纯白容器 + 1dp 细边框**代替阴影去区分卡片边界，
- * 边框颜色和阴影不一样，不会有那圈模糊的灰晕。左边加一条大类色的竖条——
- * 复用配置页/表头已经在用的那套 [chartColors]，不是新起的强调色，
- * 相当于把表头那个色点"拉长"成一条，同一屏内多一点视觉区分，不重复造轮子。
+ * The card was redesigned — it used to be a default `Card` with no `colors`/`elevation` at all,
+ * whose container color, `surfaceContainerLow` (`#FCFCFC`), plus the default shadow, differed
+ * from the pure-white page background by only 3 color values; the shadow's gray edge ended up
+ * being the most visually prominent thing, reading as "one solid gray blob" (real-device
+ * feedback). Changed to a **pure white container + a 1dp thin border** instead of a shadow to
+ * mark the card's boundary — the border color is distinct from the shadow, avoiding that blurry
+ * gray halo. A vertical bar in the class color was added on the left — reusing the same
+ * [chartColors] already used on the allocation page/section headers rather than introducing a
+ * new accent color, effectively "stretching" the header's color dot into a bar, adding a bit
+ * more visual distinction on the same screen without reinventing anything.
  */
 @Composable
 private fun AssetRowCard(
@@ -402,7 +427,8 @@ private fun AssetRowContent(valuation: AssetValuation, baseCurrency: String) {
             )
         }
 
-        // 无法估值时明确说原因，不显示成 0 —— 显示 0 会让用户以为资产没了
+        // When it can't be valued, state the reason explicitly rather than showing 0 — showing 0
+        // would make the user think the asset is gone
         if (valuation.isUnpriced) {
             Text(
                 "无法估值（缺行情/汇率，或数量级超出可计算范围），这项没有计入净值",
@@ -427,7 +453,8 @@ private fun AssetRowContent(valuation: AssetValuation, baseCurrency: String) {
             )
         }
 
-        // 行情日期/过期提示 —— 腾讯是非官方接口，用户必须知道价格有多旧
+        // Quote date / staleness notice — Tencent's quote API is unofficial, and the user must
+        // know how old the price is
         if (valuation.snapshot is com.boomsset.domain.Snapshot.Quoted) {
             Text(
                 valuation.priceDescription(),

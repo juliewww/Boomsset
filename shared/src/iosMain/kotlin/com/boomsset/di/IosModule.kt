@@ -11,5 +11,5 @@ val iosModule = module {
     single<AppLockAuthenticator> { IosAppLockAuthenticator() }
 }
 
-/** 从 Swift 调这个。Swift 里是 `KoinKt.doInitKoinIos()`。 */
+/** Called from Swift. In Swift this is `KoinKt.doInitKoinIos()`. */
 fun initKoinIos() = initKoin(iosModule)

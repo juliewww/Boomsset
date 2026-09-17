@@ -15,12 +15,14 @@ import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
 
 /**
- * 打开 App 时刷新汇率。
+ * Refreshes FX rates when the app opens.
  *
- * 只写 `fx_rate` 表，**不写 `snapshot`** —— 这是 docs/domain.md「行情 ≠ 快照」
- * 那条拆分的直接体现。刷新是高频的（每次打开），写快照会让表爆炸且污染历史曲线。
+ * Only writes to the `fx_rate` table, **never `snapshot`** — this is the direct
+ * embodiment of the "Quote ≠ Snapshot" split in docs/domain.md. Refreshing happens
+ * frequently (every app open); writing snapshots would bloat the table and pollute the
+ * historical curve.
  *
- * 按天 upsert，所以一天开十次 App 也只留一条记录。
+ * Upserted by day, so opening the app ten times in one day still leaves only one record.
  */
 class RateRefresher(
     private val repository: PortfolioRepository,
@@ -31,39 +33,49 @@ class RateRefresher(
     private val zone: TimeZone = TimeZone.currentSystemDefault(),
 ) {
 
-    /** 本进程内已尝试过的 (币种, 日期)。防止失败时无限重试 —— 见下方说明。 */
+    /** (currency, date) pairs already attempted within this process. Prevents infinite retries on failure — see notes below. */
     private val attempted = mutableSetOf<String>()
     private val mutex = Mutex()
 
     /**
-     * 补齐当前持仓实际用到的币种对，**含历史**。
+     * Backfills the currency pairs actually used by the current holdings, **including history**.
      *
-     * 只取**需要的**币种对（资产币种 → 基准币种），不做全量拉取：
-     * 少发请求，也少向服务方暴露信息。
+     * Only fetches the currency pairs that are **needed** (asset currency → base currency),
+     * not a full pull: fewer requests, and less information exposed to the service provider.
      *
-     * ## 为什么必须补历史，不能只拉今天
+     * ## Why history must be backfilled, not just today's rate
      *
-     * 净值曲线一次画 12 个时点，每个时点都要用**当时的**汇率折算
-     * （domain.md：用今天的汇率折算历史会污染曲线）。而这里原来只拉今天一天，
-     * 于是把查看币种切成 USD 之后，除最新点以外的历史点全都取不到汇率、
-     * 资产被判成"无法估值"、净值算成 0 —— 实机上表现为 8 月那根柱子是 0，
-     * 而顶部卡片写着"净值增长 +$13,097 相比 2026年8月"（从零挣出全部身家）。
+     * The net worth curve plots 12 points at once, and each point must be converted using
+     * **the rate at that point in time** (domain.md: converting history using today's rate
+     * pollutes the curve). This used to only fetch a single day (today), so after switching
+     * the view currency to USD, every historical point except the latest one couldn't find
+     * a rate, the asset was judged "unable to value", and net worth came out as 0 — on a
+     * real device this showed up as August's bar being 0, with the top card reading "net
+     * worth growth +$13,097 vs. August 2026" (as if the entire fortune had been earned from
+     * zero).
      *
-     * 补的区间是「**这个币种实际被持有的那段时间**」（见 [requiredRanges]），
-     * 不是固定回看 N 天：币种是三年前开始持有的就补三年，昨天才加的只补昨天到今天。
+     * The interval backfilled is "**the span during which this currency was actually
+     * held**" (see [requiredRanges]), not a fixed N-day lookback: a currency held since
+     * three years ago gets three years backfilled; one added yesterday only gets
+     * yesterday-to-today.
      *
-     * 失败不抛异常 —— 取价失败应当退回 stale 汇率，而不是让界面挂掉。
+     * Failures don't throw — a failed price fetch should fall back to a stale rate rather
+     * than crashing the UI.
      *
-     * ## 为什么要记「已尝试」
+     * ## Why "attempted" is tracked
      *
-     * 调用方会在「需要的币种集合变化时」重新调用本方法（否则新增一个外币资产后
-     * 永远拉不到它的汇率 —— 这是实跑时发现的 bug）。但写入 fx_rate 会让 portfolio
-     * 流重新发射，进而再次触发调用。成功时条件已满足所以会停；**失败时会无限重试**。
-     * 用 [attempted] 记下每个 (币种对, 区间) 只试一次，让失败也能收敛。
-     * 区间进了 key，所以补了一段旧快照（区间变长）或者到了第二天都会重新尝试一次。
+     * The caller re-invokes this method whenever "the set of needed currencies changes"
+     * (otherwise, adding a new foreign-currency asset would never get its rate fetched —
+     * a bug found through real-device testing). But writing to fx_rate makes the portfolio
+     * stream re-emit, which in turn triggers another call. On success the condition is
+     * already satisfied so it stops; **on failure it would retry forever**. [attempted]
+     * records each (currency pair, range) so it's only tried once, letting even failures
+     * converge. The range is part of the key, so backfilling an older snapshot (lengthening
+     * the range) or simply reaching the next day will trigger a retry.
      *
-     * 代价：一次失败后要等下次启动才重试。对汇率这种日更数据可以接受，
-     * 而且失败时会退回 stale 汇率，不是没数据。
+     * Trade-off: after one failure, the next retry only happens on the next app launch.
+     * That's acceptable for daily-updated data like FX rates, and on failure it falls back
+     * to a stale rate rather than having no data at all.
      */
     suspend fun refreshForHoldings(baseCurrency: String): RefreshResult =
         withContext(dispatcher) {
@@ -83,7 +95,7 @@ class RateRefresher(
             var written = 0
             var failed = 0
             toFetch.forEach { (currency, range) ->
-                // 已经存过的那部分不重复请求 —— 回补是一次性的，之后每天只差一两天
+                // Don't re-request what's already stored — backfilling is a one-time thing; after that it's only a day or two behind each day
                 val missing = missingRange(data.fxRates, currency, baseCurrency, range)
                     ?: return@forEach
                 val rates = fxSource.fetchRange(
@@ -106,16 +118,19 @@ class RateRefresher(
         "$from>$to@${range.start}..${range.end}"
 
     /**
-     * 每个币种对需要覆盖的日期区间。
+     * The date range each currency pair needs to cover.
      *
-     * 起点是**这个币种最早那条快照的日期**：更早的时点上这些资产还不存在，
-     * 净值里没有它们，不需要汇率。
+     * The start is **the date of that currency's earliest snapshot**: at earlier points in
+     * time these assets didn't yet exist, they're not part of net worth, and no rate is needed.
      *
-     * 终点分两种：只要还有一项**未归档**的资产用这个币种，就要到今天；
-     * 全都归档了就到**最后一条快照那天** —— 归档之后它不再贡献当前净值，
-     * 但历史时点上还在，那段区间的汇率仍然要有。
+     * The end comes in two flavors: as long as at least one **unarchived** asset uses this
+     * currency, the end is today; once all are archived, the end is **the day of the last
+     * snapshot** — after archiving, the asset no longer contributes to current net worth,
+     * but it still existed at historical points in time, so rates are still needed for
+     * that span.
      *
-     * 归档且一条快照都没有的资产直接跳过：它在任何时点上都没有值。
+     * Assets that are archived and have zero snapshots are skipped outright: they have no
+     * value at any point in time.
      */
     internal fun requiredRanges(
         data: PortfolioData,
@@ -124,7 +139,7 @@ class RateRefresher(
     ): Map<String, DayRange> {
         val byCurrency = data.assets.groupBy { it.currency }
         return byCurrency.mapNotNull { (currency, assets) ->
-            if (currency == baseCurrency) return@mapNotNull null   // 1:1，不用查
+            if (currency == baseCurrency) return@mapNotNull null   // 1:1, no lookup needed
             val ids = assets.map { it.id }.toSet()
             val days = data.snapshots
                 .filter { it.assetId in ids }
@@ -142,16 +157,20 @@ class RateRefresher(
     }
 
     /**
-     * 区间里还缺哪一段。
+     * Which portion of the range is still missing.
      *
-     * - 一条都没有 → 整段都要
-     * - 最早那条比区间起点还晚 → 历史没补过，整段重来（`INSERT OR REPLACE`，重复写无害）
-     * - 只是最近几天没有 → 从已有的最后一天接着补（**从那天本身开始**，
-     *   这样区间落在周末时服务方也能给出前一个营业日的报价）
-     * - 已经覆盖到区间终点 → null，一个请求都不发
+     * - None at all → the whole range is needed
+     * - The earliest record is later than the range's start → history was never backfilled,
+     *   redo the whole range (`INSERT OR REPLACE`, so a duplicate write is harmless)
+     * - Only the most recent few days are missing → resume from the last day already stored
+     *   (**starting from that day itself**, so that if the range lands on a weekend the
+     *   service can still return the previous business day's rate)
+     * - Already covers the end of the range → null, no request is sent at all
      *
-     * 只看首尾、不检查中间有没有空洞：空洞只可能来自上一次部分失败，
-     * 而结转规则是"取该时点前最近的一条"，空洞的后果是用稍旧的汇率，不是估不出值。
+     * Only checks the first/last day, not whether there are gaps in between: gaps can only
+     * come from a previous partial failure, and the carry-forward rule is "take the closest
+     * one before that point in time" — the consequence of a gap is using a slightly stale
+     * rate, not being unable to value at all.
      */
     private fun missingRange(
         stored: List<FxRate>,
@@ -159,7 +178,7 @@ class RateRefresher(
         to: String,
         need: DayRange,
     ): DayRange? {
-        // asOfDay 是 ISO 字符串，字典序即时间序
+        // asOfDay is an ISO string, so lexicographic order matches chronological order
         val days = stored.filter { it.base == from && it.quote == to }.map { it.asOfDay }
         val earliest = days.minOrNull() ?: return need
         if (earliest > need.start.toString()) return need
@@ -170,13 +189,15 @@ class RateRefresher(
     }
 
     /**
-     * 刷新持仓里 QUOTED 快照用到的行情代码。
+     * Refreshes the quote symbols used by QUOTED snapshots in the holdings.
      *
-     * 和汇率同样的收敛策略：每个 (代码, 日期) 只试一次，防止「写 quote → 数据流重发 →
-     * 再刷新」在失败时变成无限循环。
+     * Same convergence strategy as FX rates: each (symbol, date) is only tried once, to
+     * prevent "write quote → data stream re-emits → refresh again" from becoming an
+     * infinite loop on failure.
      *
-     * 代码取自**快照上的 quoteSymbol**，不是资产上的默认值 —— 退市转 MANUAL 的资产
-     * 其历史快照仍需要行情，而资产上的 symbol 已经被清掉了。
+     * The symbol is taken from **the snapshot's quoteSymbol**, not the asset's default —
+     * an asset that's been delisted and converted to MANUAL still needs quotes for its
+     * historical snapshots, even though the symbol on the asset itself has been cleared.
      */
     suspend fun refreshQuotes(): RefreshResult = withContext(dispatcher) {
         val data = runCatching { repository.observePortfolio().first() }
@@ -197,15 +218,37 @@ class RateRefresher(
 
         val quotes = quoteSource.fetch(toFetch, today)
         quotes.forEach { repository.upsertQuote(it) }
-        // 取不到的代码不会出现在返回值里，差额就是失败数
+        // Symbols that couldn't be fetched don't appear in the return value; the difference is the failure count
         RefreshResult(written = quotes.size, failed = toFetch.size - quotes.size)
+    }
+
+    /**
+     * Manual retry, called by the UI's "retry valuation" button.
+     *
+     * [refreshForHoldings]/[refreshQuotes] are only automatically re-invoked by the
+     * ViewModel when "the set of needed currencies/symbols changes" (see both classes'
+     * doc comments) — if the very first attempt fails (a one-off network hiccup, a slow
+     * first request on cold start, etc.) and holdings and currencies don't change after
+     * that, no event will ever trigger another attempt; `attempted` will remember this
+     * failure and block retries until the next launch, leaving the user with no recourse
+     * in the meantime — unlike quotes, which have a manual price override as a fallback
+     * (see QuoteSource), FX rates have no manual override entry point at all.
+     *
+     * Clearing [attempted] and immediately re-fetching works around this "must wait for
+     * the next launch" limitation.
+     */
+    suspend fun retryAll(baseCurrency: String): RefreshResult = withContext(dispatcher) {
+        mutex.withLock { attempted.clear() }
+        val rates = refreshForHoldings(baseCurrency)
+        val quotes = refreshQuotes()
+        RefreshResult(written = rates.written + quotes.written, failed = rates.failed + quotes.failed)
     }
 }
 
-/** 闭区间的日期段，含首含尾。 */
+/** A closed date interval, inclusive of both start and end. */
 data class DayRange(val start: LocalDate, val end: LocalDate)
 
-/** [written] 数的是**币种对/代码**的个数，不是写入的行数。 */
+/** [written] counts the number of **currency pairs/symbols**, not the number of rows written. */
 data class RefreshResult(val written: Int, val failed: Int) {
     val hasFailures: Boolean get() = failed > 0
 }

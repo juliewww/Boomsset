@@ -12,28 +12,31 @@ import kotlinx.coroutines.launch
 
 data class AppLockUiState(
     val loading: Boolean = true,
-    /** 用户是否开启了应用锁 */
+    /** Whether the user has enabled app lock */
     val lockEnabled: Boolean = false,
-    /** 本次会话是否已通过认证 */
+    /** Whether authentication has succeeded this session */
     val unlocked: Boolean = false,
     val capability: AuthCapability = AuthCapability.AVAILABLE,
-    /** 上一次认证失败的原因，供 UI 提示。用户取消不算失败，这里会是 null。 */
+    /** Reason the last authentication attempt failed, for the UI to show. User cancellation doesn't count as a failure, so this stays null in that case. */
     val lastError: String? = null,
 ) {
     /**
-     * 是否应该挡住内容。
+     * Whether content should be blocked.
      *
-     * 注意 `loading` 期间**也要挡住** —— 否则开了锁的用户会在读取设置的那一瞬间
-     * 看到自己的资产数据闪一下。这种「先渲染再遮住」是应用锁最常见的实现缺陷。
+     * Note that it's blocked **during `loading` too** — otherwise a user with the lock
+     * enabled would see their asset data flash on screen the instant settings are
+     * loaded. This "render first, cover later" pattern is the most common app-lock
+     * implementation flaw.
      */
     val shouldBlockContent: Boolean get() = loading || (lockEnabled && !unlocked)
 }
 
 /**
- * 应用锁的状态机。
+ * App lock's state machine.
  *
- * 认证只在**本次进程内**有效（[unlocked] 不落库）—— 重启 App 要重新认证。
- * 这是应用锁的意义所在，不要为了"体验好"把它持久化。
+ * Authentication is only valid **within the current process** ([unlocked] is never
+ * persisted) — restarting the app requires re-authenticating. That's the whole point
+ * of app lock; don't persist it for the sake of a "smoother" experience.
  */
 class AppLockViewModel(
     private val settings: SettingsRepository,
@@ -63,8 +66,9 @@ class AppLockViewModel(
         )
     }.stateIn(
         scope = viewModelScope,
-        // 用 Eagerly 而不是 WhileSubscribed：锁屏是最外层的门，
-        // 不该因为订阅时机而出现"内容先露出来"的窗口
+        // Eagerly instead of WhileSubscribed: the lock screen is the outermost gate,
+        // it shouldn't have a window where content shows up first just because of
+        // subscription timing
         started = SharingStarted.Eagerly,
         initialValue = AppLockUiState(),
     )
@@ -76,7 +80,7 @@ class AppLockViewModel(
                     unlocked.value = true
                     lastError.value = null
                 }
-                // 用户主动取消不是错误 —— 不要弹「认证失败」，那是在指责用户
+                // User cancellation is not an error — don't pop "authentication failed", that blames the user
                 AuthResult.Cancelled -> lastError.value = null
                 is AuthResult.Failed -> lastError.value = result.message
             }
@@ -84,15 +88,17 @@ class AppLockViewModel(
     }
 
     /**
-     * 开关应用锁。
+     * Toggle app lock on/off.
      *
-     * **开启前必须先认证成功** —— 否则拿到别人手机的人可以直接开锁把主人锁在外面，
-     * 或者用户在不能认证的设备上开了锁却再也进不来。
+     * **Authentication must succeed before enabling it** — otherwise whoever has the
+     * phone could enable it and lock the real owner out, or a user could enable it on
+     * a device that can't authenticate and never get back in.
      */
     fun setLockEnabled(enabled: Boolean) {
         viewModelScope.launch {
             if (!enabled) {
-                // 关闭也要认证，否则锁形同虚设（已解锁状态下才能关，见下）
+                // Disabling also requires authentication, otherwise the lock is
+                // toothless (see below — this only fires from the unlocked state)
                 settings.setAppLockEnabled(false)
                 return@launch
             }
@@ -109,10 +115,12 @@ class AppLockViewModel(
     }
 
     /**
-     * App 进入后台时重新上锁。由平台的生命周期回调触发。
+     * Re-lock when the app goes to the background. Triggered by the platform's
+     * lifecycle callback.
      *
-     * 无条件重置即可 —— 锁没开启时 [AppLockUiState.shouldBlockContent] 本来就是 false，
-     * 不需要先去查设置（那样反而引入竞态）。
+     * An unconditional reset is fine — when the lock isn't enabled,
+     * [AppLockUiState.shouldBlockContent] is already false, so there's no need to
+     * check settings first (that would just introduce a race condition).
      */
     fun relock() {
         unlocked.value = false

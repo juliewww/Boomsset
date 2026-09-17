@@ -42,29 +42,30 @@ private const val ROUTE_NET_WORTH = "net_worth"
 private const val ROUTE_ALLOCATION = "allocation"
 private const val ROUTE_ASSETS = "assets"
 
-/** 添加资产是**独立页面**而不是对话框 —— 见 AddAssetScreen 的注释。 */
+/** Add asset is a **standalone screen**, not a dialog — see the comments in AddAssetScreen. */
 private const val ROUTE_ADD_ASSET = "add_asset"
 
-private data class Tab(val route: String, val label: String)
+private data class Tab(val route: String, val label: String, val icon: @Composable () -> Unit)
 
 private val tabs = listOf(
-    Tab(ROUTE_NET_WORTH, "净值"),
-    Tab(ROUTE_ALLOCATION, "配置"),
-    Tab(ROUTE_ASSETS, "资产"),
+    Tab(ROUTE_NET_WORTH, "净值") { NetWorthTabIcon() },
+    Tab(ROUTE_ALLOCATION, "配置") { AllocationTabIcon() },
+    Tab(ROUTE_ASSETS, "资产") { AssetListTabIcon() },
 )
 
 /**
- * 共享 UI 入口，两端都调这个。
+ * Shared UI entry point, called from both platforms.
  *
- * 导航用**字符串路由**而不是类型安全路由：后者依赖 `@Serializable` 的反射式解析，
- * 在 Kotlin/Native 上要手写 `SerializersModule`（见 AGENTS.md 约束 2）。
- * 字符串路由完全绕开这个问题。等路由参数变复杂时再考虑上类型安全那套。
+ * Navigation uses **string routes** rather than type-safe routes: the latter relies on
+ * `@Serializable`'s reflection-based resolution, which requires hand-writing a
+ * `SerializersModule` on Kotlin/Native (see AGENTS.md constraint 2). String routes sidestep
+ * this entirely. Revisit type-safe routing once route parameters get more complex.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App() {
     BoomssetTheme {
-        // 应用锁是最外层的门 —— 在它里面才组合任何业务内容
+        // App lock is the outermost gate — only compose any business content inside it
         val lockViewModel: AppLockViewModel = koinViewModel()
         val lockState by lockViewModel.state.collectAsStateWithLifecycle()
 
@@ -89,15 +90,18 @@ private fun AppContent(
     run {
         val navController = rememberNavController()
 
-        // 当前路由**从导航状态派生**，不再用一个手工维护的 var。
-        // 手工维护在只有 tab 的时候还能凑合，但一旦有了"添加资产"这种非 tab 页面，
-        // 系统返回键会改变实际页面而不更新那个 var —— 底部栏和加号就会跟真实页面脱节。
+        // The current route is **derived from navigation state**, not a manually maintained
+        // var. Manual maintenance was passable when there were only tabs, but once a
+        // non-tab page like "add asset" exists, the system back button changes the actual
+        // page without updating that var — the bottom bar and the FAB would then drift out
+        // of sync with the real page.
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = backStackEntry?.destination?.route ?: ROUTE_NET_WORTH
         val onAddRoute = currentRoute == ROUTE_ADD_ASSET
 
-        // ViewModel 在这一层取，好让加号按钮能触达 NetWorthViewModel。
-        // 注意 koinViewModel 依赖 di/Modules.kt 里的显式 factory —— Native 没有反射。
+        // The ViewModel is obtained at this level so the FAB can reach NetWorthViewModel.
+        // Note that koinViewModel relies on the explicit factory in di/Modules.kt —
+        // Native has no reflection.
         val netWorthViewModel: NetWorthViewModel = koinViewModel()
         val netWorthState by netWorthViewModel.state.collectAsStateWithLifecycle()
 
@@ -108,8 +112,9 @@ private fun AppContent(
                         if (onAddRoute) {
                             Text("添加资产")
                         } else {
-                            // 猪只在标题旁边出现，不在"添加资产"这种子页面标题里 ——
-                            // 它是品牌标识，子页面的标题说的是"当前在做什么"，两者不是一回事。
+                            // The pig only appears next to the title, not in sub-page titles
+                            // like "add asset" — it's a brand mark, while a sub-page title
+                            // states "what's currently being done"; the two are different things.
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -120,8 +125,9 @@ private fun AppContent(
                         }
                     },
                     navigationIcon = {
-                        // 独立页面要有退路。放在 TopAppBar 而不是页面内容里，
-                        // 这样它不受页面内分步（选品种 / 填详情）的影响
+                        // A standalone page needs a way out. It's placed in the TopAppBar
+                        // rather than the page content, so it stays unaffected by the
+                        // in-page steps (pick subtype / fill details)
                         if (onAddRoute) {
                             TextButton(onClick = { navController.popBackStack() }) { Text("取消") }
                         }
@@ -129,7 +135,8 @@ private fun AppContent(
                 )
             },
             bottomBar = {
-                // 添加资产时藏起底部栏：录一半时误点 tab 会丢掉已填的内容
+                // Hide the bottom bar while adding an asset: accidentally tapping a tab
+                // partway through would lose what's already been filled in
                 if (onAddRoute) return@Scaffold
                 NavigationBar {
                     tabs.forEach { tab ->
@@ -144,44 +151,67 @@ private fun AppContent(
                                     }
                                 }
                             },
-                            icon = {},
-                            // 选中态靠**两个通道**：更深 + 更粗。只靠颜色对色弱用户不成立，
-                            // 而且这一栏只有文字（`icon = {}`），没有图标可以承载状态。
+                            icon = tab.icon,
+                            // The selected state relies on **three channels**: icon+text color
+                            // change, a solid indicator pill, and bold text. Color alone
+                            // doesn't work for color-blind users, which is why the text is
+                            // also bolded.
                             label = {
                                 Text(
                                     tab.label,
                                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                                 )
                             },
-                            // label 里不用手动读 selected 再设 Text 颜色 —— NavigationBarItem
-                            // 已经把这里的 colors 通过 LocalContentColor 传给 label 内容了。
+                            // No need to manually read `selected` and set the Text color inside
+                            // `label` — NavigationBarItem already passes these `colors` down to
+                            // the label/icon content via LocalContentColor.
                             colors = NavigationBarItemDefaults.colors(
-                                // 选中态直接用 `primary`——中玫瑰对导航栏底(`surfaceContainer`)
-                                // **4.07:1**，清楚可辨，而且这一栏用的就是货真价实的品牌色，
-                                // 跨页面看过去和 FAB、净值柱是同一个颜色，不会有割裂感。
-                                // ⚠️ **这条和 primary 的亮度强耦合，换品牌色必须重量：**
-                                // 亮玫瑰那版对导航栏底只有 2.82:1（比未选中的 5.28:1 还淡），
-                                // 当时被迫另解一个更亮的常量；更早的奶黄只有 1.67:1。
-                                // 通则：**所有"靠颜色表示状态"的地方，都要把选中/未选中两边的
-                                // 对比度都算出来比大小**，不能只看"选中态有没有上品牌色"。
+                                // The selected state uses `primary` directly — mid-rose against
+                                // the nav bar background (`surfaceContainer`) is **4.07:1**,
+                                // clearly distinguishable, and this row uses the genuine brand
+                                // color, so across pages it reads as the same color as the FAB
+                                // and the net-worth-chart bars, with no sense of disconnect.
+                                // ⚠️ **This is tightly coupled to primary's lightness — changing
+                                // the brand color requires re-measuring:** the bright-rose version
+                                // was only 2.82:1 against the nav bar background (even fainter
+                                // than the unselected state's 5.28:1), which forced a separate,
+                                // brighter constant to be solved for at the time; the even
+                                // earlier cream-yellow was only 1.67:1.
+                                // General rule: **wherever color alone signals state, compute and
+                                // compare the contrast ratios of both the selected and unselected
+                                // states** — don't just check "does the selected state carry the
+                                // brand color."
                                 selectedTextColor = MaterialTheme.colorScheme.primary,
                                 unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                // 指示条（M3 画在**图标位**，即文字上方那一块）也要承载选中态。
-                                // 默认色是 `secondaryContainer`，压在导航栏底上**只有 1.05:1**，
-                                // 等于不存在（实机反馈"选中效果太浅"，一半原因在这）。
+                                // The indicator pill (M3 draws it at the **icon slot**, i.e. the
+                                // area above the text) must also carry the selected state.
+                                // Its default color is `secondaryContainer`, which is **only
+                                // 1.05:1** against the nav bar background — effectively invisible
+                                // (real-device feedback "the selected effect is too faint" was
+                                // half due to this).
                                 indicatorColor = MaterialTheme.colorScheme.primary,
+                                // The icon is now drawn **on top of** this solid indicator pill,
+                                // so the selected state needs `onPrimary` (light) rather than
+                                // `primary` — a same-color icon would blend into the pill. This
+                                // was a TODO left here before icons were added; now that icons
+                                // have actually arrived, it's applied.
+                                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             ),
                         )
                     }
                 }
             },
             floatingActionButton = {
-                // 加号放在"资产"页而不是"净值"页 —— 净值页是只读的概览（趋势、增长率），
-                // 添加资产是资产页在做的事，放在净值页会让用户在错的地方找操作入口（实机反馈）。
+                // The FAB is on the "assets" page rather than "net worth" — the net worth
+                // page is a read-only overview (trend, growth rate), while adding an asset
+                // is something the assets page does; putting it on the net worth page would
+                // make users look for the action in the wrong place (real-device feedback).
                 if (currentRoute == ROUTE_ASSETS) {
-                    // 显式给 primary，**不用 M3 的默认值**（默认是 `primaryContainer`，
-                    // 比 primary 更浅，加号会更糊）。
-                    // primary 是中玫瑰，对页面底 4.34:1；白加号对 primary 4.54:1。
+                    // Explicitly given `primary`, **not M3's default** (the default is
+                    // `primaryContainer`, which is lighter and would make the "+" blend in more).
+                    // primary is mid-rose, 4.34:1 against the page background; the white "+"
+                    // is 4.54:1 against primary.
                     FloatingActionButton(
                         onClick = { navController.navigate(ROUTE_ADD_ASSET) },
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -204,6 +234,7 @@ private fun AppContent(
                         onSelectChartStyle = netWorthViewModel::selectChartStyle,
                         onToggleClass = netWorthViewModel::toggleClassVisible,
                         onToggleAmountsHidden = netWorthViewModel::setAmountsHidden,
+                        onRetryPricing = netWorthViewModel::retryPricing,
                         lockState = lockState,
                         onToggleLock = onToggleLock,
                     )

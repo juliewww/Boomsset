@@ -6,45 +6,57 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
- * 涨跌用色。**不是** `MaterialTheme.colorScheme.primary`/`error`，也不是
- * [com.boomsset.ui.theme.ChartColors] 里的 `over`/`under` —— 那两组分别是品牌强调色
- * 和配置页"超配/低配"的分歧色，概念上和"这一段时间涨了还是跌了"无关，混用会在
- * 净值页和资产页同时出现盈亏数字时把语义读串。
+ * Rise/fall colors. **Not** `MaterialTheme.colorScheme.primary`/`error`, nor `over`/`under`
+ * from [com.boomsset.ui.theme.ChartColors] — those two groups are, respectively, the brand
+ * accent color and the divergent colors for "over-/under-allocated" on the allocation
+ * page; conceptually unrelated to "did this go up or down over this period," and mixing
+ * them up would blur the meaning whenever gain/loss figures appear alongside those on the
+ * net worth and asset pages.
  *
- * 中国股市语境**红涨绿跌**，和多数西方 App 的红跌绿涨相反 —— 按用户实际所在的
- * 市场语境来，不是全球通用配色。
+ * In the Chinese stock market context, **red means up, green means down** — the opposite
+ * of most Western apps' red-down/green-up — following the market context the user is
+ * actually in, not a globally universal color scheme.
  *
- * ## 为什么必须分深浅两组（旧版只有一组固定值）
+ * ## Why this must be split into light/dark groups (the old version had one fixed set)
  *
- * 这两个色是**正文文字**，判据是对**它实际压在的每一块底**都有 ≥ 4.5:1，
- * 而它们出现在三种底上：页面底、普通卡片（`surfaceContainer`）、
- * 以及净值页的 hero 卡片（`primaryContainer`）。
- * 旧值 `#C5453F` 压在暖沙 hero 卡片上只有 **3.34:1**，所以按模式各取一组，
- * 由 [com.boomsset.ui.theme.BoomssetTheme] 通过 [LocalGainLossColors] 提供 ——
- * 和 `LocalChartColors` 同一套做法，**不要在这里自己调 `isSystemInDarkTheme()`**：
- * 主题的深浅是可以被显式传参覆盖的，各读各的会不一致。
+ * These two colors are **body text**, and the criterion is ≥ 4.5:1 against **every
+ * background they actually sit on**, and they appear on three backgrounds: the page
+ * background, a regular card (`surfaceContainer`), and the net worth page's hero card
+ * (`primaryContainer`). The old value `#C5453F` was only **3.34:1** against the warm-sand
+ * hero card, so one set is chosen per mode, supplied by
+ * [com.boomsset.ui.theme.BoomssetTheme] through [LocalGainLossColors] — the same approach
+ * as `LocalChartColors`. **Don't call `isSystemInDarkTheme()` here on its own**: the
+ * theme's light/dark mode can be overridden by an explicit parameter, and reading the
+ * system setting independently would cause inconsistency.
  *
- * ⚠️ **最不利的底在深浅两个模式里不是同一个，这里踩过坑。**
- * 浅色模式下 hero 卡片（现在是淡玫瑰 `#FBCEDF`，此前是淡紫 `#EAD2F6`）比页面底**深**，
- * 所以它最不利；深色模式下 hero 卡片（现在是深酒红 `#673048`，此前是深蓝紫 `#563664`）
- * 反而比页面底**浅**，也是最不利的那个 —— 但早先一版深色值只对着 `surfaceContainer` 验，
- * 结果压在深色 hero 卡片上**只有 2.50:1**，
- * 真机（小米 15 Pro / Android 16）切到深色模式才看出来。
- * **改色值时把三种底逐个验一遍，别假设哪个"最不利"。**
+ * ⚠️ **The least-favorable background isn't the same one in light vs. dark mode — this
+ * was a real pitfall.** In light mode the hero card (now pale rose `#FBCEDF`, previously
+ * pale purple `#EAD2F6`) is **darker** than the page background, so it's the least
+ * favorable; in dark mode the hero card (now deep wine-red `#673048`, previously deep
+ * blue-purple `#563664`) is instead **lighter** than the page background, and it's also
+ * the least favorable one there — but an earlier dark-mode value was only checked against
+ * `surfaceContainer`, and turned out to be **only 2.50:1** against the dark hero card,
+ * something only caught after switching to dark mode on a real device (Xiaomi 15 Pro /
+ * Android 16). **When changing these color values, check all three backgrounds
+ * individually — don't assume which one is "least favorable."**
  *
- * 实测（品牌色换成亮玫瑰之后复核过一遍，数字略有变化但都还在及格线上）：
- * 浅色 涨 4.51 / 跌 4.61（对淡玫瑰 hero 卡片，另两种底更宽松）；
- * 深色 涨 4.60 / 跌 4.54（对深酒红 hero 卡片），对普通卡片和页面底更宽松。
- * ⚠️ 这几个数字**离 4.5:1 门槛都很近**——换品牌色时容器亮度只要再往下一点点，
- * 这组涨跌色就需要跟着重新解，不是永远安全。
+ * Measured (re-verified after the brand color switched to bright rose; numbers shifted
+ * slightly but all still clear the bar): light mode rise 4.51 / fall 4.61 (against the
+ * pale-rose hero card, the other two backgrounds are more forgiving); dark mode rise 4.60 /
+ * fall 4.54 (against the deep wine-red hero card), more forgiving against the regular card
+ * and page background.
+ * ⚠️ These numbers are **all close to the 4.5:1 threshold** — if a brand-color change
+ * pushes the container's lightness down even slightly, this rise/fall color set will need
+ * re-solving; it isn't permanently safe.
  *
- * 只在净值/资产两页的盈亏、涨跌数字上用；不用于配置页（配置页的红蓝是"超配/低配"，
- * 是另一套语义，见 [com.boomsset.ui.theme.ChartColors]）。
+ * Only used for gain/loss and rise/fall figures on the net worth and asset pages; not used
+ * on the allocation page (its red/blue mean "over-/under-allocated," a different semantic
+ * — see [com.boomsset.ui.theme.ChartColors]).
  */
 data class GainLossColors(
-    /** 涨 —— 中国语境用红。 */
+    /** Rise — red in the Chinese context. */
     val rise: Color,
-    /** 跌 —— 中国语境用绿。 */
+    /** Fall — green in the Chinese context. */
     val fall: Color,
 )
 

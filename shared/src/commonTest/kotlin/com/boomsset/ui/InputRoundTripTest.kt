@@ -9,25 +9,30 @@ import io.kotest.matchers.shouldBe
 import kotlin.test.Test
 
 /**
- * 往返不变量：**预填到输入框的字符串，必须能被我们自己的解析器读回同一个值。**
+ * Round-trip invariant: **a string prefilled into an input field must be readable back
+ * to the same value by our own parser.**
  *
- * 这组测试是为一个实跑时发现的 bug 加的。原来更新弹窗用带千分位的 `formatAmount()` 预填，
- * 而 `toMinorUnitsOrNull()` 明确拒绝逗号 —— 结果任何 ≥¥1000 的资产打开弹窗后
- * 「保存」永久禁用。编译通过、72 个单测全绿，但 App 的核心循环对真实金额是坏的。
+ * This group of tests was added for a bug found during a real run. The update dialog
+ * used to prefill with `formatAmount()`, which includes thousands separators, while
+ * `toMinorUnitsOrNull()` explicitly rejects commas — the result was that "Save" stayed
+ * permanently disabled on any asset opened for editing whose amount was ≥¥1000. It
+ * compiled and all 72 unit tests were green, but the app's core loop was broken for
+ * real amounts.
  *
- * 单测没抓到是因为格式化和解析各自都有测试，**没有测试跨过它们之间的接缝**。
+ * Unit tests missed it because formatting and parsing each had their own tests,
+ * **but nothing tested the seam between them.**
  */
 class InputRoundTripTest {
 
     @Test
-    fun `金额预填能被解析回原值`() {
+    fun `prefilled amount can be parsed back to the original value`() {
         val cases = listOf(
             0L,
             5L,            // 0.05
             100L,          // 1.00
             99_999L,       // 999.99
-            100_000L,      // 1,000.00 ← 原来就是这里开始坏的
-            123_456_78L,   // 大额
+            100_000L,      // 1,000.00 ← this is exactly where it used to break
+            123_456_78L,   // large amount
             999_999_999_99L,
         )
         cases.forEach { minor ->
@@ -38,29 +43,30 @@ class InputRoundTripTest {
     }
 
     @Test
-    fun `负数金额预填也能往返`() {
-        // 负债的欠款额
+    fun `negative amount also round-trips when prefilled`() {
+        // A liability's owed amount
         val money = Money(-1_234_567L)
         money.formatForInput().toMinorUnitsOrNull() shouldBe -1_234_567L
     }
 
     @Test
-    fun `展示用格式带千分位 但不能拿去预填`() {
-        // 明确记录两者的差别，防止有人"顺手统一"回去
+    fun `display format has thousands separators but must not be used for prefilling`() {
+        // Explicitly documents the difference between the two, to stop someone from
+        // "helpfully" unifying them back together
         Money(100_000).formatAmount() shouldBe "1,000.00"
         Money(100_000).formatForInput() shouldBe "1000.00"
-        Money(100_000).formatAmount().toMinorUnitsOrNull() shouldBe null  // 逗号被拒
+        Money(100_000).formatAmount().toMinorUnitsOrNull() shouldBe null  // comma rejected
     }
 
     @Test
-    fun `份额预填能被解析回原值`() {
+    fun `prefilled quantity can be parsed back to the original value`() {
         val cases = listOf(
             0L,
-            1L,                    // 1 satoshi 级 —— Double.toString 会给 1.0E-8
+            1L,                    // satoshi-level — Double.toString would give "1.0E-8"
             50_000_000L,           // 0.5
             Quantity.ONE,          // 1
             123_456_780_000L,      // 1234.5678
-            100_000_000_000_000L,  // 100 万份
+            100_000_000_000_000L,  // 1,000,000 units
         )
         cases.forEach { scaled ->
             val quantity = Quantity(scaled)
@@ -70,14 +76,14 @@ class InputRoundTripTest {
     }
 
     @Test
-    fun `单价预填能被解析回原值`() {
-        // 单价 scale=8，覆盖港股 3 位小数和代币的极小值
+    fun `prefilled unit price can be parsed back to the original value`() {
+        // Unit price uses scale=8, covering HK stocks' 3 decimal places and tokens' tiny values
         val cases = listOf(
             0L,
-            1L,                        // 0.00000001，代币级
-            46_240_0000_0L,            // 462.400，港股
+            1L,                        // 0.00000001, token-level
+            46_240_0000_0L,            // 462.400, HK stock
             1300_00000000L,            // 1300
-            133_405_000_000L,          // 1334.05，实测的茅台价
+            133_405_000_000L,          // 1334.05, the Moutai price used in real testing
         )
         cases.forEach { scaled ->
             val price = UnitPrice(scaled)
@@ -87,8 +93,8 @@ class InputRoundTripTest {
     }
 
     @Test
-    fun `极小份额不会变成科学计数法`() {
-        // Double 路线会给出 "1.0E-8"，解析器读不了
+    fun `very small quantity does not turn into scientific notation`() {
+        // The Double route would give "1.0E-8", which the parser can't read
         Quantity(1).formatForInput() shouldBe "0.00000001"
     }
 
@@ -96,7 +102,7 @@ class InputRoundTripTest {
         try {
             block()
         } catch (e: AssertionError) {
-            throw AssertionError("输入 ${context.joinToString(" → ")} 往返失败: ${e.message}", e)
+            throw AssertionError("round-trip failed for input ${context.joinToString(" → ")}: ${e.message}", e)
         }
     }
 }
