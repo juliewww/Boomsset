@@ -45,27 +45,46 @@ data class NetWorthSeries(
     val earliest: NetWorthPoint? get() = points.firstOrNull()
 
     /**
-     * The two endpoints, null when there is only one point (no comparable starting
-     * point).
+     * The two endpoints the overview compares: **the previous sample point and the
+     * latest one**. Null when there is only one point (no comparable starting point).
      *
-     * The three "whole range" derived values (growth rate, change amount, baseline
-     * date) all take their endpoints from here — judging "are there enough points"
-     * separately in each place would eventually diverge, producing a self-contradictory
-     * combination in the UI like "growth —" alongside "compared to August 2026".
+     * The three derived values (growth rate, change amount, baseline date) all take
+     * their endpoints from here — judging "are there enough points" separately in each
+     * place would eventually diverge, producing a self-contradictory combination in the
+     * UI like "growth —" alongside "compared to August 2026".
+     *
+     * **It used to be `earliest to latest`, i.e. the whole window, and that was wrong in
+     * two ways** (reported from real usage: first recorded in August, recorded again in
+     * September, recorded again in October — and the card still said "compared to
+     * August"):
+     *
+     * 1. The baseline never moved forward. In the monthly view the user reads this card
+     *    as "how did I do this month"; anchoring it to the oldest point in the window
+     *    turns it into a cumulative figure that grows stale-looking by one period every
+     *    month, while the bar chart right below it — whose growth labels are
+     *    period-over-period — showed a completely different percentage for the very same
+     *    latest bar. Two numbers, one screen, different bases, no label saying so.
+     * 2. The baseline silently depended on a **display** toggle: with
+     *    `trimBeforeFirstSnapshot` off, "earliest" is 11 periods ago; with it on, it's
+     *    the first snapshot. A chart-trimming switch must not redefine what the headline
+     *    growth number means.
+     *
+     * Now it's the previous sample point, which matches the bar chart's labels exactly
+     * (see `growthLabels` in NetWorthChart.kt) and stays stable regardless of trimming.
      */
     private val endpoints: Pair<NetWorthPoint, NetWorthPoint>?
         get() {
-            val from = earliest ?: return null
             val to = latest ?: return null
-            return if (from === to) null else from to to
+            val from = points.getOrNull(points.lastIndex - 1) ?: return null
+            return from to to
         }
 
     /** Whether there is a comparable starting point (point count ≥ 2). The UI must distinguish "recorded only once" from "recorded, but can't be computed". */
     val hasBaseline: Boolean get() = endpoints != null
 
     /**
-     * The net worth growth rate over the whole range (basis points). Note this
-     * **includes new contributions**, it is not an investment return rate.
+     * The net worth growth rate versus the previous sample point (basis points). Note
+     * this **includes new contributions**, it is not an investment return rate.
      *
      * Returns null if either endpoint has an asset that can't be valued: the
      * percentage's denominator is net worth itself, and a net worth that is **known to
@@ -78,8 +97,8 @@ data class NetWorthSeries(
             ?.let { (from, to) -> PortfolioCalculator.netWorthGrowthBp(from, to) }
 
     /**
-     * The **absolute** net worth change over the whole range. Takes the same pair of
-     * endpoints as [growthBp], one absolute, one relative.
+     * The **absolute** net worth change versus the previous sample point. Takes the same
+     * pair of endpoints as [growthBp], one absolute, one relative.
      *
      * Needed because a percentage alone doesn't convey magnitude: "+2%" could mean two
      * thousand or two hundred thousand, and what the user actually remembers is the
@@ -106,9 +125,14 @@ data class NetWorthSeries(
      * The UI must display it: the same "net worth growth +2%" compares against
      * completely different starting points depending on month/quarter/year view — not
      * stating the baseline means not stating what this number actually is.
+     *
+     * Indexed off [dates] rather than off the point itself, because `NetWorthPoint.asOf`
+     * is an end-of-day instant and the label wants the sample **date**. [dates] and
+     * [points] are built from the same list in [PortfolioSeriesCalculator], so the
+     * indices line up.
      */
     val baselineDate: LocalDate?
-        get() = endpoints?.let { dates.firstOrNull() }
+        get() = endpoints?.let { dates.getOrNull(dates.lastIndex - 1) }
 }
 
 /**

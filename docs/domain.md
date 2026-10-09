@@ -519,6 +519,17 @@ a completely different point depending on whether you're looking at month/quarte
 percentage alone doesn't say what it's relative to. And **the percentage needs an amount next
 to it**: "+2%" isn't memorable, but "+¥12,345" is.
 
+**The baseline is the previous sample point, not the oldest point in the window.** In the
+monthly view the overview card answers "how did I do this month", so it compares against last
+month and moves forward as new periods are recorded. Anchoring it to the oldest point made it
+a cumulative figure that stayed stuck on the first month forever (reported from real usage:
+recorded in August, September and October, and the card still read "compared to August"),
+*and* it contradicted the bar chart directly below, whose growth labels have always been
+period-over-period — two different percentages for the same latest bar, with nothing on screen
+saying they used different bases. It also made the headline number depend on the chart's
+`trimBeforeFirstSnapshot` display toggle, which must not change what a number means.
+See `NetWorthSeries.endpoints`.
+
 ## Liability ratio: the denominator is total assets
 
 ```
