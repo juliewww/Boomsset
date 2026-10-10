@@ -26,6 +26,7 @@ import com.boomsset.domain.Money
 import com.boomsset.domain.NetWorthSeries
 import com.boomsset.domain.Period
 import com.boomsset.domain.PortfolioCalculator
+import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.chartAnimationSpec
 import com.boomsset.ui.fallColor
 import com.boomsset.ui.riseColor
@@ -756,12 +757,11 @@ internal fun growthLabels(values: List<Money>): List<GrowthLabel> =
         val previous = values.getOrNull(index - 1) ?: return@mapIndexed GrowthLabel.MISSING
         val bp = PortfolioCalculator.growthBp(previous.minorUnits, value.minorUnits)
             ?: return@mapIndexed GrowthLabel.MISSING
-        // Direction is judged from the number **after rounding**, not the raw basis points:
-        // +0.19% displays as "0%", and coloring it "up" red at that point would be
-        // self-contradictory (the text says no change, the color says it went up). Color
-        // follows the number that's actually visible.
-        val percent = roundToPercent(bp)
-        GrowthLabel(text = formatGrowthPercent(bp), direction = percent.compareTo(0))
+        // Direction follows **the number actually printed**, not the raw basis points: a
+        // column labelled "≈0%" painted in the "up" colour would contradict itself (text says
+        // unchanged, colour says it rose). [growthDirection] and [formatGrowthPercent] read
+        // the same thresholds so the two can't drift apart.
+        GrowthLabel(text = formatGrowthPercent(bp), direction = growthDirection(bp))
     }
 
 internal fun growthLabelAt(labels: List<GrowthLabel>?, x: Double): GrowthLabel =
@@ -779,16 +779,57 @@ internal fun growthLabelAt(labels: List<GrowthLabel>?, x: Double): GrowthLabel =
  */
 internal fun roundToPercent(bp: Int): Int = (bp + if (bp >= 0) 50 else -50) / 100
 
+/**
+ * Below this magnitude (0.1%) even one decimal place prints "0.0%", so the label gives up on a
+ * number entirely and says [NEGLIGIBLE_GROWTH] instead.
+ *
+ * It has to be 10bp, not 5: [com.boomsset.ui.bpToPercent] **truncates** rather than rounding, so
+ * 0.05% would come out as "+0.0%" — the exact output this threshold exists to avoid.
+ */
+private const val NEGLIGIBLE_BP = 10
+
+/** Smaller than the finest precision the label can print, but **not** exactly zero. Deliberately not "0%" — see [formatGrowthPercent]. */
+internal const val NEGLIGIBLE_GROWTH = "≈0%"
+
+/**
+ * One decimal place, used only for changes too small to survive integer rounding.
+ *
+ * Real-device report: the overview card read "+0.24%" while the October column read "0%" — the
+ * same pair of endpoints, two numbers on one screen, and one of them simply wrong. "0%" does not
+ * read as "too small to print" to anyone; it reads as "nothing happened". The card can't drop its
+ * decimals (it's the headline figure), so the column has to gain one.
+ *
+ * It fits: "+0.2%" is five glyphs, exactly as many as "+100%", which the column already has to
+ * accommodate. The general "no decimals" rule in [formatGrowthPercent] is about keeping "+12.34%"
+ * (seven glyphs) from being truncated, and that rule is untouched for every value ≥ 0.5%.
+ */
+private fun formatSmallGrowthPercent(bp: Int): String =
+    bp.bpToPercent(decimals = 1, withSign = bp > 0)
+
 internal fun formatGrowthPercent(bp: Int): String {
     val rounded = roundToPercent(bp)
     return when {
         rounded > 0 -> "+$rounded%"
         rounded < 0 -> "$rounded%"
-        // Genuinely rounds to 0 (e.g. +0.3%): give "0%" rather than "+0%" —
-        // the latter would suggest "went up a tiny bit that just can't be displayed"
+        // Rounds to 0 at integer precision but isn't actually 0 — fall back to one decimal
+        // rather than claiming "no change"
+        abs(bp) >= NEGLIGIBLE_BP -> formatSmallGrowthPercent(bp)
+        // Below 0.1%: one decimal would print "+0.0%", which looks like a formatting bug. Say
+        // "about zero" instead — still distinct from the exact "0%" below, so it never
+        // contradicts a card showing "+0.03%"
+        bp != 0 -> NEGLIGIBLE_GROWTH
         else -> "0%"
     }
 }
+
+/**
+ * 1 / -1 / 0, matching the sign of the number [formatGrowthPercent] prints.
+ *
+ * [NEGLIGIBLE_GROWTH] and "0%" are both neutral: the text carries no sign, so colouring them
+ * red or green would be the text and the colour saying different things.
+ */
+internal fun growthDirection(bp: Int): Int =
+    if (abs(bp) < NEGLIGIBLE_BP) 0 else bp.compareTo(0)
 
 /**
  * The y-axis amount label: abbreviated to **10K/100M** (万/亿).

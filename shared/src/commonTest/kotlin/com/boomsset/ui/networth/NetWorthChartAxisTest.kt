@@ -178,29 +178,64 @@ class NetWorthChartAxisTest {
         formatGrowthPercent(-1250) shouldBe "-13%"
         formatGrowthPercent(-149) shouldBe "-1%"
         formatGrowthPercent(-150) shouldBe "-2%"
-        // When rounded to 0, no sign is shown: "+0%" would make people think "it went up a
-        // little but can't be shown"
-        formatGrowthPercent(49) shouldBe "0%"
-        formatGrowthPercent(-49) shouldBe "0%"
         formatGrowthPercent(50) shouldBe "+1%"
+        // Exactly zero is the only value allowed to print a bare "0%"
         formatGrowthPercent(0) shouldBe "0%"
     }
 
     /**
-     * The color must also be neutral when rounded to 0.
+     * A change smaller than half a percent must **not** be printed as "0%".
      *
-     * Caught in a real-device screenshot: a column labeled "0%" (rounded from +0.19%) was
-     * still painted the "up" color — the text says unchanged, the color says up,
-     * contradicting each other. The direction must be judged from **the number actually
-     * displayed**.
+     * Real-device report: the overview card read "+0.24%" and the October column read "0%",
+     * from the same pair of endpoints. "0%" doesn't read as "too small to print", it reads as
+     * "nothing happened" — so the two numbers on one screen flatly contradicted each other.
+     * The card can't drop its decimals (it's the headline figure), so the column gains one;
+     * "+0.2%" is five glyphs, the same as "+100%", which already has to fit.
      */
     @Test
-    fun `does not apply the up-or-down color when rounded to 0`() {
-        // 105,800 → 106,000, +0.19%
-        val labels = growthLabels(listOf(Money(10_580_000), Money(10_600_000)))
-        labels[1] shouldBe GrowthLabel("0%", 0)
+    fun `a change too small for integer precision gains a decimal place`() {
+        // The reported case: card "+0.24%", column used to say "0%"
+        formatGrowthPercent(24) shouldBe "+0.2%"
+        formatGrowthPercent(49) shouldBe "+0.4%"
+        formatGrowthPercent(-49) shouldBe "-0.4%"
+        // Lower boundary: 0.1% is the smallest value one decimal can still print
+        formatGrowthPercent(10) shouldBe "+0.1%"
+        formatGrowthPercent(-10) shouldBe "-0.1%"
+    }
 
-        growthLabels(money(1000, 996))[1] shouldBe GrowthLabel("0%", 0)
+    /**
+     * Below 0.1% even one decimal prints "0.0%" (`bpToPercent` truncates), which looks like a
+     * formatting bug — so the label says "about zero" instead. Still distinct from the exact
+     * "0%", so it can't contradict a card showing "+0.03%".
+     */
+    @Test
+    fun `a negligible change is marked as approximately zero, not exactly zero`() {
+        formatGrowthPercent(9) shouldBe NEGLIGIBLE_GROWTH
+        formatGrowthPercent(-9) shouldBe NEGLIGIBLE_GROWTH
+        formatGrowthPercent(1) shouldBe NEGLIGIBLE_GROWTH
+        // Exactly zero is a different statement and keeps its own label
+        formatGrowthPercent(0) shouldBe "0%"
+    }
+
+    /**
+     * The color must follow **the number actually displayed**.
+     *
+     * Caught in a real-device screenshot: a column labeled "0%" was still painted the "up"
+     * color — the text says unchanged, the color says up, contradicting each other. Now that
+     * sub-percent changes print a signed number, they get a color again; only the two
+     * sign-less labels ("≈0%" and "0%") stay neutral.
+     */
+    @Test
+    fun `color follows the printed number`() {
+        // 105,800 → 106,000, +0.19% — prints a sign now, so it gets the "up" color
+        growthLabels(listOf(Money(10_580_000), Money(10_600_000)))[1] shouldBe
+            GrowthLabel("+0.1%", 1)
+
+        growthLabels(money(1000, 996))[1] shouldBe GrowthLabel("-0.4%", -1)
+
+        // 1,000,000 → 1,000,500, +0.05% (5bp): no sign printed, so no color
+        growthLabels(listOf(Money(100_000_000), Money(100_050_000)))[1] shouldBe
+            GrowthLabel(NEGLIGIBLE_GROWTH, 0)
     }
 
     /**
