@@ -247,7 +247,7 @@ class PortfolioSeriesCalculatorTest {
     // ---------- Growth rate ----------
 
     @Test
-    fun `the period growth rate is based on the first and last points`() {
+    fun `the period growth rate is based on the previous and last points`() {
         val data = PortfolioData(
             assets = listOf(asset(1)),
             snapshots = listOf(
@@ -302,8 +302,59 @@ class PortfolioSeriesCalculatorTest {
 
         series.growthAbsolute shouldBe Money(10_000_00)
         series.growthBp shouldBe 1000
-        // The baseline date must be the first sample point; the UI writes this as "compared to May 2026"
-        series.baselineDate shouldBe series.dates.first()
+        // The baseline date must be the sample point right before the last one; the UI writes
+        // this as "compared to June 2026"
+        series.baselineDate shouldBe series.dates[series.dates.lastIndex - 1]
+    }
+
+    @Test
+    fun `the baseline moves forward as new periods are recorded`() {
+        // Reported from real usage: first recorded in August, again in September, again in
+        // October -- and the card still said "compared to August". The baseline has to follow
+        // the latest period, otherwise the headline number silently becomes a cumulative
+        // figure while the bar chart below it keeps showing period-over-period growth
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 5, 10), 100_000_00),
+                manual(2, 1, LocalDate(2026, 6, 10), 120_000_00),
+                manual(3, 1, LocalDate(2026, 7, 10), 150_000_00),
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        val series = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone, pointCount = 3,
+        )
+
+        // May 31 = 100,000 / June 30 = 120,000 / July 28 = 150,000
+        series.baselineDate shouldBe LocalDate(2026, 6, 30)
+        series.growthAbsolute shouldBe Money(30_000_00)   // not 50,000, which is "since May"
+        series.growthBp shouldBe 2500                     // +25%, not +50%
+    }
+
+    @Test
+    fun `the baseline does not depend on the chart trimming toggle`() {
+        // `trimBeforeFirstSnapshot` is a presentation switch for the chart -- it must not
+        // redefine what the headline growth number is measured against
+        val data = PortfolioData(
+            assets = listOf(asset(1)),
+            snapshots = listOf(
+                manual(1, 1, LocalDate(2026, 6, 10), 120_000_00),
+                manual(2, 1, LocalDate(2026, 7, 10), 150_000_00),
+            ),
+            quotes = emptyList(),
+            fxRates = emptyList(),
+        )
+
+        fun build(trim: Boolean) = PortfolioSeriesCalculator.buildSeries(
+            data, Period.MONTH, cny, today, zone,
+            pointCount = 12, trimBeforeFirstSnapshot = trim,
+        )
+
+        build(trim = false).baselineDate shouldBe build(trim = true).baselineDate
+        build(trim = false).growthAbsolute shouldBe build(trim = true).growthAbsolute
     }
 
     @Test
