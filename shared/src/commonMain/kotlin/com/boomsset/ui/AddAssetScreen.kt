@@ -319,24 +319,26 @@ private fun AssetDetailForm(
                 onSelect = { currency = it },
             )
 
-            OutlinedTextField(
+            AmountField(
                 value = amountText,
                 onValueChange = { amountText = it },
-                label = { Text(if (isLiability) "欠款金额" else "当前市值") },
-                singleLine = true,
+                label = if (isLiability) "欠款金额" else "当前市值",
+                currency = currency,
+                current = null,
                 isError = amountText.isNotBlank() && amount == null,
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = FIELD_AMOUNT },
             )
         }
 
         if (!isLiability) {
-            OutlinedTextField(
+            AmountField(
                 value = costText,
                 onValueChange = { costText = it },
-                label = { Text("总投入成本（可留空）") },
-                supportingText = { Text("填了才能显示浮动盈亏和收益率") },
-                singleLine = true,
+                label = "总投入成本（可留空）",
+                currency = currency,
+                current = null,
                 isError = costText.isNotBlank() && cost == null,
+                note = "填了才能显示浮动盈亏和收益率",
                 modifier = Modifier.fillMaxWidth().semantics { contentDescription = FIELD_COST },
             )
         }

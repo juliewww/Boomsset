@@ -9,18 +9,20 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -31,7 +33,9 @@ import com.boomsset.domain.parseQuantity
 import com.boomsset.domain.Snapshot
 import com.boomsset.domain.UnitPrice
 import com.boomsset.domain.parseUnitPrice
-import com.boomsset.ui.formatForInput
+import com.boomsset.ui.AmountField
+import com.boomsset.ui.HintedField
+import com.boomsset.ui.formatDisplay
 import com.boomsset.ui.priceDescription
 import com.boomsset.ui.toMinorUnitsOrNull
 import kotlinx.datetime.LocalDate
@@ -68,43 +72,59 @@ fun UpdateValueDialog(
     onSetManualPrice: (symbol: String, price: UnitPrice, currency: String) -> Unit,
 ) {
     val snapshot = valuation.snapshot
-    val previousCost = snapshot?.costBasisMinor
+    val currency = valuation.asset.currency
+    val isQuoted = snapshot is Snapshot.Quoted
 
-    // Prefill: market value/quantity takes the current value, cost basis takes the previous
-    // snapshot's — never left blank
-    var amountText by remember {
-        mutableStateOf(
-            when (snapshot) {
-                is Snapshot.Manual -> snapshot.value.formatForInput()
-                else -> valuation.localValue?.formatForInput() ?: ""
-            },
-        )
+    // What's there now. These are **hints, not prefilled text**: the fields start empty so the
+    // user can just type the new number, and an empty field means "keep this" — a snapshot is a
+    // complete state, so each blank is resolved to the current value below rather than left null.
+    // That is what keeps "forgot to carry the cost over" structurally impossible, which is why the
+    // old version prefilled in the first place.
+    val currentAmount: Money? = when (snapshot) {
+        is Snapshot.Manual -> snapshot.value
+        else -> valuation.localValue
     }
-    var quantityText by remember {
-        mutableStateOf(
-            (snapshot as? Snapshot.Quoted)?.quantity?.formatForInput() ?: "",
-        )
-    }
-    var costText by remember { mutableStateOf(previousCost?.formatForInput() ?: "") }
+    val currentQuantity: Quantity? = (snapshot as? Snapshot.Quoted)?.quantity
+    val currentCost: Money? = snapshot?.costBasisMinor
+
+    var amountText by remember { mutableStateOf("") }
+    var quantityText by remember { mutableStateOf("") }
+    var costText by remember { mutableStateOf("") }
     // Unit price is prefilled with the current quote (which may be stale); left blank means don't override it
-    var priceText by remember {
-        mutableStateOf(valuation.quote?.price?.formatForInput() ?: "")
-    }
+    var priceText by remember { mutableStateOf("") }
     // The backfill date. Null means "now" — the case for the vast majority of updates, so it's
     // given no other default.
     var asOfDate by remember { mutableStateOf<LocalDate?>(null) }
     var showDatePicker by remember { mutableStateOf(false) }
 
-    val isQuoted = snapshot is Snapshot.Quoted
-    val amount = amountText.toMinorUnitsOrNull()
-    val quantity = quantityText.toQuantityOrNull()
-    val cost = costText.takeIf { it.isNotBlank() }?.toMinorUnitsOrNull()
+    val typedAmount = amountText.toMinorUnitsOrNull()
+    val typedQuantity = quantityText.toQuantityOrNull()
+    val typedCost = costText.takeIf { it.isNotBlank() }?.toMinorUnitsOrNull()
     val manualPrice = priceText.takeIf { it.isNotBlank() }?.let { parseUnitPrice(it) }
+    val amountInvalid = amountText.isNotBlank() && typedAmount == null
+    val quantityInvalid = quantityText.isNotBlank() && typedQuantity == null
+    val costInvalid = costText.isNotBlank() && typedCost == null
     val priceInvalid = priceText.isNotBlank() && manualPrice == null
-    val costInvalid = costText.isNotBlank() && cost == null
 
-    val canConfirm = if (isQuoted) quantity != null && !costInvalid && !priceInvalid
-    else amount != null && !costInvalid
+    // Blank → current. Null only when there is no current value to fall back on (an asset with no
+    // snapshot), in which case the field is required.
+    val amount = if (amountText.isBlank()) currentAmount?.minorUnits else typedAmount
+    val quantity = if (quantityText.isBlank()) currentQuantity else typedQuantity
+    val cost = if (costText.isBlank()) currentCost?.minorUnits else typedCost
+
+    // Saving with nothing typed and no date would append a snapshot identical to the last one.
+    val hasEdits = amountText.isNotBlank() || quantityText.isNotBlank() ||
+        costText.isNotBlank() || priceText.isNotBlank() || asOfDate != null
+
+    val canConfirm = hasEdits && !costInvalid && if (isQuoted) {
+        quantity != null && !quantityInvalid && !priceInvalid
+    } else {
+        amount != null && !amountInvalid
+    }
+
+    // Open straight into the field the user is about to type in, so "update" is: tap, type, save.
+    val firstField = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstField.requestFocus() } }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -112,25 +132,27 @@ fun UpdateValueDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (isQuoted) {
-                    OutlinedTextField(
+                    HintedField(
                         value = quantityText,
                         onValueChange = { quantityText = it },
-                        label = { Text("持有份额") },
-                        singleLine = true,
-                        isError = quantityText.isNotBlank() && quantity == null,
-                        modifier = Modifier.fillMaxWidth(),
+                        label = "持有份额",
+                        current = currentQuantity?.formatDisplay(),
+                        reading = null,
+                        isError = quantityInvalid,
+                        modifier = Modifier.fillMaxWidth().focusRequester(firstField),
                     )
                     Text(
                         "市值由份额 × 行情单价算出。加仓减仓就是改这里的份额。",
                         style = MaterialTheme.typography.labelSmall,
                     )
 
-                    OutlinedTextField(
+                    HintedField(
                         value = priceText,
                         onValueChange = { priceText = it },
-                        label = { Text("行情单价") },
-                        singleLine = true,
-                        isError = priceText.isNotBlank() && manualPrice == null,
+                        label = "行情单价",
+                        current = valuation.quote?.price?.formatDisplay(valuation.quote?.currency ?: currency),
+                        reading = null,
+                        isError = priceInvalid,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
@@ -140,26 +162,26 @@ fun UpdateValueDialog(
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    OutlinedTextField(
+                    AmountField(
                         value = amountText,
                         onValueChange = { amountText = it },
-                        label = {
-                            Text(if (valuation.asset.isLiability) "当前欠款（元）" else "当前市值（元）")
-                        },
-                        singleLine = true,
-                        isError = amountText.isNotBlank() && amount == null,
-                        modifier = Modifier.fillMaxWidth().semantics {
+                        label = if (valuation.asset.isLiability) "新的欠款（元）" else "新的市值（元）",
+                        currency = currency,
+                        current = currentAmount,
+                        isError = amountInvalid,
+                        modifier = Modifier.fillMaxWidth().focusRequester(firstField).semantics {
                             contentDescription = FIELD_UPDATE_AMOUNT
                         },
                     )
                 }
 
                 if (!valuation.asset.isLiability) {
-                    OutlinedTextField(
+                    AmountField(
                         value = costText,
                         onValueChange = { costText = it },
-                        label = { Text("总投入成本（元）") },
-                        singleLine = true,
+                        label = "总投入成本（元）",
+                        currency = currency,
+                        current = currentCost,
                         isError = costInvalid,
                         modifier = Modifier.fillMaxWidth().semantics {
                             contentDescription = FIELD_UPDATE_COST
@@ -170,7 +192,7 @@ fun UpdateValueDialog(
                             "如果这次是加仓，记得把新投入的钱加进总成本 —— " +
                                 "份额涨了成本没涨，收益率会虚高。"
                         } else {
-                            "已带出上次填的成本。改动市值不会影响它，除非你也改这里。"
+                            "留空就沿用上次的成本，改动市值不会影响它。"
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
