@@ -313,4 +313,89 @@ class UpdateHistoryTest {
         )
         utcMinus8.single().recordedDate shouldBe LocalDate(2025, 12, 31)
     }
+
+    // ---------- Change rate ----------
+
+    @Test
+    fun `a manual update carries both the amount and the rate of change`() {
+        val record = UpdateHistory.build(
+            data(
+                listOf(asset(1)),
+                listOf(
+                    manual(1, 1, at(2026, 8, 1), 100_000_00),
+                    manual(2, 1, at(2026, 9, 1), 113_000_00),
+                ),
+            ),
+            zone,
+        ).first()
+
+        record.valueChange shouldBe Money(13_000_00)
+        record.valueChangeBp shouldBe 1300
+    }
+
+    @Test
+    fun `the rate is null when the previous value is zero, while the amount is still there`() {
+        // 0 -> 50,000: "+50,000" is true and useful, "+infinity%" is not. Same rule as the net worth card.
+        val record = UpdateHistory.build(
+            data(
+                listOf(asset(1)),
+                listOf(
+                    manual(1, 1, at(2026, 8, 1), 0),
+                    manual(2, 1, at(2026, 9, 1), 50_000_00),
+                ),
+            ),
+            zone,
+        ).first()
+
+        record.valueChange shouldBe Money(50_000_00)
+        record.valueChangeBp.shouldBeNull()
+    }
+
+    @Test
+    fun `a decrease is negative`() {
+        val record = UpdateHistory.build(
+            data(
+                listOf(asset(1)),
+                listOf(
+                    manual(1, 1, at(2026, 8, 1), 200_000_00),
+                    manual(2, 1, at(2026, 9, 1), 150_000_00),
+                ),
+            ),
+            zone,
+        ).first()
+
+        record.valueChange shouldBe Money(-50_000_00)
+        record.valueChangeBp shouldBe -2500
+    }
+
+    @Test
+    fun `a quoted update reports the change in quantity, not in market value`() {
+        // A QUOTED snapshot stores no market value and this layer derives none, so the rate is of
+        // the quantity: 100 -> 150 shares is +50%.
+        val record = UpdateHistory.build(
+            data(
+                listOf(asset(1)),
+                listOf(
+                    quoted(1, 1, at(2026, 8, 1), 100),
+                    quoted(2, 1, at(2026, 9, 1), 150),
+                ),
+            ),
+            zone,
+        ).first()
+
+        record.valueChange.shouldBeNull()
+        record.valueChangeBp.shouldBeNull()
+        record.quantityChangeBp shouldBe 5000
+    }
+
+    @Test
+    fun `the first record has nothing to compare against`() {
+        val record = UpdateHistory.build(
+            data(listOf(asset(1)), listOf(manual(1, 1, at(2026, 8, 1), 100_000_00))),
+            zone,
+        ).single()
+
+        record.valueChangeBp.shouldBeNull()
+        record.quantityChangeBp.shouldBeNull()
+    }
 }

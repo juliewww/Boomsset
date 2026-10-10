@@ -22,7 +22,9 @@ import androidx.compose.ui.unit.dp
 import com.boomsset.domain.UpdateKind
 import com.boomsset.domain.UpdateRecord
 import com.boomsset.ui.InfoTooltip
+import com.boomsset.ui.bpToSignedPercent
 import com.boomsset.ui.formatDisplay
+import com.boomsset.ui.formatSigned
 import com.boomsset.ui.formatWithCurrency
 import com.boomsset.ui.historyDateLabel
 import com.boomsset.ui.theme.chartColors
@@ -173,6 +175,15 @@ private fun UpdateRecordRow(record: UpdateRecord, today: LocalDate) {
             )
         }
 
+        record.changeSummaryText(currency)?.let { summary ->
+            Text(
+                summary,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp),
+            )
+        }
+
         // Only shown when the cost basis actually changed. It's still meaningful when the
         // quantity didn't move but the cost did (the user is correcting a mis-entered cost),
         // so the condition is "the cost basis itself changed", not "quantity changed, so also
@@ -227,6 +238,37 @@ private fun UpdateRecord.primaryChangeText(currency: String): String {
     } else {
         value.formatWithCurrency(currency)
     }
+}
+
+/**
+ * "How much, and by what rate" for the `X → Y` above it: `+¥10,000.00 · +10.00%`.
+ *
+ * **On its own line**, not appended to the `X → Y` row — `¥12,345,678.00 → ¥12,999,999.00` already
+ * fills a 360dp row (see [UpdateRecordRow]), and the percentage is the part that would get pushed
+ * off.
+ *
+ * - MANUAL: money change + rate. QUOTED: **quantity** change + rate, because a QUOTED snapshot has
+ *   no stored market value and none is derived (see [UpdateRecord]) — "+¥X" would have to come
+ *   from today's price explaining a past record.
+ * - No change → "没有变化", not "+¥0.00 · 0.00%". Same wording as the net worth card.
+ * - Rate omitted when it can't be computed (previous ≤ 0); the amount still shows.
+ * - Null when there is nothing to compare: first record, archive-to-zero of a mode switch.
+ *
+ * Not colour-coded, for the reason on [primaryChangeText]: this list mixes assets and
+ * liabilities, and a falling mortgage balance painted as "down" reads like bad news.
+ */
+internal fun UpdateRecord.changeSummaryText(currency: String): String? {
+    valueChange?.let { delta ->
+        if (delta.isZero) return "没有变化"
+        val amount = delta.formatSigned(currency)
+        return valueChangeBp?.let { "$amount · ${it.bpToSignedPercent()}" } ?: amount
+    }
+    quantityChange?.let { delta ->
+        if (delta.scaled == 0L) return "没有变化"
+        val amount = (if (delta.scaled > 0) "+" else "") + delta.formatDisplay()
+        return quantityChangeBp?.let { "份额 $amount · ${it.bpToSignedPercent()}" } ?: "份额 $amount"
+    }
+    return null
 }
 
 private fun UpdateKind.label(): String = when (this) {

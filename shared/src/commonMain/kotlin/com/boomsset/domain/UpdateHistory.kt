@@ -96,6 +96,27 @@ data class UpdateRecord(
             return now - before
         }
 
+    /**
+     * [valueChange] as a rate of the previous value, in basis points. Goes through
+     * [PortfolioCalculator.growthBp], so "previous value ≤ 0" is null here exactly where it's
+     * null on the net worth page — a rate off a zero or negative base is meaningless, and must
+     * show as absent, not as 0.
+     */
+    val valueChangeBp: Int?
+        get() {
+            val now = value ?: return null
+            val before = previousValue ?: return null
+            return PortfolioCalculator.growthBp(before.minorUnits, now.minorUnits)
+        }
+
+    /** [quantityChange] as a rate of the previous quantity, in basis points. Same null rule as [valueChangeBp]. */
+    val quantityChangeBp: Int?
+        get() {
+            val now = quantity ?: return null
+            val before = previousQuantity ?: return null
+            return PortfolioCalculator.growthBp(before.scaled, now.scaled)
+        }
+
     /** Change in quantity. Only has a value when both ends are QUOTED. */
     val quantityChange: Quantity?
         get() {

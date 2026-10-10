@@ -92,43 +92,47 @@ final class AssetFlowUITest: XCTestCase {
         )
     }
 
-    /// Updating a valuation —— the focus here is that the prefilled value can be read back by its own parser (this used to be broken on Android)
-    func testUpdateValuePrefillIsParseable() throws {
+    /// Updating a valuation —— the current value is a **hint**, not prefilled text, and an empty
+    /// field means "keep it". (This used to assert the prefill was parseable, which was the
+    /// Android bug where a thousands separator left "Save" permanently disabled; with nothing
+    /// prefilled that failure mode no longer exists, so this now checks the new contract.)
+    ///
+    /// ⚠️ Not run on a machine with Xcode yet — written alongside the change on one with only
+    /// Command Line Tools. The two spots most likely to need a real run: whether the supporting
+    /// text is exposed as a staticText whose label contains the string, and whether typing into
+    /// the amount field enables Save.
+    func testUpdateValueShowsCurrentAsHintAndEmptyMeansKeep() throws {
         try addCashAsset(value: "100000", cost: "95000")
 
         app.buttons["资产"].tap()
         waitFor(app.staticTexts["现金"], "资产列表里的现金")
-        // There are now two ways to update a valuation: swipe left to reveal the
-        // "Update" button, or tap the whole row card directly. This test cares about
-        // the prefill format, not "how to get into the dialog", so it takes **the most
-        // reliable path** —— tapping the card directly. Verification of the swipe
-        // gesture itself is in the comment on testUpdatingValueIsAVisibleAction:
-        // XCUITest can't get `SwipeToDismissBox`'s drag gesture to register on this
-        // simulator, which doesn't mean the feature itself is broken.
+        // Tap the card directly: see testUpdatingValueIsAVisibleAction for why not swipe-left.
         app.staticTexts["现金"].tap()
-
         waitFor(app.staticTexts["更新「现金」"], "更新对话框")
 
-        // The prefill must be 100000.00 (no thousands separator) —— with a comma, saving would be permanently disabled
-        // A TextView's value is just its current text content
-        let allText = app.debugDescription
-        XCTAssertTrue(
-            allText.contains("100000.00"),
-            "市值预填应为不带千分位的 100000.00，实际树：\n\(allText)"
-        )
-        XCTAssertTrue(
-            allText.contains("95000.00"),
-            "成本应从上一条结转，预填 95000.00"
-        )
-        XCTAssertFalse(
-            allText.contains("100,000.00"),
-            "预填绝不能带千分位 —— 解析器拒绝逗号，保存会永久禁用"
-        )
+        // The current value and cost are shown as hints, with thousands separators (they are
+        // display text now, not something the parser has to read back)
+        let tree = app.debugDescription
+        XCTAssertTrue(tree.contains("¥100,000.00"), "应提示当前市值 ¥100,000.00，实际树：\n\(tree)")
+        XCTAssertTrue(tree.contains("¥95,000.00"), "应提示当前成本 ¥95,000.00")
+        XCTAssertTrue(tree.contains("留空沿用当前"), "留空的含义必须写明")
 
-        // The save button must be enabled —— this is exactly what was broken on Android
+        // Nothing typed yet: saving would append an identical snapshot, so it stays disabled
         let save = app.buttons["保存"]
         waitFor(save, "保存按钮")
-        XCTAssertTrue(save.isEnabled, "预填值必须能被解析，否则保存永久禁用")
+        XCTAssertFalse(save.isEnabled, "什么都没改时不该能保存")
+
+        // Typing a new value enables Save, and the reading under the field appears
+        let field = textView("field-update-amount")
+        waitFor(field, "市值输入框")
+        field.tap()
+        field.typeText("721613")
+        XCTAssertTrue(
+            app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "72.1613万")).firstMatch
+                .waitForExistence(timeout: 3),
+            "输入后应在输入框下显示量级读法 72.1613万"
+        )
+        XCTAssertTrue(save.isEnabled, "输入了新市值后应能保存")
     }
 
     func testAllocationSharesCloseAt100Percent() throws {
