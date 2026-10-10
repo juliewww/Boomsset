@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.boomsset.domain.AllocationSeries
@@ -29,9 +30,12 @@ import com.boomsset.domain.PortfolioCalculator
 import com.boomsset.ui.bpToPercent
 import com.boomsset.ui.chartAnimationSpec
 import com.boomsset.ui.fallColor
+import com.boomsset.ui.formatWithCurrency
+import com.boomsset.ui.maskAmount
 import com.boomsset.ui.riseColor
 import com.boomsset.ui.theme.chartColors
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
+import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
 import com.patrykandpatrick.vico.compose.cartesian.Zoom
 import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
@@ -46,10 +50,18 @@ import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberColumnCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLine
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarkerController
+import com.patrykandpatrick.vico.compose.cartesian.marker.ColumnCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoZoomState
 import com.patrykandpatrick.vico.compose.common.Fill
+import com.patrykandpatrick.vico.compose.common.Insets
+import com.patrykandpatrick.vico.compose.common.Position
+import com.patrykandpatrick.vico.compose.common.component.TextComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.data.ExtraStore
 import kotlin.math.abs
 import kotlin.math.roundToLong
@@ -163,6 +175,9 @@ private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modif
     val values = remember(series) { series.points.map { it.netWorth.toYuan() } }
     val labels = remember(series) { axisLabels(series.period, series.dates) }
     val growth = remember(series) { growthLabels(series.points.map { it.netWorth }) }
+    val totalLabels = remember(series, hideAmounts) {
+        series.points.map { listOf(AnnotatedString(maskAmount(hideAmounts, it.netWorth.formatWithCurrency(series.baseCurrency)))) }
+    }
 
     LaunchedEffect(series) {
         if (values.isEmpty()) return@LaunchedEffect
@@ -215,25 +230,29 @@ private fun TotalColumnChart(series: NetWorthSeries, hideAmounts: Boolean, modif
         ColumnCartesianLayer.ColumnProvider.series(List(columnCount) { column })
     }
 
-    CartesianChartHost(
-        chart = rememberCartesianChart(
-            rememberColumnCartesianLayer(
-                columnProvider = columnProvider,
-                mergeMode = { ColumnCartesianLayer.MergeMode.Grouped(columnSpacing = 0.dp) },
+    Column(modifier.fillMaxWidth()) {
+        CartesianChartHost(
+            chart = rememberCartesianChart(
+                rememberColumnCartesianLayer(
+                    columnProvider = columnProvider,
+                    mergeMode = { ColumnCartesianLayer.MergeMode.Grouped(columnSpacing = 0.dp) },
+                ),
+                startAxis = rememberAmountAxis(hideAmounts),
+                topAxis = rememberGrowthAxis(),
+                bottomAxis = rememberPeriodAxis(),
+                marker = rememberValueMarker(totalLabels, stacked = false),
+                markerController = CartesianMarkerController.rememberToggleOnTap(),
             ),
-            startAxis = rememberAmountAxis(hideAmounts),
-            topAxis = rememberGrowthAxis(),
-            bottomAxis = rememberPeriodAxis(),
-        ),
-        modelProducer = modelProducer,
-        // Uses Zoom.Content alone (not clamped by Zoom.x): with 1 point this makes that single
-        // x position fill the viewport exactly, with the real column occupying only 1/5 of it —
-        // that's exactly where the phantom-series effect comes from.
-        zoomState = rememberFittingZoomState(remember { Zoom.Content }),
-        // Vico defaults to 500ms (see [chartAnimationSpec]); switched to the M3-recommended 300ms.
-        animationSpec = chartAnimationSpec,
-        modifier = modifier.fillMaxWidth().height(CHART_HEIGHT),
-    )
+            modelProducer = modelProducer,
+            // Uses Zoom.Content alone (not clamped by Zoom.x): with 1 point this makes that
+            // single x position fill the viewport exactly, with the real column occupying only
+            // 1/5 of it — that's exactly where the phantom-series effect comes from.
+            zoomState = rememberFittingZoomState(remember { Zoom.Content }),
+            // Vico defaults to 500ms (see [chartAnimationSpec]); switched to the M3-recommended 300ms.
+            animationSpec = chartAnimationSpec,
+            modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
+        )
+    }
 }
 
 /**
@@ -285,6 +304,22 @@ private fun AllocationColumnChart(
     val values = remember(series, classes) {
         classes.map { assetClass -> series.netExposures(assetClass).map { it.toYuan() } }
     }
+    val rise = riseColor()
+    val fall = fallColor()
+    val neutral = MaterialTheme.colorScheme.onSurfaceVariant
+    val classLabels = remember(series, classes, hideAmounts, rise, fall, neutral) {
+        series.points.indices.map { index ->
+            allocationBreakdown(series, classes, index)?.rows.orEmpty()
+                .filter { it.assetClass != null }
+                .map { row ->
+                    buildAnnotatedString {
+                        append(maskAmount(hideAmounts, row.amount.formatWithCurrency(series.baseCurrency)))
+                        append("\n")
+                        append(row.growth.annotated(rise, fall, neutral))
+                    }
+                }
+        }
+    }
 
     LaunchedEffect(values) {
         if (values.isEmpty() || values.first().isEmpty()) return@LaunchedEffect
@@ -314,22 +349,125 @@ private fun AllocationColumnChart(
     // in which case Zoom.x is smaller — taking the min gets exactly the one that's wanted.
     val fit = remember { Zoom.min(Zoom.Content, Zoom.x(SINGLE_POINT_SLOTS)) }
 
-    CartesianChartHost(
-        chart = rememberCartesianChart(
-            rememberColumnCartesianLayer(
-                columnProvider = columnProvider,
-                mergeMode = { ColumnCartesianLayer.MergeMode.Stacked },
+    Column(modifier.fillMaxWidth()) {
+        CartesianChartHost(
+            chart = rememberCartesianChart(
+                rememberColumnCartesianLayer(
+                    columnProvider = columnProvider,
+                    mergeMode = { ColumnCartesianLayer.MergeMode.Stacked },
+                ),
+                startAxis = rememberAmountAxis(hideAmounts),
+                topAxis = rememberGrowthAxis(),
+                bottomAxis = rememberPeriodAxis(),
+                marker = rememberValueMarker(classLabels, stacked = true),
+                markerController = CartesianMarkerController.rememberToggleOnTap(),
             ),
-            startAxis = rememberAmountAxis(hideAmounts),
-            topAxis = rememberGrowthAxis(),
-            bottomAxis = rememberPeriodAxis(),
-        ),
-        modelProducer = modelProducer,
-        zoomState = rememberFittingZoomState(fit),
-        animationSpec = chartAnimationSpec,
-        modifier = modifier.fillMaxWidth().height(CHART_HEIGHT),
-    )
+            modelProducer = modelProducer,
+            zoomState = rememberFittingZoomState(fit),
+            animationSpec = chartAnimationSpec,
+            modifier = Modifier.fillMaxWidth().height(CHART_HEIGHT),
+        )
+    }
 }
+
+// ---------------------------------------------------------------- Tapping a column
+
+/**
+ * Tap a column and its amount appears **in the middle of the column**; in by-class mode, every
+ * segment shows its own class's amount and growth rate in the middle of that segment.
+ *
+ * The amounts come from Kotlin, not from the chart model: [labels] is `[column][series]`, built
+ * from the same lists the columns are drawn from, so a label can't disagree with the column it
+ * sits on. Vico only tells us **which** column was tapped (`target.x` is the index — every model
+ * here is built from `series(values)` over a plain list, so x = 0, 1, 2…).
+ *
+ * Why a hand-written marker and not `DefaultCartesianMarker`: that one draws one bubble per
+ * target at the column's *top*, with the series value formatted by a callback. Here the text must
+ * be centred inside each segment, carry a growth rate, and honour the eye toggle — none of which a
+ * value formatter can do.
+ *
+ * The label is a pill (opaque background) because the text can't be guaranteed to fit inside the
+ * column: a 12-column chart has ~22dp columns and "¥719,854.00" is ~70dp wide. On a pill it stays
+ * readable whether it lands on the column, the page background, or both.
+ */
+@Composable
+private fun rememberValueMarker(labels: List<List<AnnotatedString>>, stacked: Boolean): CartesianMarker {
+    val text = rememberTextComponent(
+        style = MaterialTheme.typography.labelSmall.copy(
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        ),
+        // Two lines in by-class mode (amount, then growth). The default of 1 line turns the label
+        // into "¥253,634.…" and drops the growth rate, which looked like a width problem and isn't.
+        lineCount = 2,
+        padding = Insets(horizontal = 6.dp, vertical = 3.dp),
+        background = rememberShapeComponent(
+            fill = Fill(MaterialTheme.colorScheme.surface.copy(alpha = LABEL_BACKGROUND_ALPHA)),
+            shape = RoundedCornerShape(6.dp),
+        ),
+    )
+    return remember(text, labels, stacked) { ValueMarker(text, labels, stacked) }
+}
+
+/**
+ * A `data class` on purpose: Vico compares chart parts to decide whether to redraw, and a plain
+ * class would be a new, unequal instance on every recomposition.
+ *
+ * Segment geometry (Vico 3.2.3, `ColumnCartesianLayer`): a column's `canvasY` is its **top**.
+ * Stacked segments are drawn bottom-up, so segment *i* spans from its own top down to segment
+ * *i − 1*'s top, and segment 0 down to the plot's bottom edge — the zero line, since a column
+ * layer's y range starts at 0.
+ *
+ * Negative values are skipped: they're drawn below the zero line and the arithmetic above
+ * doesn't describe them. (The by-class chart already notes that on the page.)
+ */
+private data class ValueMarker(
+    private val text: TextComponent,
+    private val labels: List<List<AnnotatedString>>,
+    private val stacked: Boolean,
+) : CartesianMarker {
+    override fun drawOverLayers(
+        context: CartesianDrawingContext,
+        targets: List<CartesianMarker.Target>,
+    ) {
+        val columnTargets = targets.filterIsInstance<ColumnCartesianLayerMarkerTarget>()
+        val bottom = context.layerBounds.bottom
+        if (stacked) {
+            val target = columnTargets.firstOrNull() ?: return
+            val perSeries = labels.getOrNull(target.x.toInt()) ?: return
+            target.columns.forEachIndexed { i, column ->
+                val label = perSeries.getOrNull(i) ?: return@forEachIndexed
+                if (column.entry.y < 0) return@forEachIndexed
+                val segmentBottom = if (i == 0) bottom else target.columns[i - 1].canvasY
+                drawCentered(context, label, target.canvasX, column.canvasY, segmentBottom)
+            }
+        } else {
+            // Grouped (total-assets chart): one target per series at this x. With a single sample
+            // point there are also phantom all-zero series (see PHANTOM_COLUMNS_PER_SIDE) — the
+            // real one is the tallest.
+            val target = columnTargets.maxByOrNull { it.columns.firstOrNull()?.entry?.y ?: 0.0 } ?: return
+            val column = target.columns.firstOrNull() ?: return
+            if (column.entry.y < 0) return
+            val label = labels.getOrNull(target.x.toInt())?.firstOrNull() ?: return
+            drawCentered(context, label, target.canvasX, column.canvasY, bottom)
+        }
+    }
+
+    private fun drawCentered(
+        context: CartesianDrawingContext,
+        label: AnnotatedString,
+        x: Float,
+        top: Float,
+        bottom: Float,
+    ) {
+        // A segment shorter than its label would have the pill spill over its neighbours and
+        // read as belonging to them. Better to leave a thin segment unlabelled than mislabel it.
+        if (bottom - top < text.getHeight(context, label)) return
+        text.draw(context, label, x, (top + bottom) / 2f, Position.Horizontal.Center, Position.Vertical.Center)
+    }
+}
+
+private const val LABEL_BACKGROUND_ALPHA = 0.92f
 
 // ---------------------------------------------------------------- Trend chart
 
